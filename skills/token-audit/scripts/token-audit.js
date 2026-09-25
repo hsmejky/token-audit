@@ -74,8 +74,12 @@ function projectFolder(p, root = ROOT) {
 
 // Default scope = cwd's project. --project <path> overrides it. --all scans
 // every project (pre-Slice-6 behaviour). SCOPE_PROJECT is the folder name to
-// filter to, or null when scanning everything.
-const SCOPE_PROJECT = ALL ? null : projectFolder(PROJECT_ARG !== undefined ? PROJECT_ARG : process.cwd());
+// filter to, or null when scanning everything. SCOPE_DIR is the same target
+// as an unmangled absolute path (not the `projects/` folder name) — needed
+// for CONFIG's MCP lookup, which reads real on-disk paths (`.mcp.json`,
+// `~/.claude.json`'s `projects[<path>]` key), not the transcript folder.
+const SCOPE_DIR = ALL ? null : path.resolve(PROJECT_ARG !== undefined ? PROJECT_ARG : process.cwd());
+const SCOPE_PROJECT = ALL ? null : projectFolder(SCOPE_DIR);
 const SCOPE_ROOT = SCOPE_PROJECT ? path.join(ROOT, SCOPE_PROJECT) : ROOT;
 
 // ---------------------------------------------------------------- pricing
@@ -570,6 +574,53 @@ function eachPluginDir(fn) {
   }
 }
 
+// MCP server tool definitions are fetched live over the MCP protocol when a
+// session starts — they live on the server, never in any local config file
+// or transcript, so this script (which only reads static files, never
+// connects to a live server) cannot measure them the way PLUGIN_BLOAT
+// measures agent/skill frontmatter. Counting `mcp__<server>__*` names seen in
+// transcripts was the alternative (design.md/plan.md Slice 14) but undercounts
+// (a server usually exposes more tools than were ever called) and reads zero
+// for a configured-but-unused server — exactly the "paying for it, not using
+// it" case this line exists to surface. So: a flat per-server estimate,
+// clearly labelled as an estimate. ~6-10 tools/server typical, ~100-150 tok
+// each (name + JSON-schema description) -> ~800 tok/server, rounded.
+const MCP_SERVER_TOKENS = 800;
+
+// Configured MCP servers for the scoped project, from the three places Claude
+// Code stores them (design.md Q9 / plan.md Slice 14):
+//   - user scope:    `<claude-dir>.json` (sibling of --claude-dir, mirroring
+//                     the real `~/.claude/` + `~/.claude.json` layout) ->
+//                     top-level `mcpServers` (NOT settings.json — checked
+//                     against a real `~/.claude.json` at implementation time;
+//                     settings.json has no mcpServers key in practice)
+//   - project scope:  same file -> `projects[<absProjectDir>].mcpServers`
+//                     (private per-project servers, e.g. `claude mcp add`
+//                     without `--scope project`); keyed with forward slashes
+//                     even on Windows, matching real `~/.claude.json`
+//   - mcp.json scope: `<scopeDir>/.mcp.json` -> `mcpServers` (checked into
+//                     the repo, shared with the team)
+// scopeDir is SCOPE_DIR (null under --all — no single project to check, so
+// only user scope applies).
+function mcpConfig(scopeDir) {
+  const servers = [];
+  const add = (scope, name) => servers.push({ scope, name });
+  const userConfig = readJson(CLAUDE + '.json') || {};
+
+  for (const name of Object.keys(userConfig.mcpServers || {})) add('user', name);
+
+  if (scopeDir) {
+    const key = scopeDir.replace(/\\/g, '/');
+    const proj = (userConfig.projects && userConfig.projects[key]) || {};
+    for (const name of Object.keys(proj.mcpServers || {})) add('project', name);
+
+    const mcpJson = readJson(path.join(scopeDir, '.mcp.json')) || {};
+    for (const name of Object.keys(mcpJson.mcpServers || {})) add('mcp.json', name);
+  }
+
+  return servers;
+}
+
 function config() {
   const settings = readJson(path.join(CLAUDE, 'settings.json')) || {};
   const enabledPlugins = settings.enabledPlugins || {};
@@ -610,6 +661,8 @@ function config() {
     .sort()
     .map(m => ({ model: m, effortLevel: modelSettings[m].effortLevel }));
 
+  const mcpServers = mcpConfig(SCOPE_DIR);
+
   return {
     model: settings.model || '(unset — harness default)',
     cleanupPeriodDays: settings.cleanupPeriodDays,
@@ -620,6 +673,8 @@ function config() {
     skillDefs,
     prefixTokens: Math.round(prefixChars / 4),
     plugins: plugins.sort((a, b) => b.prefixTokens - a.prefixTokens),
+    mcpServers,
+    mcpPrefixTokens: mcpServers.length * MCP_SERVER_TOKENS,
   };
 }
 
@@ -1402,6 +1457,12 @@ async function main() {
   for (const p of cfg.plugins.filter(p => p.prefixTokens >= 200))
     console.log(`    ${p.name.padEnd(40)} ${String(p.agents).padStart(3)} agents ` +
       `${String(p.skills).padStart(3)} skills  ≈${(p.prefixTokens / 1e3).toFixed(1)}k tok`);
+  if (cfg.mcpServers.length) {
+    console.log(`  mcp servers=${cfg.mcpServers.length}   ` +
+      `est. prefix ≈${(cfg.mcpPrefixTokens / 1e3).toFixed(1)}k tok/request`);
+    for (const s of cfg.mcpServers)
+      console.log(`    ${redactPaths(s.name).padEnd(30)} ${s.scope}`);
+  }
   console.log('');
 
   console.log('FLAGS');

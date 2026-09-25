@@ -106,4 +106,17 @@ function turn({ id, model = 'claude-opus-5-5', ts = '2026-09-01T10:00:00.000Z',
 const turns = (n, prefix, opts = {}) =>
   Array.from({ length: n }, (_, i) => turn({ ...opts, id: `${prefix}-${i}` })).flat();
 
-module.exports = { audit, auditText, auditCwd, auditRaw, fixture, tmpClaudeDir, tmpDir, turn, turns };
+// Writes the sibling `<claudeDir>.json` file that stands in for the real
+// `~/.claude.json` (user-scope + per-project `local`-scope mcpServers live
+// there, never in settings.json — see token-audit.js `mcpConfig()`). Cleaned
+// up on exit alongside the fixture dir it sits next to.
+function tmpUserConfig(claudeDir, obj) {
+  const p = claudeDir + '.json';
+  fs.writeFileSync(p, JSON.stringify(obj));
+  tmpDirs.push(p);
+  return p;
+}
+
+module.exports = {
+  audit, auditText, auditCwd, auditRaw, fixture, tmpClaudeDir, tmpDir, tmpUserConfig, turn, turns,
+};

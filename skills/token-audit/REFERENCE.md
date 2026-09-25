@@ -627,12 +627,40 @@ description; 11 transcripts start with an `attachment` line, not the prompt, hen
 | | `modelSettings.<model>.effortLevel` | per-model override, reported per model when present (takes precedence over the root fallback in the printed line) |
 | | `enabledPlugins` | filters which cache entries count — cache/ holds stale/uninstalled plugins too |
 | `~/.claude/plugins/cache/**/.claude-plugin/plugin.json` | `agents`, `skills` | prefix weight, only for plugins enabled in `settings.json` |
+| `~/.claude.json` (sibling of `~/.claude/`, **not** inside it) | `mcpServers` | user-scope MCP servers, available in every project |
+| | `projects[<absProjectDir>].mcpServers` | project-local MCP servers (private to this user+project, e.g. `claude mcp add` without `--scope project`) |
+| `<project>/.mcp.json` | `mcpServers` | project (repo-shared) MCP servers, checked into source control |
 
 Prefix weight is estimated from each definition's `name` + `description` frontmatter at
 ~4 chars per token. It is an estimate — present it as one. Only plugins with
 `enabledPlugins["<plugin>@<marketplace>"] === true` are counted — `plugins/cache/` retains
 entries for marketplaces/plugins that were browsed or previously installed but are not
 active, and counting those inflates `PLUGIN_BLOAT`.
+
+### MCP servers — CONFIG's `mcp servers=` line
+
+Slice 14. CONFIG lists every MCP server configured for the scoped project, one line
+per server, tagged `user` / `project` / `mcp.json` for which of the 3 sources above
+declared it. No line at all when nothing is configured (keeps the summary short).
+Under `--all` (no single scoped project), only `user`-scope servers are listed —
+`project` and `mcp.json` need one project directory to check.
+
+**Location decided at implementation time**: checked a real `~/.claude.json` —
+`mcpServers` lives there, at the top level and per-project, never in `settings.json`.
+The script reads it from `<claude-dir>.json`, the sibling of whatever `--claude-dir`
+points at, so `--claude-dir DIR` and its `DIR.json` move together (tests use fixture
+dirs the same way they already fixture `settings.json` inside `--claude-dir`).
+
+**Weight estimate**: MCP tool *definitions* (name, JSON-schema, description per tool)
+are fetched live over the MCP protocol when a session connects — they are not in any
+local config file or transcript, so unlike `PLUGIN_BLOAT` (measured from real
+frontmatter files) this can't be measured, only estimated. The alternative
+considered — counting distinct `mcp__<server>__*` tool names seen in transcripts —
+undercounts (a server usually exposes more tools than were ever called) and reads
+zero for a configured-but-unused server, which is precisely the "you're paying the
+prefix cost but not using it" case this line exists to catch. So: a flat
+`MCP_SERVER_TOKENS = 800` per server (~6-10 tools/server, ~100-150 tok each is a
+typical MCP tool schema), clearly presented as an estimate, not a measurement.
 
 ## Script flags
 
