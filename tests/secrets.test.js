@@ -116,6 +116,16 @@ const SHORT_P_EXACT = [
   [`sudo /usr/bin/mysql -p${S}\nssh -p N h`, 'sudo <path> -p<secret>\nssh -p N h'],
   [`gh secret set N -b${S}`, 'gh secret set N -b<secret>'],
   [`gh secret set N -b'${S}'`, "gh secret set N -b'<secret>'"],
+  // a quoted part anywhere in a word, escaped nested quotes, deeper nesting, an
+  // unterminated quote (runs to the end); quotes and redirects kept exactly as typed
+  [`x --cmd="mysql -p${S} db"`, 'x --cmd="mysql -p<secret> db"'],
+  [`bash -c "bash -c \\"mysql -p${S}\\""`, 'bash -c "bash -c \\"mysql -p<secret>\\""'],
+  [`bash -c "sh -c 'bash -c \\"mysql -p${S}\\"'"`, `bash -c "sh -c 'bash -c \\"mysql -p<secret>\\"'"`],
+  [`"mysql -p${S}`, '"mysql -p<secret>'],
+  [`bash -c "mysql -p${S}`, 'bash -c "mysql -p<secret>'],
+  [`mysql -p'${S}`, "mysql -p'<secret>"],
+  [`mysql -p${S}>out.txt`, 'mysql -p<secret>>out.txt'],
+  [`mysql -p"${S}"'${S}' db`, `mysql -p"<secret>"'<secret>' db`],
 ];
 for (const [cmd, want] of SHORT_P_EXACT) {
   test(`secret layer: -p password redacted, rest kept — ${want}`, () => {
@@ -137,7 +147,10 @@ test('secret layer is fast on 200k-char pathological inputs', () => {
     'A_TOKEN=$(echo '.repeat(15000), 'mysql -p'.repeat(20000), '--oauth2-bearer'.repeat(20000),
     'gh secret set '.repeat(10000) + '--body', ':_authToken '.repeat(20000), 'sshpass -p'.repeat(20000),
     'docker login -p '.repeat(12000), 'mysql -pX '.repeat(20000), 'bash -c "'.repeat(20000), '"'.repeat(200000),
-    "'\\".repeat(100000), 'sshpass -f '.repeat(20000), 'gh secret set N -b'.repeat(10000), '\\'.repeat(200000)]) {
+    "'\\".repeat(100000), 'sshpass -f '.repeat(20000), 'gh secret set N -b'.repeat(10000), '\\'.repeat(200000),
+    '\\"'.repeat(100000), 'bash -c "sh -c \''.repeat(15000), 'x="'.repeat(70000), '"\\"mysql -pX '.repeat(15000),
+    'mysql ' + "-p'".repeat(60000), 'mysql -p' + '"a"'.repeat(60000), 'bash -c "' + '\\\\\\"'.repeat(50000),
+    '"'.repeat(100000) + 'mysql -pX', "'\\\"".repeat(60000), 'bash -c "sh -c \'bash -c \\"'.repeat(8000)]) {
     const t0 = Date.now();
     redactPaths(s, NO_ID);
     assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);

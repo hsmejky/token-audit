@@ -774,8 +774,9 @@ const firstDefined = (...vs) => vs.find(v => v !== undefined);
 // password occurrence in the segment redacts, and all other tokens are kept byte for
 // byte. `-p` is case-sensitive (`mysql -P 3306` is the port). mysql's password is
 // attached only (`-pX`) — `mysql -p db` is the prompt form, not a secret. One pass
-// over the words, plus one re-scan of a quoted word's inside (`bash -c "mysql -pX"`)
-// up to depth 2, so a 200k-char run stays linear.
+// over the words, plus one re-scan of each quoted part's inside (`bash -c "mysql -pX"`,
+// `--cmd="…"`, `\"` unescaped) up to SHORT_P_DEPTH levels, so a 200k-char run stays linear.
+const SHORT_P_DEPTH = 4;
 const SHORT_P_BREAK = new Set([';', '&', '|', '(', ')', '`', '\n']);
 const SHORT_P_SPACE = new Set([' ', '\t', '\r']);
 const MYSQL_CMD = /^(?:mysql|mysqldump|mysqladmin|mariadb)$/;
@@ -800,44 +801,88 @@ function shellWords(s) {
   }
   return words;
 }
-// A `-p` password word → its redacted text, or null when it is a reference (`$X`,
-// `"$X"`) — a single-quoted `'$X'` is a literal and redacts.
-function redactPassword(v) {
-  const q = v[0] === '"' || v[0] === "'" ? v[0] : '';
-  const inner = q && v.length > 1 && v.endsWith(q) ? v.slice(1, -1) : v.slice(q.length);
-  return !v || isRef(inner, q || undefined) || inner === '<secret>' ? null : `${q}<secret>${q}`;
+// End of the quoted part opening at s[i] (index of its closing quote, or `end` when
+// unterminated — it then runs to the end); `\` escapes inside double quotes only.
+function quoteEnd(s, i, end) {
+  const q = s[i];
+  let j = i + 1;
+  while (j < end && s[j] !== q) j += q === '"' && s[j] === '\\' ? 2 : 1;
+  return Math.min(j, end);
+}
+// Secret [a, b) ranges of a `-p` value v: the text of each quoted or bare part up to an
+// unquoted `<`/`>` (a redirect); quotes and the redirect stay as typed. None when v is
+// a reference (`$X`, `"$X"`) — a single-quoted `'$X'` is a literal and redacts.
+function passwordRanges(v) {
+  const ranges = [];
+  for (let i = 0; i < v.length && v[i] !== '<' && v[i] !== '>';) {
+    const q = v[i] === '"' || v[i] === "'" ? v[i] : '';
+    let a = i, b;
+    if (q) { a = i + 1; b = quoteEnd(v, i, v.length); i = b + 1; } else {
+      b = i;
+      while (b < v.length && !'"\'<>'.includes(v[b])) b += v[b] === '\\' ? 2 : 1;
+      i = b = Math.min(b, v.length);
+    }
+    const inner = v.slice(a, b);
+    if (a === (q ? 1 : 0) && isRef(inner, q || undefined)) return []; // first part only
+    if (inner && inner !== '<secret>') ranges.push([a, b]);
+  }
+  return ranges;
+}
+// Double-quoted text with `\"` `\\` `\$` `` \` `` unescaped, and pos[k] = index in t
+// where u[k]'s source starts (pos[u.length] = t.length), to map edits back.
+function unescapeDq(t) {
+  const out = [], pos = [];
+  for (let i = 0; i < t.length; i++) {
+    pos.push(i);
+    if (t[i] === '\\' && i + 1 < t.length && '"\\$`'.includes(t[i + 1])) i++;
+    out.push(t[i]);
+  }
+  pos.push(t.length);
+  return { u: out.join(''), pos };
 }
 const cmdName = w => w.slice(Math.max(w.lastIndexOf('/'), w.lastIndexOf('\\')) + 1)
   .replace(/\.exe$/i, '').toLowerCase();
-function redactShortP(s, depth = 0) {
+function redactShortP(s) {
+  let out = '', at = 0;
+  for (const [a, b, r] of shortPEdits(s, 0)) { out += s.slice(at, a) + r; at = b; }
+  return out + s.slice(at);
+}
+// Sorted [start, end, replacement] edits of s.
+function shortPEdits(s, depth) {
   const words = shellWords(s), edits = [];
   const text = w => s.slice(w.start, w.end);
   const word = j => (j < words.length && !words[j].brk ? text(words[j]) : null);
+  const redact = (from, v) => { for (const [a, b] of passwordRanges(v)) edits.push([from + a, from + b, '<secret>']); };
   // `-pX` (attached, `-p=X` too) at word j, or `-p X` taking word j+1; → words used.
   const password = (j, spaced) => {
     const t = text(words[j]), eq = t[2] === '=' ? 1 : 0;
-    if (t.length > 2) {
-      const r = redactPassword(t.slice(2 + eq));
-      if (r !== null) edits.push([words[j].start + 2 + eq, words[j].end, r]);
-      return 1;
-    }
+    if (t.length > 2) { redact(words[j].start + 2 + eq, t.slice(2 + eq)); return 1; }
     const v = spaced ? word(j + 1) : null;
     if (v === null) return 1;
-    const r = redactPassword(v);
-    if (r !== null) edits.push([words[j + 1].start, words[j + 1].end, r]);
+    redact(words[j + 1].start, v);
     return 2;
+  };
+  // Each quoted part of word w is shell text too (`bash -c "…"`, `--cmd="…"`): scan inside.
+  const nested = w => {
+    for (let j = w.start; j < w.end;) {
+      if (s[j] === '\\') { j += 2; continue; }
+      if (s[j] !== '"' && s[j] !== "'") { j++; continue; }
+      const a = j + 1, b = quoteEnd(s, j, w.end);
+      if (b > a && depth < SHORT_P_DEPTH) {
+        const { u, pos } = s[j] === '"' ? unescapeDq(s.slice(a, b)) : { u: s.slice(a, b), pos: null };
+        for (const [x, y, r] of shortPEdits(u, depth + 1)) {
+          edits.push([a + (pos ? pos[x] : x), a + (pos ? pos[y] : y), r]);
+        }
+      }
+      j = b + 1;
+    }
   };
   let mode = null; // 'mysql' | 'docker': rest of this segment is that command's args
   for (let i = 0; i < words.length; i++) {
     const w = words[i], t = text(w);
     if (w.brk) { mode = null; continue; }
     if (mode && t.startsWith('-p')) { i += password(i, mode === 'docker') - 1; continue; }
-    const q = t[0];
-    if ((q === '"' || q === "'") && t.length > 1 && t.endsWith(q)) {
-      const inner = t.slice(1, -1), r = depth < 2 ? redactShortP(inner, depth + 1) : inner;
-      if (r !== inner) edits.push([w.start + 1, w.end - 1, r]);
-      continue;
-    }
+    nested(w);
     const name = cmdName(t);
     if (MYSQL_CMD.test(name)) mode = 'mysql';
     else if (name === 'docker' && word(i + 1) === 'login') { mode = 'docker'; i++; }
@@ -851,9 +896,7 @@ function redactShortP(s, depth = 0) {
       i = Math.min(j, words.length) - 1;
     }
   }
-  let out = '', at = 0;
-  for (const [a, b, r] of edits) { out += s.slice(at, a) + r; at = b; }
-  return out + s.slice(at);
+  return edits;
 }
 function redactSecrets(s) {
   return redactShortP(s
