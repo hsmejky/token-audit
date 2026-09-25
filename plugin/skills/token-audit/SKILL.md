@@ -36,10 +36,10 @@ per project — don't mix them by default).
 ```
 
 1. Run script, default window, full text output.
-2. Each FLAGS id → playbook entry in [REFERENCE.md](REFERENCE.md). The summary shows the
-   top 4 (ranked by extra cost, then fixed priority); the `… +N more: IDs` line names the rest,
-   printed in full under `FLAGS (continued …)` in DETAIL / in `--json`'s `flags` — read those
-   too.
+2. Each FLAGS id → playbook entry in [REFERENCE.md](REFERENCE.md). The summary shows as many as
+   fit (ranked by extra cost, then fixed priority; typically 4-5, see REFERENCE.md "Summary cap
+   and ranking"); the `… +N more: IDs` line names the rest, printed in full under
+   `FLAGS (continued …)` in DETAIL / in `--json`'s `flags` — read those too.
 3. Rank by **measured** impact. Max 3 actions. State the % each targets.
 4. Compare `PER MESSAGE` vs prev window + the `TREND` line (per-week table: `--json` `weeks`)
    — trend > level.

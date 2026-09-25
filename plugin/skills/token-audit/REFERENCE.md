@@ -98,8 +98,11 @@ which misrepresented an all-time total as this-window activity.
 
 Each flag the script prints maps to exactly one entry. Quote the script's number.
 
-**Summary cap and ranking (Slice 28, HITL Q-B/Q-C)**: the summary's `FLAGS` block shows the
-top `FLAGS_SUMMARY_CAP` (4) flags in this order (`rankFlags()`):
+**Summary cap and ranking (Slice 28, HITL Q-B/Q-C)**: the summary's `FLAGS` block shows as many
+flags, in this order (`rankFlags()`), as fit the lines left after every other fixed summary line
+and the *whole* `SECURITY` block, computed first so `SECURITY` is never displaced (`fitFlags()`;
+typically 4-5 flags on real data, fewer if `SECURITY` needs more room, more if it doesn't) — plus
+one `… +N more: IDs` line for the rest:
 
 | tier | flags | sorted by |
 |---|---|---|
@@ -528,8 +531,8 @@ real data and on the fixture that fires every section at once (`tests/summary-bu
   week with data, M = weeks that had any rows. With one week of data it prints `week of <date>
   only` and no change. The full per-week table is `--json`'s `weeks`. CONFIG: see "CONFIG — one
   line" below.
-- **FLAGS** — top 4 + one `… +N more: IDs` line (see "Summary cap and ranking"); **SECURITY**
-  in full.
+- **FLAGS** — as many as fit (`fitFlags()`; typically 4-5) + one `… +N more: IDs` line for the
+  rest (see "Summary cap and ranking"); **SECURITY** in full.
 
 TOP SESSIONS is no longer printed (DETAIL's WORK UNITS / TOP SUBAGENTS cover it; `--json`
 keeps `cur.sessions`/`prev.sessions`).
@@ -538,10 +541,12 @@ keeps `cur.sessions`/`prev.sessions`).
 
 Printed by default **below** the summary (after SECURITY); `--no-detail` turns it off.
 Same data under `detail` in `--json`. Fixed-width, every line ≤ 120 chars, no blank lines
-between sections (the whole block has a line budget: ≤ 40 lines; 36 when every section is
-full). Sections, in order, plus one optional trailing `FLAGS (continued, …)` block (Slice 28)
-when the summary's FLAGS cap (`FLAGS_SUMMARY_CAP`) moved any flags here — it gets only the
-lines left of the 40 (`DETAIL_MAX_LINES`), see "Summary cap and ranking" above:
+between sections (the whole block has a hard line-budget guard: ≤ 40 lines, `DETAIL_MAX_LINES`;
+if a section's own rendering would still overrun it, `renderDetail()` cuts it down to
+`DETAIL_MAX_LINES - 1` lines and appends a `… DETAIL truncated, full data in --json` marker
+line). Sections, in order, plus one optional trailing `FLAGS (continued, …)` block (Slice 28)
+when the summary's `fitFlags()` guard moved any flags here — it gets only the lines left of the
+40 (`DETAIL_MAX_LINES`), see "Summary cap and ranking" above:
 
 - **TOP 10 WORK UNITS** (this window, parent + subagents): each main (non-subagent) session
   rolled up with the subagents it spawned (`sub.parent === main.sid`), sorted by unit cost desc.
