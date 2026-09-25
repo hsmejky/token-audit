@@ -25,11 +25,13 @@ test('modelSettings.<model>.effortLevel for 3 models: CONFIG prints each model\'
   ]);
 
   const out = auditText(dir);
-  const line = out.split('\n').find(l => l.includes('effortLevel='));
-  assert.ok(line, 'expected a CONFIG line with effortLevel=');
-  assert.ok(line.includes('claude-opus-5=high'), `expected opus-5 level, got: ${line}`);
-  assert.ok(line.includes('claude-opus-5-5=high'), `expected opus-5-5 level, got: ${line}`);
-  assert.ok(line.includes('claude-fable-5-1=medium'), `expected fable-5-1 level, got: ${line}`);
+  assert.ok(out.includes('effortLevel:'), `expected a CONFIG effortLevel: line, got:\n${out}`);
+  assert.ok(out.includes('claude-opus-5=high'), `expected opus-5 level, got:\n${out}`);
+  assert.ok(out.includes('claude-opus-5-5=high'), `expected opus-5-5 level, got:\n${out}`);
+  assert.ok(out.includes('claude-fable-5-1=medium'), `expected fable-5-1 level, got:\n${out}`);
+  for (const line of out.split('\n')) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
 });
 
 test('root-only effortLevel (no modelSettings) still reported as before', () => {
@@ -87,12 +89,13 @@ test('root effortLevel + modelSettings entries: CONFIG prints default= alongside
   ]);
 
   const out = auditText(dir);
-  const line = out.split('\n').find(l => l.includes('effortLevel='));
-  assert.ok(line, 'expected a CONFIG line with effortLevel=');
-  assert.ok(line.includes('default=low'), `expected default=low, got: ${line}`);
-  assert.ok(line.includes('claude-opus-5=high'), `expected opus-5 level, got: ${line}`);
-  assert.ok(line.includes('claude-opus-5-5=high'), `expected opus-5-5 level, got: ${line}`);
-  assert.ok(line.includes('claude-fable-5-1=medium'), `expected fable-5-1 level, got: ${line}`);
+  assert.ok(out.includes('default=low'), `expected default=low, got:\n${out}`);
+  assert.ok(out.includes('claude-opus-5=high'), `expected opus-5 level, got:\n${out}`);
+  assert.ok(out.includes('claude-opus-5-5=high'), `expected opus-5-5 level, got:\n${out}`);
+  assert.ok(out.includes('claude-fable-5-1=medium'), `expected fable-5-1 level, got:\n${out}`);
+  for (const line of out.split('\n')) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
 });
 
 // CONFIG must read settings.json from --claude-dir, never the real ~/.claude

@@ -667,7 +667,7 @@ description; 11 transcripts start with an `attachment` line, not the prompt, hen
 | `~/.claude/settings.json` | `model` | global default; `OPUS_HEAVY` context |
 | | `cleanupPeriodDays` | transcript retention — feeds `SECURITY`, not `FLAGS` |
 | | `effortLevel` / `env.EFFORT_LEVEL` | root-level fallback, reported, low impact |
-| | `modelSettings.<model>.effortLevel` | per-model override, reported per model when present (takes precedence over the root fallback in the printed line) |
+| | `modelSettings.<model>.effortLevel` | per-model override, reported per model when present (root fallback still shown as `default=`) |
 | | `enabledPlugins` | filters which cache entries count — cache/ holds stale/uninstalled plugins too |
 | `~/.claude/plugins/cache/**/.claude-plugin/plugin.json` | `agents`, `skills` | prefix weight, only for plugins enabled in `settings.json` |
 | `~/.claude.json` (sibling of `~/.claude/`, **not** inside it) | `mcpServers` | user-scope MCP servers, available in every project |
@@ -679,6 +679,25 @@ Prefix weight is estimated from each definition's `name` + `description` frontma
 `enabledPlugins["<plugin>@<marketplace>"] === true` are counted — `plugins/cache/` retains
 entries for marketplaces/plugins that were browsed or previously installed but are not
 active, and counting those inflates `PLUGIN_BLOAT`.
+
+### CONFIG `effortLevel` line — wraps once per-model settings exist (Slice 20)
+
+With no `modelSettings` (or one root-only value), `effortLevel=` stays inline on the
+`model=`/`cleanupPeriodDays=` line, as before. Once any `modelSettings.<model>.effortLevel`
+is set, a single `effortLevel=a=x, b=y, c=z, default=w` line runs past 120 chars with as few
+as 3 models — so it moves to its own `effortLevel:` line (with `default=<level>` when the
+root fallback is also set), followed by one indented line per model
+(`    <model>=<level>`), same list style as the `plugins=`/`mcp servers=` rows below it.
+
+### FLAGS/SECURITY text — wraps instead of truncating (Slice 20)
+
+A flag's `text` can be a fixed advisory message (e.g. `NO_RETENTION`'s "transcripts …
+sit in plaintext indefinitely", 109 chars) that alone exceeds `FLAG_TEXT_WIDTH` (103 —
+`120` minus the 17-char `  <id padded to 14> ` gutter). Unlike TOP SESSIONS/task text,
+this is advice, not a label, so it is never cut with `…`; instead it word-wraps onto
+continuation lines indented 17 spaces to align under the first line's text. POLLING and
+BOILERPLATE lines are unaffected — their variable part is already bounded to
+`FLAG_TEXT_WIDTH` by `fitMiddle`/`fitPrefix` before printing.
 
 ### MCP servers — CONFIG's `mcp servers=` line
 

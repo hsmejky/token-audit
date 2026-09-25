@@ -1365,6 +1365,30 @@ function fitPrefix(prefix, n) {
 const sharePct = share => `${share > 0 && share < 0.005 ? '<1' : (100 * share).toFixed(0)}%`;
 // FLAGS lines are `  <id padded to 14> <text>`; text keeps the line ≤ 120 chars.
 const FLAG_TEXT_WIDTH = 120 - 17;
+// Most flag text already fits FLAG_TEXT_WIDTH (POLLING/BOILERPLATE are pre-fit with
+// fitMiddle/fitPrefix, both bounded to FLAG_TEXT_WIDTH). A static message (e.g.
+// NO_RETENTION) can still run long; rather than truncate advice text with `…`, wrap it
+// onto continuation lines indented to FLAG_TEXT_WIDTH's own margin, so every line stays
+// ≤ 120 chars and no words are lost. Greedy word wrap; never splits a word.
+function wrapWords(text, width) {
+  const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if ([...next].length > width && cur) { lines.push(cur); cur = w; }
+    else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+// Prints one FLAGS/SECURITY row; wraps f.text (already redacted/fit upstream) instead
+// of letting it overrun 120 chars.
+function printFlagLine(f) {
+  const lines = wrapWords(f.text, FLAG_TEXT_WIDTH);
+  console.log(`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`);
+  for (let i = 1; i < lines.length; i++) console.log(`${' '.repeat(17)}${lines[i]}`);
+}
 const TOP_SUBAGENTS = 10;
 const TASK_WIDTH = 70;
 const TOP_UNITS = 10;
@@ -1607,12 +1631,18 @@ async function main() {
   console.log('');
 
   console.log('CONFIG');
-  const effortText = cfg.modelEffort.length
-    ? [...cfg.modelEffort.map(m => `${m.model}=${m.effortLevel}`),
-        ...(cfg.effortLevel ? [`default=${cfg.effortLevel}`] : [])].join(', ')
-    : (cfg.effortLevel ?? 'unset');
-  console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}   ` +
-    `effortLevel=${effortText}`);
+  // A single-line `effortLevel=a=x, b=y, c=z` grows past 120 chars once 3+ per-model
+  // entries are set (real machines see this — Slice 20). Root-only/unset stays a short
+  // inline `effortLevel=`; per-model entries move to their own indented lines instead,
+  // matching the plugins/mcp-servers list style just below.
+  if (cfg.modelEffort.length) {
+    console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}`);
+    console.log('  effortLevel:' + (cfg.effortLevel ? ` default=${cfg.effortLevel}` : ''));
+    for (const m of cfg.modelEffort) console.log(`    ${m.model}=${m.effortLevel}`);
+  } else {
+    console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}   ` +
+      `effortLevel=${cfg.effortLevel ?? 'unset'}`);
+  }
   console.log(`  plugins=${cfg.pluginCount}   agent defs=${cfg.agentDefs}   skill defs=${cfg.skillDefs}   ` +
     `fixed prefix ≈${(cfg.prefixTokens / 1e3).toFixed(1)}k tok/request`);
   for (const p of cfg.plugins.filter(p => p.prefixTokens >= 200))
@@ -1627,12 +1657,12 @@ async function main() {
   console.log('');
 
   console.log('FLAGS');
-  for (const f of fl) console.log(`  ${f.id.padEnd(14)} ${f.text}`);
+  for (const f of fl) printFlagLine(f);
   console.log('');
 
   console.log('SECURITY (confidentiality, not cost)');
   if (secFl.length) {
-    for (const f of secFl) console.log(`  ${f.id.padEnd(14)} ${f.text}`);
+    for (const f of secFl) printFlagLine(f);
   } else {
     console.log('  none');
   }
