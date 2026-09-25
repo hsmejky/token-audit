@@ -14,10 +14,12 @@ const SCRIPT = path.join(__dirname, '..', 'skills', 'token-audit', 'scripts', 't
 
 const fixture = name => path.join(__dirname, 'fixtures', name);
 
-// Window wide enough that every fixture row lands in `cur`.
+// Window wide enough that every fixture row lands in `cur`, unless the
+// caller passes its own --days (e.g. to test window filtering).
 function audit(claudeDir, ...args) {
+  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
   const out = execFileSync(process.execPath,
-    [SCRIPT, '--claude-dir', claudeDir, '--days', '36500', '--json', ...args],
+    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, '--json', ...args],
     { encoding: 'utf8' });
   return JSON.parse(out);
 }

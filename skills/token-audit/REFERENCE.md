@@ -23,6 +23,7 @@ rather than re-derived per model.
 | Opus 5.5 | 4 | 5.00 | 8 | 0.20 | 20 |
 | Opus 5 | 5 | 6.25 | 10 | 0.50 | 25 |
 | Fable 5.1 | 10 | 12.50 | 20 | 0.25 | 50 |
+| Fable 5 | 10 | 12.50 | 20 | 1.00 | 50 |
 | Sonnet 5 | 2 | 2.50 | 4 | 0.20 | 10 |
 | Sonnet 4.6 | 3 | 3.75 | 6 | 0.30 | 15 |
 | Haiku 4.5 | 1 | 1.25 | 2 | 0.10 | 5 |
@@ -34,6 +35,12 @@ legacy pricing on the same page. The script gives `opus-5-5` its own rate row
 `Opus` family bucket in SPEND/`byFamily` — the plan only asked for Fable to show as
 its own SPEND family, and splitting the SPEND bucket too would move `OPUS_HEAVY`'s
 threshold behaviour out of scope for this slice.
+
+Likewise `fable-5` (legacy) does **not** match `fable-5-1`/`fable-5.1` (current):
+input, cache write and output are identical, but cache read is $1/MTok for Fable 5
+vs $0.25/MTok for Fable 5.1 — a plain `includes('fable')` match silently priced
+Fable 5 at the Fable 5.1 rate. The script matches `fable-5-1`/`fable-5.1` before the
+looser `fable-5`, and both still roll into the same `Fable` family bucket in SPEND.
 
 Read multiplier is **not** a flat 0.1× for every model — the source page gives it per
 row (e.g. Opus 5.5 reads at 0.05× input, Fable 5.1 at 0.025×), so the table above is
@@ -53,6 +60,11 @@ by the literal model string. Printed as its own line below `SPEND` in the text r
 (only when non-empty) and always present as top-level `unpriced` in `--json`, so a
 new/renamed model family shows up as a visible line item instead of silently
 vanishing from the totals the way Fable did before this fix.
+
+`UNPRICED` is windowed the same as `SPEND` — only rows with `ts >= curFrom` (the
+`--days` window) are counted, not all-time. It used to ignore `--days` entirely and
+count every unpriced row ever seen while printing under the windowed `SPEND` header,
+which misrepresented an all-time total as this-window activity.
 
 ## Flag playbook
 

@@ -30,10 +30,15 @@ const ROOT = path.join(CLAUDE, 'projects');
 // row — it is NOT the same price as Opus 5 (cheaper across the board), so it
 // gets a distinct rate here even though it still rolls into the "Opus" family
 // bucket in SPEND (see REFERENCE.md).
+// Fable 5 (legacy) also has its own row — a plain `includes('fable')` match
+// used to catch both Fable 5 and Fable 5.1 under the Fable 5.1 rate, but the
+// source page prices Fable 5's cache read at $1/MTok, not $0.25 — 4x off.
+// Both still roll into the single "Fable" SPEND family.
 const PRICES = {
   opus: [5, 6.25, 10, 0.5, 25],
   opus55: [4, 5, 8, 0.2, 20],
-  fable: [10, 12.5, 20, 0.25, 50],
+  fable51: [10, 12.5, 20, 0.25, 50],
+  fable5: [10, 12.5, 20, 1, 50],
   sonnet46: [3, 3.75, 6, 0.3, 15],
   sonnet: [2, 2.5, 4, 0.2, 10],
   haiku: [1, 1.25, 2, 0.1, 5],
@@ -42,7 +47,9 @@ function rateFor(model) {
   const m = model.toLowerCase();
   if (m.includes('opus-5-5') || m.includes('opus-5.5')) return ['Opus', PRICES.opus55];
   if (m.includes('opus')) return ['Opus', PRICES.opus];
-  if (m.includes('fable')) return ['Fable', PRICES.fable];
+  if (m.includes('fable-5-1') || m.includes('fable-5.1')) return ['Fable', PRICES.fable51];
+  if (m.includes('fable-5')) return ['Fable', PRICES.fable5];
+  if (m.includes('fable')) return ['Fable', PRICES.fable51];
   if (m.includes('sonnet-4-6') || m.includes('sonnet-4.6')) return ['Sonnet', PRICES.sonnet46];
   if (m.includes('sonnet')) return ['Sonnet', PRICES.sonnet];
   if (m.includes('haiku')) return ['Haiku', PRICES.haiku];
@@ -76,11 +83,13 @@ function walk(dir, out = []) {
 // token volume (input + cache write + cache read + output), keyed by the
 // model string as it appears in the transcript. Not deduped by message.id —
 // these tokens are never priced, so exact turn accounting doesn't matter,
-// only "were they seen at all".
+// only "were they seen at all". Kept as raw per-row entries (with ts) rather
+// than aggregated here, so the caller can window them the same way as SPEND
+// (see aggregateUnpriced) instead of always counting all-time.
 async function collect() {
   const rows = [];
   const byId = new Map();
-  const unpriced = new Map();
+  const unpriced = [];
   for (const f of walk(ROOT)) {
     const dir = path.dirname(f);
     const isSub = path.basename(dir) === 'subagents';
@@ -94,13 +103,12 @@ async function collect() {
       const u = j.message && j.message.usage;
       if (!u) continue;
       const modelName = j.message.model || '(unknown)';
+      const ts = Date.parse(j.timestamp || '') || 0;
       const r = rateFor(modelName);
       if (!r) {
         const tok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) +
           (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
-        const e = unpriced.get(modelName) || { model: modelName, rows: 0, tokens: 0 };
-        e.rows++; e.tokens += tok;
-        unpriced.set(modelName, e);
+        unpriced.push({ ts, model: modelName, tokens: tok });
         continue;
       }
       const [family, p] = r;
@@ -114,7 +122,6 @@ async function collect() {
       const inp = u.input_tokens || 0;
 
       const cost = (inp * p[0] + w5 * p[1] + w1h * p[2] + read * p[3] + out * p[4]) / 1e6;
-      const ts = Date.parse(j.timestamp || '') || 0;
       const row = { ts, sid, project, isSub, family, cost, ctx: read + ccTotal, out };
       const id = j.message.id;
       const seen = id && byId.get(id);
@@ -126,7 +133,21 @@ async function collect() {
       }
     }
   }
-  return { rows, unpriced: [...unpriced.values()].sort((a, b) => b.tokens - a.tokens) };
+  return { rows, unpriced };
+}
+
+// Aggregates raw unpriced rows into { model, rows, tokens } entries, keeping
+// only rows within [fromTs, +inf) — the same window SPEND is computed over,
+// so UNPRICED doesn't silently report all-time totals under a windowed header.
+function aggregateUnpriced(rows, fromTs) {
+  const byModel = new Map();
+  for (const r of rows) {
+    if (r.ts < fromTs) continue;
+    const e = byModel.get(r.model) || { model: r.model, rows: 0, tokens: 0 };
+    e.rows++; e.tokens += r.tokens;
+    byModel.set(r.model, e);
+  }
+  return [...byModel.values()].sort((a, b) => b.tokens - a.tokens);
 }
 
 // -------------------------------------------------------------- summarize
@@ -332,8 +353,8 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
     console.error('no transcripts at ' + ROOT);
     process.exit(1);
   }
-  const { rows, unpriced } = await collect();
-  if (!rows.length && !unpriced.length) {
+  const { rows, unpriced: unprizedRows } = await collect();
+  if (!rows.length && !unprizedRows.length) {
     console.error('no transcripts found in ' + ROOT);
     process.exit(1);
   }
@@ -344,6 +365,9 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
   const cur = summarize(rows.filter(r => r.ts >= curFrom));
   const prev = summarize(rows.filter(r => r.ts >= prevFrom && r.ts < curFrom));
   const all = summarize(rows);
+  // Windowed the same as SPEND (cur), not all-time — otherwise UNPRICED prints
+  // all-history totals under a header that says "this window".
+  const unpriced = aggregateUnpriced(unprizedRows, curFrom);
   const cfg = config();
   // spans measured over full history, not clipped to the window
   const spans = new Map(all.sessions.map(s => [s.sid, s.last - s.first]));
