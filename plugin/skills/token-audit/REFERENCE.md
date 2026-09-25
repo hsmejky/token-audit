@@ -80,13 +80,14 @@ with non-zero usage (unexpected, but not ruled out) is not excluded — it still
 through the normal UNPRICED + warning path below.
 
 The text report lists the `UNPRICED` models (at most 3 rows + `… +N more`, Slice 28 cap)
-followed by one `WARNING` line saying to add each price to `PRICES` + this table (`--json`
-lists every model and doesn't need a separate field — the model already being listed under
-`unpriced` is the signal). By
-construction every `UNPRICED` entry is a model `rateFor` doesn't have an exact row for,
-so the warning fires for exactly the same set as the one AC asked to be covered: "every
-model present in real data either matches an exact known row or shows up in the new-model
-warning" holds automatically, not by separate bookkeeping.
+followed by one `WARNING` line naming the unpriced model(s) (up to a 120-char budget; once
+that's used up it names as many as fit then points at "see rows above / --json" for the rest,
+Slice 28 review) and saying to add each price to `PRICES` + this table (`--json` lists every
+model and doesn't need a separate field — the model already being listed under `unpriced` is
+the signal). By construction every `UNPRICED` entry is a model `rateFor` doesn't have an exact
+row for, so the warning fires for exactly the same set as the one AC asked to be covered: "every
+model present in real data either matches an exact known row or shows up in the
+UNPRICED list (text: top 3, --json: all)" holds automatically, not by separate bookkeeping.
 
 `UNPRICED` is windowed the same as `SPEND` — only rows with `ts >= curFrom` (the
 `--days` window) are counted, not all-time. It used to ignore `--days` entirely and
@@ -96,6 +97,12 @@ which misrepresented an all-time total as this-window activity.
 ## Flag playbook
 
 Each flag the script prints maps to exactly one entry. Quote the script's number.
+
+**Summary cap (Slice 28)**: the summary's `FLAGS` block shows only the top `FLAGS_SUMMARY_CAP`
+(4) flags by dollar amount (a flag with no natural dollar figure — `BIG_CTX`, `PLUGIN_BLOAT`,
+`CLEAN` — sorts last). The rest print under a second `FLAGS (continued, …)` block in DETAIL
+(capped the same way as the MCP/UNPRICED/plugin lists, `… +N more`), or `--json` only under
+`--no-detail`. `--json`'s `flags` array is unranked and always has every flag.
 
 ### `MULTIDAY` — sessions spanning more than a day
 
@@ -487,7 +494,8 @@ Anchor for trend questions. 283 sessions, 63 910 transcript lines, 198 MB.
 Printed by default **below** the summary (after SECURITY); `--no-detail` turns it off.
 Same data under `detail` in `--json`. Fixed-width, every line ≤ 120 chars, no blank lines
 between sections (the whole block has a line budget: ≤ 40 lines; 36 when every section is
-full). Sections, in order:
+full). Sections, in order, plus one optional trailing `FLAGS (continued, …)` block (Slice 28)
+when the summary's FLAGS cap (`FLAGS_SUMMARY_CAP`) moved any flags here:
 
 - **TOP 10 WORK UNITS** (this window, parent + subagents): each main (non-subagent) session
   rolled up with the subagents it spawned (`sub.parent === main.sid`), sorted by unit cost desc.
@@ -719,10 +727,11 @@ BOILERPLATE lines are unaffected — their variable part is already bounded to
 
 ### MCP servers — CONFIG's `mcp servers=` line
 
-Slice 14. CONFIG lists the MCP servers configured for the scoped project, one line
-per server, tagged `user` / `project` / `mcp.json` for which of the 3 sources above
-declared it. Slice 28: at most 3 server rows + one `… +N more (full list in --json)` line
-(same cap for UNPRICED models and the per-plugin rows under `plugins=`); `--json` keeps all. No line at all when nothing is configured (keeps the summary short).
+Slice 14. CONFIG lists the MCP servers configured for the scoped project, tagged
+`user` / `project` / `mcp.json` for which of the 3 sources above declared it. Slice 28:
+at most 3 server rows (one line each) + one `… +N more (full list in --json)` line — the
+same cap used for the UNPRICED models list and the per-plugin rows under `plugins=`;
+`--json` keeps all. No line at all when nothing is configured (keeps the summary short).
 Under `--all` (no single scoped project), only `user`-scope servers are listed —
 `project` and `mcp.json` need one project directory to check.
 
@@ -755,7 +764,7 @@ typical MCP tool schema), clearly presented as an estimate, not a measurement.
 | flag | default | meaning |
 |---|---|---|
 | `--days N` | 14 | window; the previous N days form the comparison window |
-| `--top N` | 8 | sessions listed |
+| `--top N` | 8 | sessions kept in `--json`'s `cur.sessions`/`prev.sessions`; TOP SESSIONS is no longer printed in the text summary (Slice 28) |
 | `--json` | off | full structured dump incl. per-week and per-plugin detail |
 | `--claude-dir DIR` | `~/.claude` | read transcripts + settings from DIR instead (tests use fixture dirs) |
 | `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |

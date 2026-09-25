@@ -1235,19 +1235,25 @@ function boilerplate(rows) {
       cost: g.cost, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions || (a.prefix < b.prefix ? -1 : 1)) };
 }
+// `amount` is the dollar figure each flag represents (0 when a flag has no
+// natural dollar amount, e.g. a ratio/threshold signal) — Slice 28 uses it to
+// rank flags for the summary's top-N cap (see FLAGS_SUMMARY_CAP in main()).
+// It never prints; `text` (unchanged) is still the only thing shown.
 function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
   const out = [];
-  const add = (id, text) => out.push({ id, text });
+  const add = (id, text, amount = 0) => out.push({ id, text, amount });
 
   const multiday = cur.sessions.filter(s => span(s) > DAY);
   if (multiday.length) {
     const w = multiday.slice().sort((a, b) => b.cost - a.cost)[0];
     add('MULTIDAY', `${multiday.length} session(s) span >1 day — worst ${w.sid.slice(0, 8)} ` +
-      `${(span(w) / DAY).toFixed(1)}d ${money(w.cost)}`);
+      `${(span(w) / DAY).toFixed(1)}d ${money(w.cost)}`,
+      multiday.reduce((a, s) => a + s.cost, 0));
   }
   const long = cur.sessions.filter(s => s.msgs >= 250);
   if (long.length) {
-    add('LONG_SESSION', `${long.length} session(s) ≥250 msgs = ${(100 * cur.longShare).toFixed(0)}% of spend`);
+    add('LONG_SESSION', `${long.length} session(s) ≥250 msgs = ${(100 * cur.longShare).toFixed(0)}% of spend`,
+      long.reduce((a, s) => a + s.cost, 0));
   }
   // Subagents over LONG_AGENT_TURNS turns or with a peak context over
   // LONG_AGENT_CTX — the main lever design.md Q5 identifies. Share is of
@@ -1255,9 +1261,10 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
   const longAgents = cur.sessions.filter(s =>
     s.isSub && (s.msgs > LONG_AGENT_TURNS || s.ctxMax > LONG_AGENT_CTX));
   if (longAgents.length) {
-    const share = cur.cost ? longAgents.reduce((a, s) => a + s.cost, 0) / cur.cost : 0;
+    const agentCost = longAgents.reduce((a, s) => a + s.cost, 0);
+    const share = cur.cost ? agentCost / cur.cost : 0;
     add('LONG_AGENT', `${longAgents.length} subagent(s) over ${LONG_AGENT_TURNS} turns or ` +
-      `${(LONG_AGENT_CTX / 1e3).toFixed(0)}k peak ctx = ${(100 * share).toFixed(0)}% of spend`);
+      `${(LONG_AGENT_CTX / 1e3).toFixed(0)}k peak ctx = ${(100 * share).toFixed(0)}% of spend`, agentCost);
   }
   if (polls.length) {
     const cost = polls.reduce((a, g) => a + g.cost, 0);
@@ -1265,7 +1272,7 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
     const head = `${polls.length} run(s) ≥${POLL_MIN_CALLS}×/session = ${money(cost)}, ` +
       `${sharePct(share)} of spend; top ${polls[0].count}× `;
     out.push({ id: 'POLLING', text: head + fitMiddle(polls[0].key, FLAG_TEXT_WIDTH - head.length),
-      groups: polls });
+      amount: cost, groups: polls });
   }
   const boilers = boiler.groups;
   if (boilers.length) {
@@ -1274,19 +1281,22 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
     const head = `${boilers.length} prefix(es) = ${money(cost)}, ${sharePct(share)} of spend; ` +
       `top ${b.sessions} sess/${b.turns} turns `;
     out.push({ id: 'BOILERPLATE', text: head + fitPrefix(b.prefix, FLAG_TEXT_WIDTH - head.length),
-      groups: boilers });
+      amount: cost, groups: boilers });
   }
   if (cur.avgCtx > 150e3) {
     add('BIG_CTX', `avg context/message ${(cur.avgCtx / 1e3).toFixed(0)}k (threshold 150k)`);
   }
   if (cur.topShare > 0.5) {
-    add('CONCENTRATION', `top 5 sessions = ${(100 * cur.topShare).toFixed(0)}% of spend`);
+    add('CONCENTRATION', `top 5 sessions = ${(100 * cur.topShare).toFixed(0)}% of spend`,
+      cur.sessions.slice(0, 5).reduce((a, s) => a + s.cost, 0));
   }
   if (prev && prev.costPerMsg > 0 && cur.costPerMsg > prev.costPerMsg * 1.25) {
-    add('REGRESSION', `cost/message +${(100 * (cur.costPerMsg / prev.costPerMsg - 1)).toFixed(0)}% vs previous window`);
+    add('REGRESSION', `cost/message +${(100 * (cur.costPerMsg / prev.costPerMsg - 1)).toFixed(0)}% vs previous window`,
+      cur.cost);
   }
   if (cur.opusShare > 0.9) {
-    add('OPUS_HEAVY', `Opus = ${(100 * cur.opusShare).toFixed(0)}% of spend — no model-per-phase split visible`);
+    add('OPUS_HEAVY', `Opus = ${(100 * cur.opusShare).toFixed(0)}% of spend — no model-per-phase split visible`,
+      cur.byFamily.Opus || 0);
   }
   if (cfg.agentDefs > 20 || cfg.prefixTokens > 5000) {
     // Slice 20 3rd review, finding 6 (pre-existing): p.name is attacker/author
@@ -1428,6 +1438,12 @@ function printFlagLine(f) {
 // rows + one `… +N more` line, so it can't grow the ≤ 24-line summary without
 // bound. --json keeps every entry.
 const SUMMARY_LIST_CAP = 3;
+// Slice 28 (design.md Q3, HITL decision): FLAGS in the summary keeps only the
+// top FLAGS_SUMMARY_CAP by dollar amount; the rest move to DETAIL (own
+// SUMMARY_LIST_CAP-style cap there) or, with --no-detail, --json only. Tuned so
+// the fixture that fires every section at once (tests/summary-budget.test.js)
+// stays within the summary's 24-line budget.
+const FLAGS_SUMMARY_CAP = 4;
 function printCapped(items, printRow, indent) {
   for (const it of items.slice(0, SUMMARY_LIST_CAP)) printRow(it);
   if (items.length > SUMMARY_LIST_CAP)
@@ -1721,9 +1737,38 @@ async function main() {
   if (unpriced.length) {
     const totTok = unpriced.reduce((a, u) => a + u.tokens, 0);
     console.log(`UNPRICED     ${unpriced.length} model(s), ${(totTok / 1e6).toFixed(2)}M tokens not in pricing table`);
-    printCapped(unpriced, u => console.log(`  ${fit(u.model, 28).padEnd(28)} rows=${String(u.rows).padStart(6)}  ` +
-      `tokens=${(u.tokens / 1e6).toFixed(2)}M`), '  ');
-    console.log(`  WARNING: unknown model(s) -- add each price to PRICES + REFERENCE.md`);
+    // Slice 28 review, finding a (part 1): name width was hard-capped at 28 even
+    // when the line had room for the original 40 — restore up to 40, but never
+    // past what keeps the whole row ≤ 120 chars (same dynamic-budget pattern as
+    // the banner/session-row project name above).
+    printCapped(unpriced, u => {
+      const suffix = ` rows=${String(u.rows).padStart(6)}  tokens=${(u.tokens / 1e6).toFixed(2)}M`;
+      const width = Math.min(40, Math.max(10, 120 - 2 - [...suffix].length));
+      console.log(`  ${fit(u.model, width).padEnd(width)}${suffix}`);
+    }, '  ');
+    // Slice 28 review, finding a (part 2): the merged WARNING used to be generic
+    // and never named the model(s) it's about. Name every unpriced model up to a
+    // 120-char budget; once that's used up, point at the rows above (already
+    // capped to SUMMARY_LIST_CAP) and --json for the rest instead of truncating
+    // a name mid-word.
+    {
+      const prefix = '  WARNING: unpriced model(s) ';
+      const suffix = ' -- add each price to PRICES + REFERENCE.md';
+      const budget = Math.max(10, 120 - [...prefix].length - [...suffix].length);
+      const names = unpriced.map(u => u.model);
+      const named = [];
+      for (const n of names) {
+        const next = [...named, n].join(', ');
+        if ([...next].length > budget) break;
+        named.push(n);
+      }
+      const joined = named.length === names.length
+        ? named.join(', ')
+        : named.length
+          ? `${named.join(', ')} (+${names.length - named.length} more, see rows above / --json)`
+          : 'see rows above / --json';
+      console.log(prefix + joined + suffix);
+    }
   }
   console.log('');
   console.log(`PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
@@ -1733,23 +1778,26 @@ async function main() {
   console.log(`ALL-TIME     ${money(all.cost)} over ${all.sessions.length} sessions, ${all.msgs} messages`);
   console.log('');
 
-  console.log(`TOP ${TOP} SESSIONS (this window)`);
-  for (const s of cur.sessions.slice(0, TOP)) {
-    const sp = span(s) > 0 ? (span(s) / DAY).toFixed(1) + 'd' : '<1d';
-    // Same dynamic-budget approach as the header above: fit the project name into
-    // whatever's left of 120 chars after the rest of the line, not a static guess.
-    const prefix = `  ${s.sid.slice(0, 8)}  ${money(s.cost).padStart(7)}  ${pct(s.cost / cur.cost).padStart(6)}  ` +
-      `msgs=${String(s.msgs).padStart(4)}  avgCtx=${k(s.ctx / s.msgs).padStart(5)}  ` +
-      `maxCtx=${k(s.ctxMax).padStart(5)}  span=${sp.padStart(5)}  ${s.isSub ? 'sub ' : ''}`;
-    const budget = Math.max(10, 120 - [...prefix].length);
-    console.log(prefix + fitMiddle(s.project, budget));
+  // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
+  // it overlaps WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
+  // overrun sources on real --all data. Still in --json as cur.sessions (trimmed to
+  // --top, unchanged). WEEKS (a full per-week table, unbounded with history length)
+  // is replaced by one TREND line spanning all history; --json keeps the full table
+  // under `weeks`.
+  {
+    const wks = weeks(rows);
+    if (wks.length) {
+      const first = wks[0], last = wks[wks.length - 1];
+      const delta = (wks.length > 1 && first.costPerMsg > 0)
+        ? `  ${last.costPerMsg >= first.costPerMsg ? '+' : ''}` +
+          `${(100 * (last.costPerMsg / first.costPerMsg - 1)).toFixed(0)}%`
+        : '';
+      console.log(`TREND        ${wks.length} week(s)  ${first.week} ${money(first.costPerMsg)}/msg → ` +
+        `${last.week} ${money(last.costPerMsg)}/msg${delta}   full table in --json`);
+    } else {
+      console.log('TREND        no data');
+    }
   }
-  console.log('');
-
-  console.log('WEEKS (all history)');
-  for (const w of weeks(rows))
-    console.log(`  ${w.week}  ${String(w.sessions).padStart(4)} sess  ${money(w.cost).padStart(8)}  ` +
-      `ctx ${k(w.avgCtx).padStart(5)}/msg  ${money(w.costPerMsg)}/msg`);
   console.log('');
 
   console.log('CONFIG');
@@ -1797,8 +1845,18 @@ async function main() {
   }
   console.log('');
 
+  // Slice 28 (design.md Q3, HITL decision): summary FLAGS is capped to the top
+  // FLAGS_SUMMARY_CAP by dollar amount (flags() attaches `amount`; a flag with no
+  // natural dollar figure sorts last, e.g. BIG_CTX/PLUGIN_BLOAT/CLEAN). The rest
+  // move to DETAIL under their own capped list (DETAIL_FLAGS_CAP), never silently
+  // dropped — --json's `flags` always carries every flag, unranked, unchanged.
   console.log('FLAGS');
-  for (const f of fl) printFlagLine(f);
+  const rankedFlags = fl.slice().sort((a, b) => b.amount - a.amount);
+  const flagsShown = rankedFlags.slice(0, FLAGS_SUMMARY_CAP);
+  const flagsMoved = rankedFlags.slice(FLAGS_SUMMARY_CAP);
+  for (const f of flagsShown) printFlagLine(f);
+  if (flagsMoved.length)
+    console.log(`  … +${flagsMoved.length} more (${det ? 'see DETAIL / --json' : 'full list in --json'})`);
   console.log('');
 
   console.log('SECURITY (confidentiality, not cost)');
@@ -1811,6 +1869,10 @@ async function main() {
   if (det) {
     console.log('');
     for (const l of renderDetail(det)) console.log(l);
+    if (flagsMoved.length) {
+      console.log(`FLAGS (continued, by $ amount, ${flagsMoved.length} total)`);
+      printCapped(flagsMoved, printFlagLine, '  ');
+    }
   }
 }
 

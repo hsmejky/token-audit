@@ -54,13 +54,19 @@ test('same subagent id under two different parents stays two sessions, not merge
     'each session must total only its own turns, not the merged pair');
 });
 
-test('TOP SESSIONS text report shows the project name for a subagent, not the session uuid', () => {
+// Slice 28 (design.md Q3, HITL decision): TOP SESSIONS was dropped from the
+// summary (it overlapped DETAIL's WORK UNITS / TOP SUBAGENTS) — this project-
+// name-not-uuid guarantee now lives in DETAIL's WORK UNITS project column
+// instead (a subagent-only unit is keyed by its parent dir, sid = first 8
+// chars of the parent; --json still carries the full project on every session
+// regardless, see the audit()-based test above).
+test('DETAIL WORK UNITS shows the project name for a subagent-only unit, not the session uuid', () => {
   const dir = tmpClaudeDir({
     'projects/C--Users-zq-demo-proj/3ac91e04-uuid/subagents/agent-a1.jsonl': turn({ id: 'sub-1' }),
   });
   const out = auditText(dir);
-  const topLine = out.split('\n').find(l => l.includes('agent-a1'));
-  assert.ok(topLine, 'expected a TOP SESSIONS line for the subagent');
-  assert.ok(topLine.includes('C--Users-zq-demo-proj'), `expected project name, got: ${topLine}`);
-  assert.ok(!topLine.includes('3ac91e04-uuid'), `must not show the session uuid as project: ${topLine}`);
+  const unitLine = out.split('\n').find(l => l.startsWith('  3ac91e04'));
+  assert.ok(unitLine, `expected a WORK UNITS line for the orphan unit, got:\n${out}`);
+  assert.ok(unitLine.includes('C--Users-zq-demo-proj'), `expected project name, got: ${unitLine}`);
+  assert.ok(!unitLine.includes('3ac91e04-uuid'), `must not show the full session uuid as project: ${unitLine}`);
 });

@@ -40,9 +40,13 @@ test('projectFolder maps underscore, dot, and space to dash (not just \\ / :)', 
 });
 
 // Slice 20 review: real project folder names can run well past the header's
-// and TOP SESSIONS's own budget (~38 / ~47 chars) before hitting the 120-char
-// line cap — both must fitMiddle() the project name rather than overrun it.
-test('CONFIG-adjacent header and TOP SESSIONS line both stay <=120 chars for a long project path', () => {
+// own budget (~38 chars) before hitting the 120-char line cap — the header must
+// fitMiddle() the project name rather than overrun it. (Slice 28: TOP SESSIONS,
+// the other line this test used to check, was dropped from the summary — see
+// design.md Q3; DETAIL's WORK UNITS project column replaces it, but that one
+// uses a fixed 40-char fit() cap, not a dynamic budget, so it can't overrun
+// regardless of project-name length — nothing left there to regression-test.)
+test('CONFIG-adjacent header stays <=120 chars for a long project path', () => {
   const longPath = WIN ? 'C:\\Users\\jdoe\\' + 'p'.repeat(160) : '/Users/jdoe/' + 'p'.repeat(160);
   const mapped = path.resolve(longPath).replace(/[^a-zA-Z0-9]/g, '-');
   const dir = tmpClaudeDir({ [`projects/${mapped}/s1.jsonl`]: turn({ id: 'a1' }) });
@@ -53,10 +57,7 @@ test('CONFIG-adjacent header and TOP SESSIONS line both stay <=120 chars for a l
   assert.ok(header, `expected a TOKEN AUDIT header line, got:\n${out}`);
   assert.ok([...header].length <= 120, `header exceeds 120 chars (${[...header].length}): ${header}`);
 
-  const sessionLine = lines.find(l => l.includes('msgs=') && l.includes('avgCtx='));
-  assert.ok(sessionLine, `expected a TOP SESSIONS line, got:\n${out}`);
-  assert.ok([...sessionLine].length <= 120,
-    `TOP SESSIONS line exceeds 120 chars (${[...sessionLine].length}): ${sessionLine}`);
+  for (const l of lines) assert.ok([...l].length <= 120, `line exceeds 120 chars (${[...l].length}): ${l}`);
 });
 
 test('projectFolder resolves "." the same as an explicit absolute cwd path', () => {
