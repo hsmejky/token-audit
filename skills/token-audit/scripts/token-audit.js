@@ -6,6 +6,7 @@
 // Costs are LIST-PRICE EQUIVALENTS (Claude API $/MTok). On Pro/Max nothing is
 // billed per token — the number is a proxy for what eats the plan limit.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
@@ -113,16 +114,18 @@ function rateFor(model) {
 // Bash / PowerShell command → normalized key, so the same command run against
 // a different PR number, commit, path or cwd groups together (design.md Q9).
 // The key is the unit POLLING counts per session and BOILERPLATE takes a
-// prefix of; segment separators are canonical (` && `, ` || `, ` | `, ` ; `)
-// so a prefix is a plain string split. Steps and reasons: REFERENCE
-// "Cost by activity — command key".
+// prefix of: top-level segments (shellSegments(), quote- and subshell-aware)
+// joined by canonical separators (` && `, ` || `, ` | `, ` ; `), so
+// shellSegments(key)[0].text is the first segment. Steps and reasons:
+// REFERENCE "Cost by activity — command key".
 const isPathText = t => /^(?:[A-Za-z]:[\\/]|[\\/~]|\.\.?[\\/])/.test(t) || /^[\w.-]+(?:[\\/][\w.-]+)+$/.test(t);
 function commandKey(command) {
-  let s = dropHeredocBodies(String(command || '')).replace(/\\\r?\n/g, ' ');
-  s = s.replace(/^\s*(?:cd|Set-Location)\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;|\n)\s*/, '');
-  // `NAME=value cmd` env prefixes. A value with `$(`/`(` is not matched, so a
-  // standalone `TOKEN=$(… | git credential fill)` assignment stays in the key.
-  s = s.replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$]*)\s+)+(?=[^\s;&|])/, '');
+  // Text that must survive the number/id rewrites (heredoc hashes, sed line
+  // ranges) is parked as one private-use char and restored at the end.
+  const kept = [];
+  const keep = t => String.fromCharCode(0xE000 + kept.push(t) - 1);
+  let s = hashHeredocBodies(String(command || '').replace(/\r\n/g, '\n'), keep).replace(/\\\n/g, ' ');
+  s = s.replace(/\bsed\s+-n\s+('[^']*'|"[^"]*"|[^\s;&|'"]+)/g, (m, script) => m.replace(script, keep(script)));
   // Quoted paths: absolute / home / dot-relative, or a bare `dir/file` of
   // path characters only. Other quoted text (grep patterns, printf bodies,
   // sed scripts) is kept — it is what tells two commands apart.
@@ -130,22 +133,66 @@ function commandKey(command) {
   s = s.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>');
   s = s.replace(/\b[0-9a-f]{7,}\b/gi, m => (/\d/.test(m) ? '<id>' : m)); // commit SHAs, hex ids
   s = s.replace(/\d+/g, 'N');
-  // Newline = command separator; then one canonical spelling per separator.
-  s = s.replace(/\s*\r?\n\s*/g, ' ; ').replace(/\s*(&&|\|\||\||;)\s*/g, ' $1 ');
-  s = s.replace(/(?: ; )+/g, ' ; ').replace(/\s+/g, ' ').replace(/^[\s;]+|[\s;]+$/g, '');
-  return s;
+  const segs = shellSegments(s)
+    // `NAME=value cmd` env prefixes. A value with `$(`/`(` is not matched, so a
+    // standalone `TOKEN=$(… | git credential fill)` assignment stays.
+    .map(g => ({ ...g, text: g.text.replace(/\s+/g, ' ')
+      .replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$]*) )+(?=\S)/, '') }))
+    .filter(g => g.text && !/^(?:cd|Set-Location)(?: \S+)?$/i.test(g.text)); // cwd is not the command
+  s = segs.map((g, i) => (i < segs.length - 1 ? `${g.text} ${g.sep} ` : g.text)).join('');
+  return s.replace(/[-]/g, ch => kept[ch.charCodeAt(0) - 0xE000]);
 }
-// `<<TAG` / `<<'TAG'` / `<<-TAG`: keep the line that opens the heredoc, drop
-// the body through the closing TAG line (a script body is not the command).
-function dropHeredocBodies(s) {
-  const out = [];
-  let tag = null;
-  for (const line of s.split(/\r?\n/)) {
-    if (tag) { if (line.trim() === tag) tag = null; continue; }
-    out.push(line);
-    const m = /(?<!<)<<-?\s*(['"]?)([\w-]+)\1/.exec(line);
-    if (m) tag = m[2];
+// Top-level segments of a shell string: [{ text, sep }], sep = the separator
+// after it (`&&`, `||`, `|`, `;` — a newline counts as `;` — or '' at the end).
+// Separators inside quotes, backticks or (…) / $(…) do not split.
+function shellSegments(s) {
+  const segs = [];
+  let from = 0;
+  shellScan(String(s), (i, sep, depth) => {
+    if (depth || sep === '(') return;
+    segs.push({ text: s.slice(from, i).trim(), sep: sep === '\n' ? ';' : sep });
+    from = i + sep.length;
+  });
+  segs.push({ text: s.slice(from).trim(), sep: '' });
+  return segs.filter((g, i) => g.text || i === segs.length - 1);
+}
+// Walks s outside quotes/backticks; calls fn(i, sep, depth) at each separator
+// and at each `(` (sep '('), depth = (…) nesting at that point.
+function shellScan(s, fn) {
+  let q = null, depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) { if (c === '\\' && q === '"') i++; else if (c === q) q = null; continue; }
+    if (c === '\\') { i++; continue; }
+    if (c === '"' || c === "'" || c === '`') { q = c; continue; }
+    if (c === '(') { fn(i, '(', depth++); continue; }
+    if (c === ')') { if (depth) depth--; continue; }
+    const two = s.slice(i, i + 2);
+    const sep = two === '&&' || two === '||' ? two : '|;\n'.includes(c) ? c : null;
+    if (sep) { fn(i, sep, depth); i += sep.length - 1; }
   }
+}
+// `<<TAG` / `<<'TAG'` / `<<-TAG`: keep the line that opens the heredoc, replace
+// the body through the closing TAG line by `[heredoc <8 hex of sha1(body)>]`
+// right after the `<<TAG` — two inline scripts or commit messages are two
+// commands, the same script run again is one.
+function hashHeredocBodies(s, keep) {
+  const out = [];
+  let open = null;
+  const close = () => {
+    const hash = crypto.createHash('sha1').update(open.body.join('\n')).digest('hex').slice(0, 8);
+    out[open.at] = out[open.at].replace('￿', keep(`[heredoc ${hash}]`));
+    open = null;
+  };
+  for (const line of s.split('\n')) {
+    if (open) { if (line.trim() === open.tag) close(); else open.body.push(line); continue; }
+    const m = /(?<!<)<<-?\s*(['"]?)([\w-]+)\1/.exec(line);
+    if (!m) { out.push(line); continue; }
+    const end = m.index + m[0].length;
+    out.push(`${line.slice(0, end)} ￿${line.slice(end)}`);
+    open = { tag: m[2], at: out.length - 1, body: [] };
+  }
+  if (open) close();
   return out.join('\n');
 }
 
@@ -850,4 +897,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { projectFolder, commandKey, activityCategory };
+module.exports = { projectFolder, commandKey, shellSegments, activityCategory };

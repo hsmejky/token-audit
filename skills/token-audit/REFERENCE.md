@@ -318,20 +318,42 @@ command against a different PR number, commit, path or cwd groups together. `POL
 (Slice 12) counts identical keys per session; `BOILERPLATE` (Slice 13) takes a prefix of it.
 Steps, in order:
 
-1. Heredoc bodies dropped: the line with `<<TAG` / `<<'TAG'` / `<<-TAG` stays, the body
-   through the closing `TAG` line goes (`<<<` here-strings are left alone). Line
+1. Heredoc bodies hashed: the line with `<<TAG` / `<<'TAG'` / `<<-TAG` stays; the body through
+   the closing `TAG` line (surrounding whitespace ignored) becomes `[heredoc <8 hex of
+   sha1(body)>]` right after the `<<TAG` (`<<<` here-strings are left alone). Line
    continuations (`\` + newline) become a space.
-2. One leading `cd <dir> &&` / `cd <dir>;` / `cd <dir>` + newline removed (also `Set-Location`).
-3. Leading `NAME=value` env prefixes removed (`PYTHONIOENCODING=utf-8 python …` → `python …`).
-   A value containing `$(` or `(` is not a prefix, so `TOKEN=$(… | git credential fill); curl …`
-   keeps its assignment — that is the BOILERPLATE signal.
-4. Quoted paths → `<path>`: quoted text starting with `/`, `\`, `~`, `./`, `../` or a drive
+2. `sed -n` scripts kept verbatim: `sed -n '120,180p' f` keeps its numbers (steps 3–4 skip it).
+3. Quoted paths → `<path>`: quoted text starting with `/`, `\`, `~`, `./`, `../` or a drive
    (`C:\`, `C:/`), or made only of path characters with at least one separator
    (`"docs/plan.md"`). Other quoted text (grep patterns, printf bodies, sed scripts) stays.
-5. UUIDs and hex runs of ≥ 7 chars containing a digit (commit SHAs) → `<id>`; then every
+4. UUIDs and hex runs of ≥ 7 chars containing a digit (commit SHAs) → `<id>`; then every
    remaining digit run → `N`.
-6. Newlines → ` ; `; separators spelled canonically as ` && `, ` || `, ` | `, ` ; `;
-   whitespace collapsed; leading/trailing `;` trimmed.
+5. Split into top-level segments by `shellSegments()` (exported): `&&`, `||`, `|`, `;` and
+   newline (= `;`) split only outside quotes, backticks and `(…)` / `$(…)`. Per segment:
+   whitespace collapsed; leading `NAME=value` env prefixes removed (`CI=1 pnpm test` →
+   `pnpm test`) — a value containing `$(` or `(` is not a prefix, and a bare assignment with
+   no command after it stays (`TOKEN=$(… | git credential fill)` is the BOILERPLATE signal); a
+   segment that is only `cd <dir>` / `Set-Location <dir>` is dropped wherever it appears (cwd
+   is not the command, and would leak the project path); empty segments dropped.
+6. Segments re-joined with canonical separators ` && `, ` || `, ` | `, ` ; `.
+
+Judgment calls:
+
+- **Heredoc body → hash, not dropped.** Dropping bodies collapsed every inline script
+  (`python - <<'PY'`) and every `git commit -F - <<'EOF'` into one key; a simulated POLLING
+  N=20 fired on those (≈ 1 of 30 hits was real polling). The body is hashed raw (no number
+  rewriting): a poll script re-run verbatim still groups, two different scripts don't.
+- **`sed -n` line ranges kept.** Reading a file in chunks (`sed -n '1,80p'`, `'81,160p'`) is
+  not a repeated command; `head -N` / `tail -N` still collapse (tailing a log is polling).
+- **Separators inside quotes / `$(…)` are text**, never split or respaced: `grep -E
+  "error|git" log` stays one segment.
+- **Env prefix is per segment, never across a newline**: a standalone `SCR="…"` line stays its
+  own segment instead of swallowing the next line.
+
+What Slices 12–13 can rely on: equal keys = same command modulo cwd, env prefixes, quoted
+paths, ids and numbers (outside `sed -n` scripts and heredoc bodies). `shellSegments(key)`
+round-trips a key into its top-level segments, so `shellSegments(key)[0].text` is the first
+segment with any `$(…)` intact (the whole `TOKEN=$(printf … | git credential fill | …)`).
 
 Example: `cd /c/r && curl -s https://api.github.com/repos/o/r/pulls/123/check-runs` and
 `cd "C:\r2" && curl -s …/pulls/456/check-runs` → both

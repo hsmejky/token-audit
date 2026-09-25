@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir, turn } = require('./harness');
-const { commandKey, activityCategory } = require('../skills/token-audit/scripts/token-audit.js');
+const { commandKey, shellSegments, activityCategory } = require('../skills/token-audit/scripts/token-audit.js');
 
 // One API response that makes tool calls, as Claude Code writes it: one JSONL
 // line per content part (here one per tool_use), all sharing message.id + usage.
@@ -45,12 +45,49 @@ test('commandKey replaces quoted paths and hex/uuid ids, keeps other quoted text
   assert.notEqual(commandKey('grep -n "foo" a'), commandKey('grep -n "bar" a'));
 });
 
-test('commandKey drops heredoc bodies, collapses whitespace, spaces separators canonically', () => {
-  const a = commandKey("python - <<'PY'\nimport io\nprint(1)\nPY");
-  const b = commandKey("python - <<'PY'\nimport re\nprint(re)\nPY\n");
-  assert.equal(a, b);
-  assert.equal(a, "python - <<'PY'");
-  assert.equal(commandKey("cat > x.ts <<EOF\nlet a = 1;\nEOF\ngit add x.ts"), 'cat > x.ts <<EOF ; git add x.ts');
+test('commandKey: a heredoc body becomes a short stable hash — distinct bodies, distinct keys', () => {
+  const py = body => commandKey(`python - <<'PY'\n${body}\nPY\n`);
+  const a = py('import io\nprint(1)');
+  assert.match(a, /^python - <<'PY' \[heredoc [0-9a-f]{8}\]$/);
+  assert.equal(py('import io\nprint(1)'), a, 'same body -> same key');
+  assert.notEqual(py('import re\nprint(re)'), a);
+  const commit = msg => commandKey(`git add -A && git commit -F - <<'EOF'\n${msg}\nEOF`);
+  assert.notEqual(commit('feat: a'), commit('fix: b'));
+  assert.match(commandKey('cat > x.ts <<EOF\nlet a = 1;\nEOF\ngit add x.ts'),
+    /^cat > x\.ts <<EOF \[heredoc [0-9a-f]{8}\] ; git add x\.ts$/);
+  assert.match(commandKey('cat <<-EOF\n\tx\n\tEOF\ngit status'), / ; git status$/,
+    '<<- closing tag may be tab-indented');
+});
+
+test('commandKey keeps sed -n line ranges (reading a file in chunks is not a repeated command)', () => {
+  assert.notEqual(commandKey("sed -n '1,80p' src/a.ts"), commandKey("sed -n '81,160p' src/a.ts"));
+  assert.equal(commandKey('sed -n 120,180p src/a.ts'), 'sed -n 120,180p src/a.ts');
+  assert.equal(commandKey('tail -5 a.log'), commandKey('tail -20 a.log'), 'other numbers still -> N');
+});
+
+test('commandKey drops cd / Set-Location segments anywhere; an env prefix never spans a newline', () => {
+  const key = commandKey('SCR="/c/x/s.mjs"\ncd /c/r\nnode $SCR');
+  assert.equal(key, 'SCR=<path> ; node $SCR');
+  assert.equal(commandKey('Set-Location C:\\r; git status'), 'git status');
+  assert.equal(commandKey('Set-Location "C:\\Users\\x"\ngit status'), 'git status');
+  assert.equal(commandKey('git status && cd /c/other && ls'), 'git status && ls');
+  assert.equal(commandKey('pnpm build && CI=1 pnpm test'), 'pnpm build && pnpm test');
+});
+
+test('commandKey / shellSegments: separators inside quotes and $(…) are not split or respaced', () => {
+  assert.equal(commandKey('grep -E "error|git" log'), 'grep -E "error|git" log');
+  assert.equal(commandKey("rg 'foo;gh api' src"), "rg 'foo;gh api' src");
+  assert.equal(commandKey('git commit -m "a\nb" && git push'), 'git commit -m "a b" && git push');
+  const cred = 'TOKEN=$(printf "protocol=https\\nhost=github.com\\n\\n" | git credential fill | ' +
+    'sed -n \'s/^password=//p\')';
+  const segs = shellSegments(commandKey(`${cred}\ncurl -s -H "Authorization: token $TOKEN" x`));
+  assert.deepEqual(segs.map(s => s.sep), [';', '']);
+  assert.equal(segs[0].text, cred, 'first segment = the whole $(…) assignment (BOILERPLATE prefix)');
+  assert.deepEqual(shellSegments('a&&b|c;d||e').map(s => [s.text, s.sep]),
+    [['a', '&&'], ['b', '|'], ['c', ';'], ['d', '||'], ['e', '']]);
+});
+
+test('commandKey collapses whitespace, spaces separators canonically', () => {
   assert.equal(commandKey('a&&b|c;d||e'), 'a && b | c ; d || e');
   assert.equal(commandKey('pnpm   test \\\n  2>&1 |grep  -E x'), 'pnpm test N>&N | grep -E x');
   assert.equal(commandKey('for f in a b\ndo\n  wc -l $f\n\ndone\n'), 'for f in a b ; do ; wc -l $f ; done');
