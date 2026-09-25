@@ -17,6 +17,8 @@ description: >
 
 Measure first, advise second. Every number comes from the script — never guess.
 
+Requires Node.js 18 or newer.
+
 ```
 node <skill-dir>/scripts/token-audit.js --days 14
 ```
