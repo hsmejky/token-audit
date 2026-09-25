@@ -93,7 +93,11 @@ async function collect() {
   for (const f of walk(ROOT)) {
     const dir = path.dirname(f);
     const isSub = path.basename(dir) === 'subagents';
-    const project = path.basename(isSub ? path.dirname(dir) : dir);
+    // main:     projects/<project>/<session>.jsonl              → dir = <project>
+    // subagent: projects/<project>/<session-uuid>/subagents/agent-*.jsonl → dir = .../subagents,
+    //           so project is two levels up and the session-uuid dir name is the parent session id.
+    const project = path.basename(isSub ? path.dirname(path.dirname(dir)) : dir);
+    const parent = isSub ? path.basename(path.dirname(dir)) : null;
     const sid = path.basename(f, '.jsonl');
     const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
     for await (const line of rl) {
@@ -122,7 +126,7 @@ async function collect() {
       const inp = u.input_tokens || 0;
 
       const cost = (inp * p[0] + w5 * p[1] + w1h * p[2] + read * p[3] + out * p[4]) / 1e6;
-      const row = { ts, sid, project, isSub, family, cost, ctx: read + ccTotal, out };
+      const row = { ts, sid, project, isSub, parent, family, cost, ctx: read + ccTotal, out };
       const id = j.message.id;
       const seen = id && byId.get(id);
       if (!seen) {
@@ -164,7 +168,7 @@ function summarize(rows) {
     byChain[r.isSub ? 'sub' : 'main'] += r.cost;
     let s = sessions.get(r.sid);
     if (!s) {
-      s = { sid: r.sid, project: r.project, isSub: r.isSub, cost: 0, msgs: 0, ctx: 0,
+      s = { sid: r.sid, project: r.project, isSub: r.isSub, parent: r.parent, cost: 0, msgs: 0, ctx: 0,
             ctxMax: 0, first: r.ts || Infinity, last: r.ts || 0, opus: 0 };
       sessions.set(r.sid, s);
     }

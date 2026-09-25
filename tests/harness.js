@@ -24,6 +24,15 @@ function audit(claudeDir, ...args) {
   return JSON.parse(out);
 }
 
+// Same as audit(), but returns the plain-text report (no --json) — for
+// assertions about the printed layout itself (line content, formatting).
+function auditText(claudeDir, ...args) {
+  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
+  return execFileSync(process.execPath,
+    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, ...args],
+    { encoding: 'utf8' });
+}
+
 // files: { 'projects/p/s.jsonl': [lineObj, ...], 'settings.json': obj }
 // Arrays become JSONL, anything else JSON. Removed when the process exits.
 const tmpDirs = [];
@@ -55,4 +64,4 @@ function turn({ id, model = 'claude-opus-5-5', ts = '2026-09-01T10:00:00.000Z',
 const turns = (n, prefix, opts = {}) =>
   Array.from({ length: n }, (_, i) => turn({ ...opts, id: `${prefix}-${i}` })).flat();
 
-module.exports = { audit, fixture, tmpClaudeDir, turn, turns };
+module.exports = { audit, auditText, fixture, tmpClaudeDir, turn, turns };
