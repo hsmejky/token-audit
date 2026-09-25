@@ -38,9 +38,20 @@ threshold behaviour out of scope for this slice.
 
 Likewise `fable-5` (legacy) does **not** match `fable-5-1`/`fable-5.1` (current):
 input, cache write and output are identical, but cache read is $1/MTok for Fable 5
-vs $0.25/MTok for Fable 5.1 — a plain `includes('fable')` match silently priced
-Fable 5 at the Fable 5.1 rate. The script matches `fable-5-1`/`fable-5.1` before the
-looser `fable-5`, and both still roll into the same `Fable` family bucket in SPEND.
+vs $0.25/MTok for Fable 5.1 — a plain `includes('fable')` match used to silently price
+Fable 5 at the Fable 5.1 rate. Both still roll into the same `Fable` family bucket in SPEND.
+
+### Exact matching, not prefix/`includes()` (Slice 25)
+
+`rateFor` matches the normalized model string (`claude-` prefix stripped, a trailing
+8-digit date suffix stripped, dots folded to hyphens) against an exact list of known
+versions (`KNOWN_MODELS`). It used to match loosely (`includes('opus')`, `includes
+('fable-5')`, `includes('sonnet')`), which let any unlisted version silently fall
+through to the wrong row — e.g. `sonnet-4-5` (a real, older model, not in the pricing
+table) used to match the `includes('sonnet')` fallback and get priced at the Sonnet 5
+rate. Under exact matching, `sonnet-4-5` is `UNPRICED` like any other unlisted version
+instead of being guessed at. A date-suffixed id of a known model (`claude-opus-5-
+20251001`) still matches, since the date suffix is stripped before the lookup.
 
 Read multiplier is **not** a flat 0.1× for every model — the source page gives it per
 row (e.g. Opus 5.5 reads at 0.05× input, Fable 5.1 at 0.025×), so the table above is
@@ -60,6 +71,21 @@ by the literal model string. Printed as its own line below `SPEND` in the text r
 (only when non-empty) and always present as top-level `unpriced` in `--json`, so a
 new/renamed model family shows up as a visible line item instead of silently
 vanishing from the totals the way Fable did before this fix.
+
+`<synthetic>` rows are excluded before this check, not counted as UNPRICED: Claude Code
+writes a `<synthetic>`-model, all-zero-usage row for locally generated placeholder/error
+messages (not a real API call). Without this exclusion `UNPRICED` fired on essentially
+every run just from these, drowning out a real new-model warning. A `<synthetic>` row
+with non-zero usage (unexpected, but not ruled out) is not excluded — it still goes
+through the normal UNPRICED + warning path below.
+
+Every entry under `UNPRICED` also prints a `WARNING` line in the text report naming the
+model and saying to add its price to `PRICES` + this table (`--json` doesn't need a
+separate field — the model already being listed under `unpriced` is the signal). By
+construction every `UNPRICED` entry is a model `rateFor` doesn't have an exact row for,
+so the warning fires for exactly the same set as the one AC asked to be covered: "every
+model present in real data either matches an exact known row or shows up in the new-model
+warning" holds automatically, not by separate bookkeeping.
 
 `UNPRICED` is windowed the same as `SPEND` — only rows with `ts >= curFrom` (the
 `--days` window) are counted, not all-time. It used to ignore `--days` entirely and

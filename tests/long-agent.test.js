@@ -99,7 +99,7 @@ test('LONG_AGENT: flag text includes the count and the share of spend', () => {
   const dir = tmpClaudeDir({
     'projects/p/main.jsonl': turn({ id: 'm-1', usage: { input_tokens: 1000, output_tokens: 0 } }),
     'projects/p/main/subagents/agent-a.jsonl':
-      turns(151, 'a', { model: 'claude-sonnet-4-5', usage: { input_tokens: 1000, output_tokens: 0 } }),
+      turns(151, 'a', { model: 'claude-sonnet-5', usage: { input_tokens: 1000, output_tokens: 0 } }),
   });
   const r = audit(dir);
   const f = r.flags.find(x => x.id === 'LONG_AGENT');
@@ -117,7 +117,7 @@ test('LONG_AGENT: count and share come from qualifying subagents only', () => {
   const dir = tmpClaudeDir({
     'projects/p/main.jsonl': turn({ id: 'm-1', usage: { input_tokens: 0, output_tokens: 0 } }),
     'projects/p/main/subagents/agent-a.jsonl':
-      turns(151, 'a', { model: 'claude-sonnet-4-5', usage: { input_tokens: 1000, output_tokens: 0 } }),
+      turns(151, 'a', { model: 'claude-sonnet-5', usage: { input_tokens: 1000, output_tokens: 0 } }),
     'projects/p/main/subagents/agent-b.jsonl':
       turns(100, 'b', { model: 'claude-opus-5-5', usage: { input_tokens: 1000, output_tokens: 0 } }),
   });

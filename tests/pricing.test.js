@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, tmpClaudeDir, turn } = require('./harness');
+const { audit, auditText, tmpClaudeDir, turn } = require('./harness');
 
 test('Fable rows are priced and shown as their own family in SPEND', () => {
   const dir = tmpClaudeDir({
@@ -71,6 +71,61 @@ test('opus-5-5 prices differently from opus-5 (verified against source, row spli
   assert.equal(bySid.b.toFixed(2), '4.00'); // Opus 5.5: $4/MTok input (cheaper, per source)
   // both still roll up into one "Opus" family bucket in SPEND
   assert.deepEqual(Object.keys(r.cur.byFamily), ['Opus']);
+});
+
+test('<synthetic> zero-usage rows do not fire UNPRICED (locally generated placeholders)', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': [
+      ...turn({
+        id: 'syn', model: '<synthetic>',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      }),
+      ...turn({ id: 'real', usage: { input_tokens: 100, output_tokens: 0 } }),
+    ],
+  });
+  const r = audit(dir);
+  assert.deepEqual(r.unpriced, []);
+});
+
+test('claude-fable-5-2 (unlisted version) is UNPRICED, not silently priced as Fable 5', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({
+      id: 'f2', model: 'claude-fable-5-2',
+      usage: { input_tokens: 500, output_tokens: 200 },
+    }),
+  });
+  const r = audit(dir);
+  assert.deepEqual(r.unpriced, [{ model: 'claude-fable-5-2', rows: 1, tokens: 700 }]);
+  const text = auditText(dir);
+  assert.match(text, /claude-fable-5-2/);
+  assert.match(text, /PRICES/);
+  assert.match(text, /REFERENCE/);
+});
+
+test('date-suffixed known model id (claude-opus-5-20251001) still matches its exact price row', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({
+      id: 'd1', model: 'claude-opus-5-20251001',
+      usage: { input_tokens: 1e6, output_tokens: 0 },
+    }),
+  });
+  const r = audit(dir);
+  assert.deepEqual(r.unpriced, []);
+  assert.equal(r.cur.cost.toFixed(2), '5.00'); // Opus 5: $5/MTok input
+  assert.deepEqual(Object.keys(r.cur.byFamily), ['Opus']);
+});
+
+test('rateFor is fast on a pathological 200k-char model string (linear, not exponential)', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({
+      id: 'p1', model: 'claude-' + 'a'.repeat(200000) + '-99999999',
+      usage: { input_tokens: 100, output_tokens: 0 },
+    }),
+  });
+  const t0 = Date.now();
+  const r = audit(dir);
+  assert.ok(Date.now() - t0 < 1000, 'should classify a 200k-char model string in well under 1s');
+  assert.equal(r.unpriced.length, 1);
 });
 
 test('UNPRICED is filtered by the --days window, matching SPEND', () => {

@@ -57,7 +57,7 @@ test('DETAIL lines <= 120 chars; long task text cut at 70 chars with an ellipsis
   const long = 'Skřítek 4c truhly: hlídání zapomenutého sklepa plného spletitých run, ' +
     'a ještě mnohem delší popis pohádky, která se do políčka nevejde';
   const dir = tmpClaudeDir({
-    [SUB + '.jsonl']: turns(3, 'sub', { model: 'claude-sonnet-4-6-extended-preview-20260101' }),
+    [SUB + '.jsonl']: turns(3, 'sub', { model: 'claude-sonnet-4-6-20260101' }),
     [SUB + '.meta.json']: { description: long },
   });
   const detail = detailLines(auditText(dir));

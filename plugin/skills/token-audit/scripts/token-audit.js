@@ -117,17 +117,30 @@ const PRICES = {
   sonnet: [2, 2.5, 4, 0.2, 10],
   haiku: [1, 1.25, 2, 0.1, 5],
 };
+// Exact known-version matching (Slice 25) — not prefix/`includes()`. Loose matching used to
+// let an unlisted version fall through to the wrong row (an Opus fallback for any `opus-*`,
+// a plain `includes('fable-5')` catching `fable-5-2`, `sonnet-4-5` matching the `includes
+// ('sonnet')` fallback and pricing at the Sonnet 5 rate). Every id below is matched exactly
+// after normalizing the raw model string: `claude-` prefix stripped, a trailing 8-digit date
+// suffix stripped (`-20251001` on a known id must still match), dots folded to hyphens
+// (`opus-5.5` == `opus-5-5`). Anything left over — a genuinely new/renamed family, or a
+// version not in this list — is UNPRICED and triggers the new-model warning in the text
+// report (see REFERENCE.md "Unknown models — UNPRICED") instead of being guessed at.
+const KNOWN_MODELS = {
+  'opus-5-5': ['Opus', PRICES.opus55],
+  'opus-5': ['Opus', PRICES.opus],
+  'fable-5-1': ['Fable', PRICES.fable51],
+  'fable-5': ['Fable', PRICES.fable5],
+  'sonnet-4-6': ['Sonnet', PRICES.sonnet46],
+  'sonnet-5': ['Sonnet', PRICES.sonnet],
+  'haiku-4-5': ['Haiku', PRICES.haiku],
+};
 function rateFor(model) {
-  const m = model.toLowerCase();
-  if (m.includes('opus-5-5') || m.includes('opus-5.5')) return ['Opus', PRICES.opus55];
-  if (m.includes('opus')) return ['Opus', PRICES.opus];
-  if (m.includes('fable-5-1') || m.includes('fable-5.1')) return ['Fable', PRICES.fable51];
-  if (m.includes('fable-5')) return ['Fable', PRICES.fable5];
-  if (m.includes('fable')) return ['Fable', PRICES.fable51];
-  if (m.includes('sonnet-4-6') || m.includes('sonnet-4.6')) return ['Sonnet', PRICES.sonnet46];
-  if (m.includes('sonnet')) return ['Sonnet', PRICES.sonnet];
-  if (m.includes('haiku')) return ['Haiku', PRICES.haiku];
-  return null;
+  const stripped = String(model).toLowerCase()
+    .replace(/^claude-/, '')
+    .replace(/-\d{8}$/, '')
+    .replace(/\./g, '-');
+  return KNOWN_MODELS[stripped] || null;
 }
 
 // --------------------------------------------------------------- activity
@@ -418,6 +431,11 @@ async function collect() {
       if (!u) continue;
       const modelName = j.message.model || '(unknown)';
       const ts = Date.parse(j.timestamp || '') || 0;
+      // Claude Code writes a `<synthetic>` model, zero-usage row for locally generated
+      // placeholder/error messages (not a real API call) — these are not "unpriced", they
+      // were never priceable, so they must not fire UNPRICED on every single run.
+      if (modelName === '<synthetic>' && !(u.input_tokens || u.cache_creation_input_tokens ||
+          u.cache_read_input_tokens || u.output_tokens)) continue;
       const r = rateFor(modelName);
       if (!r) {
         const tok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) +
@@ -1462,8 +1480,11 @@ async function main() {
   if (unpriced.length) {
     const totTok = unpriced.reduce((a, u) => a + u.tokens, 0);
     console.log(`UNPRICED     ${unpriced.length} model(s), ${(totTok / 1e6).toFixed(2)}M tokens not in pricing table`);
-    for (const u of unpriced)
+    for (const u of unpriced) {
       console.log(`  ${u.model.padEnd(28)} rows=${String(u.rows).padStart(6)}  tokens=${(u.tokens / 1e6).toFixed(2)}M`);
+      const name = fit(redactPaths(u.model), 40);
+      console.log(`  WARNING: unknown model '${name}' -- add its price to PRICES + REFERENCE.md`);
+    }
   }
   console.log('');
   console.log(`PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
