@@ -197,7 +197,7 @@ function hashHeredocBodies(s, keep) {
   let open = null;
   const close = () => {
     const hash = crypto.createHash('sha1').update(open.body.join('\n')).digest('hex').slice(0, 8);
-    out[open.at] = out[open.at].replace('￿', keep(`[heredoc ${hash}]`));
+    out[open.at] = out[open.at].replace('\uFFFF', keep(`[heredoc ${hash}]`));
     open = null;
   };
   for (const line of s.split('\n')) {
@@ -205,7 +205,7 @@ function hashHeredocBodies(s, keep) {
     const m = /(?<!<)<<-?\s*(['"]?)([\w-]+)\1/.exec(line);
     if (!m) { out.push(line); continue; }
     const end = m.index + m[0].length;
-    out.push(`${line.slice(0, end)} ￿${line.slice(end)}`);
+    out.push(`${line.slice(0, end)} \uFFFF${line.slice(end)}`);
     open = { tag: m[2], at: out.length - 1, body: [] };
   }
   if (open) close();
