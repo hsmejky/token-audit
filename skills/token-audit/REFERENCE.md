@@ -203,7 +203,8 @@ Anchor for trend questions. 283 sessions, 63 910 transcript lines, 198 MB.
 |---|---|---|
 | `~/.claude/settings.json` | `model` | global default; `OPUS_HEAVY` context |
 | | `cleanupPeriodDays` | transcript retention — feeds `SECURITY`, not `FLAGS` |
-| | `effortLevel` / `env.EFFORT_LEVEL` | reported, low impact |
+| | `effortLevel` / `env.EFFORT_LEVEL` | root-level fallback, reported, low impact |
+| | `modelSettings.<model>.effortLevel` | per-model override, reported per model when present (takes precedence over the root fallback in the printed line) |
 | | `enabledPlugins` | filters which cache entries count — cache/ holds stale/uninstalled plugins too |
 | `~/.claude/plugins/cache/**/.claude-plugin/plugin.json` | `agents`, `skills` | prefix weight, only for plugins enabled in `settings.json` |
 

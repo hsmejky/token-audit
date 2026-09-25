@@ -291,10 +291,21 @@ function config() {
     plugins.push({ name, agents: agents.length, skills: skills.length, prefixTokens: Math.round(chars / 4) });
   });
 
+  // Root `effortLevel` / `env.EFFORT_LEVEL` is a fallback default; per-model
+  // overrides live at `modelSettings.<model>.effortLevel` and take precedence
+  // when reporting, since a model with its own entry is not using the root
+  // default. Sorted by model name for stable output.
+  const modelSettings = settings.modelSettings || {};
+  const modelEffort = Object.keys(modelSettings)
+    .filter(m => modelSettings[m] && modelSettings[m].effortLevel)
+    .sort()
+    .map(m => ({ model: m, effortLevel: modelSettings[m].effortLevel }));
+
   return {
     model: settings.model || '(unset — harness default)',
     cleanupPeriodDays: settings.cleanupPeriodDays,
     effortLevel: settings.effortLevel || (settings.env && settings.env.EFFORT_LEVEL) || null,
+    modelEffort,
     pluginCount: plugins.length,
     agentDefs,
     skillDefs,
@@ -434,8 +445,11 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
   console.log('');
 
   console.log('CONFIG');
+  const effortText = cfg.modelEffort.length
+    ? cfg.modelEffort.map(m => `${m.model}=${m.effortLevel}`).join(', ')
+    : (cfg.effortLevel ?? 'unset');
   console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}   ` +
-    `effortLevel=${cfg.effortLevel ?? 'unset'}`);
+    `effortLevel=${effortText}`);
   console.log(`  plugins=${cfg.pluginCount}   agent defs=${cfg.agentDefs}   skill defs=${cfg.skillDefs}   ` +
     `fixed prefix ≈${(cfg.prefixTokens / 1e3).toFixed(1)}k tok/request`);
   for (const p of cfg.plugins.filter(p => p.prefixTokens >= 200))
