@@ -50,6 +50,17 @@ test('projectFolder falls back to the bare 200-char prefix when no hashed folder
   assert.equal(projectFolder(longPath, path.join(dir, 'projects')), prefix);
 });
 
+test('projectFolder falls back to the bare 200-char prefix when two folders match the prefix ambiguously', () => {
+  const longPath = 'C:\\Users\\jdoe\\' + 'z'.repeat(250);
+  const mapped = path.resolve(longPath).replace(/[^a-zA-Z0-9]/g, '-');
+  const prefix = mapped.slice(0, 200);
+  const dir = tmpClaudeDir({
+    [`projects/${prefix}-aaa/s1.jsonl`]: turn({ id: 'a1' }),
+    [`projects/${prefix}-bbb/s2.jsonl`]: turn({ id: 'b1' }),
+  });
+  assert.equal(projectFolder(longPath, path.join(dir, 'projects')), prefix);
+});
+
 test('default scope (no --project/--all) is the cwd\'s project only', () => {
   const cwd = tmpDir();
   const folder = projectFolder(cwd);
