@@ -90,6 +90,7 @@ test('BOILERPLATE: not a setup prefix — a plain command first, a lone assignme
     () => 'S=/c/Users/jdoe/AppData/Local/Temp/scratch && ls $S', // scratchpad shorthand, unquoted
     () => String.raw`S="C:\Users\jdoe\scratch" && ls $S`,    // quoted path → <path>
     () => 'F="$HOME/notes/x.md" && wc -l "$F"',              // $VAR-rooted path
+    () => String.raw`S="$HOME\x" && ls`,                     // $VAR-rooted path, backslash separator
     () => 'F=docs/plan.md && wc -l $F',                      // relative path
   ]) {
     const r = audit(tmpClaudeDir(sessions(6, cmd)));

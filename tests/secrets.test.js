@@ -41,6 +41,22 @@ const SHAPES = [
   ['quoted NAME=value', `GH_TOKEN="Zqxv opaque value"`],
   ['PowerShell $env:NAME=value', `$env:GH_TOKEN='Zqxvopaque'`],
   ['URL query token=', 'curl "https://x.test/a?access_token=Zqxvopaque&x=y"'],
+  // marker is not the quoted value's first word, so a bug that redacts only the
+  // first word (leaving the rest of the quote to print raw) is caught.
+  ['--password= quoted value with spaces', `tool --password "pass Zqxv phrase"`],
+  ['-u quoted user:pass with spaces', `curl -u 'jdoe:pass Zqxv word'`],
+  ['--user= quoted user:pass with spaces', `curl --user "jdoe:pass Zqxv word"`],
+  ['Cookie header, second pair', `curl -H "Cookie: session=a; other=${tok('Zqxv')}" https://x.test/a`],
+  ['--oauth2-bearer', `curl --oauth2-bearer ${tok('Zqxv')} https://x.test/a`],
+  ['JSON body password key', `curl -d '{"password":"${tok('Zqxv')}"}' https://x.test/a`],
+  ['JSON body token key, spaced colon', `curl -d '{"token": "${tok('Zqxv')}"}' https://x.test/a`],
+  ['mysql -pX', `mysql -p${tok('Zqxv')}`],
+  ['sshpass -p X', `sshpass -p ${tok('Zqxv')} ssh host`],
+  ['docker login -p X', `docker login -p ${tok('Zqxv')} registry.test`],
+  ['gh secret set --body', `gh secret set MY_SECRET --body ${tok('Zqxv')}`],
+  ['npm :_authToken space form', `npm config set //registry.npmjs.org/:_authToken ${tok('Zqxv')}`],
+  ['secret-named assignment via $(echo …)', `TOKEN=$(echo ${tok('Zqxv')}) && curl x`],
+  ['single-quoted literal starting with $', `PASSWORD='$${tok('ecretZqxv')}'`],
 ];
 
 for (const [what, cmd] of SHAPES) {
@@ -57,16 +73,26 @@ test('secret layer: normal keys stay readable (no over-redaction)', () => {
     String.raw`TOKEN=$(printf 'protocol=https\nhost=github.com\n' | git credential fill | sed -n 's/^password=//p')`,
     'git push -u origin main', 'sort --key=N f', 'gh auth login --with-token < <path>',
     'curl -u "$GH_USER:$GH_PASS" https://x.test', 'deploy --token "$TOKEN"', 'export GH_TOKEN=${GH_TOKEN}',
-    'curl -s https://api.github.com/repos/o/r/actions/runs?per_page=N', 'npm run task-list-summary-for-ci']) {
+    'curl -s https://api.github.com/repos/o/r/actions/runs?per_page=N', 'npm run task-list-summary-for-ci',
+    'mkdir -p a', 'ssh -p 22 host', String.raw`TOKEN=$(printf 'protocol=https\nhost=github.com\n' | ` +
+    `git credential fill | sed -n 's/^password=//p')`]) {
     assert.equal(redactPaths(k, NO_ID), k);
   }
+});
+
+test('secret layer: Cookie header redacts the whole value, not just the first pair', () => {
+  const out = redactPaths(`curl -H "Cookie: session=abc; other=${tok('Zqxv')}" https://x.test/a`, NO_ID);
+  assert.ok(!LEAK.test(out), out);
+  assert.match(out, /Cookie: <secret>/, out);
 });
 
 test('secret layer is fast on 200k-char pathological inputs', () => {
   for (const s of ['eyJ' + 'a'.repeat(200000), '-u a:'.repeat(40000), 'Authorization:'.repeat(15000),
     'A_TOKEN="'.repeat(20000), '--token'.repeat(30000), '//a:'.repeat(50000), 'x-token-'.repeat(25000),
     'ghp_'.repeat(50000), 'sk-'.repeat(70000), 'Bearer '.repeat(30000), 'TOKEN'.repeat(40000) + '=x',
-    '-' + 'a'.repeat(200000), 'X-' + 'a'.repeat(200000) + ':']) {
+    '-' + 'a'.repeat(200000), 'X-' + 'a'.repeat(200000) + ':', '"token"'.repeat(20000),
+    'A_TOKEN=$(echo '.repeat(15000), 'mysql -p'.repeat(20000), '--oauth2-bearer'.repeat(20000),
+    'gh secret set '.repeat(10000) + '--body', ':_authToken '.repeat(20000)]) {
     const t0 = Date.now();
     redactPaths(s, NO_ID);
     assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);

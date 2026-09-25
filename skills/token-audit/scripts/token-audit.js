@@ -715,38 +715,85 @@ function currentIdentity() {
 // Secret layer (runs first): a credential typed or pasted into a command → <secret>,
 // so a secret repeated in ≥ 20 calls (POLLING) or ≥ 5 sessions (BOILERPLATE) never
 // prints. commandKey() already turned digits into N, so shapes allow any word char.
-// A value that is a reference (`$VAR`, `${VAR}`, `$(…)`) is not a secret and stays.
+// A value that is a reference (`$VAR`, `${VAR}`, `$(…)`) is not a secret and stays;
+// a single-quoted `'$foo'` is a shell literal (no expansion), not a reference.
 // Every pattern starts at the start of a run (lookbehind) and bounds its name part,
 // so a 200k-char run can't make it quadratic. See REFERENCE.md "POLLING".
 const TOK_CHAR = '(?:[\\w-]|<id>)';
 const SECRET_SHAPE = new RegExp('(?<![\\w-])(?:gh[opsu]_|github_pat_|sk-|xox[bpas]-)' +
   `${TOK_CHAR}{12,}|(?<![\\w-])AKIA[A-Z0-9]{8,}|(?<![\\w-])eyJ${TOK_CHAR}{4,}\\.${TOK_CHAR}{4,}\\.${TOK_CHAR}*`, 'g');
-// header `Name: [scheme ]value` — Authorization, Cookie, *Token / *Api-Key / *Secret headers.
+// header `Name: [scheme ]value` — Authorization, Cookie, *Token / *Api-Key / *Secret
+// headers. Value runs to the next quote/backtick/newline (not just whitespace), so
+// `Cookie: a=1; b=Zqxv` redacts the whole header, not just its first `;`-pair.
 const SECRET_HEADER = new RegExp(
   /(?<![\w-])((?:Proxy-)?Authorization|Cookie|[\w-]{0,40}?(?:Token|Api-?Key|Secret)):/.source +
-  /([ \t]*)((?:Bearer|Basic|Token|Digest)[ \t]+)?([^\s'"`]+)/.source, 'gi');
+  /([ \t]*)((?:Bearer|Basic|Token|Digest)[ \t]+)?([^\n'"`]{0,512})/.source, 'gi');
 const SECRET_BEARER = /(?<![\w-])(Bearer[ \t]+)([^\s'"`]+)/gi;
-const SECRET_USERPASS = /(?<![\w-])(-u|--user)([ \t]+|=)(['"]?)([^\s'"`:]{0,256}):([^\s'"`]+)/g;
+// `-u`/`--user user:pass` — pass may be `"…"`/`'…'` with spaces, redacted whole.
+const SECRET_USERPASS = new RegExp(/(?<![\w-])(-u|--user)([ \t]+|=)/.source +
+  '(?:' + /"([^"\n]{0,256}):([^"\n]{0,256})"/.source + '|' + /'([^'\n]{0,256}):([^'\n]{0,256})'/.source +
+  '|' + /(['"]?)([^\s'"`:]{0,256}):([^\s'"`]+)/.source + ')', 'g');
 const SECRET_FLAG_WORD =
-  /password|passwd|passphrase|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|creds?/;
+  /password|passwd|passphrase|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|creds?|bearer/;
+// `--flag value` where flag name carries a credential word — value may be `"…"`/`'…'`
+// with spaces, redacted whole (not just its first word).
 const SECRET_FLAG = new RegExp(`(?<![\\w-])(--?[\\w-]{0,40}?(?:${SECRET_FLAG_WORD.source})[\\w-]{0,40})` +
-  /(=|[ \t]+)(['"]?)([^\s'"`<>|;&()]+)/.source, 'gi');
-// `NAME=value` where NAME looks like a credential (also `export …`, `$env:…`, `?access_token=`).
-// Starts after start/space/separator/quote/`?`/`:` only, so `s/^password=//p` stays.
-const SECRET_ASSIGN = new RegExp(/(?<=^|[\s;&|(?"'`:])(?=\w{0,63}?(?:token|key|secret|pass|pwd|auth|cred))/.source +
+  /(=|[ \t]+)(?:"([^"\n]{0,512})"|'([^'\n]{0,512})'|(['"]?)([^\s'"`<>|;&()]+))/.source, 'gi');
+// Shared lookahead: only at a name that looks like a credential (also `export …`,
+// `$env:…`, `?access_token=`). Starts after start/space/separator/quote/`?`/`:`
+// only, so `s/^password=//p` stays; bounds the name so a 200k run stays linear.
+const SECRET_NAME_LA = /(?<=^|[\s;&|(?"'`:])(?=\w{0,63}?(?:token|key|secret|pass|pwd|auth|cred))/.source;
+// `NAME=value` where NAME looks like a credential.
+const SECRET_ASSIGN = new RegExp(SECRET_NAME_LA +
   /([A-Za-z_]\w{0,63})([ \t]?=[ \t]?)("[^"\n]{0,512}"|'[^'\n]{0,512}'|[^\s'"`;&|()<>]+)/.source, 'gi');
 const SECRET_URL_CRED = /(\/\/[^\s/:@'"`]{1,256}):([^\s/@'"`]{1,256})@/g;
-const isRef = v => /^["']?\$/.test(v);
+// A secret-named assignment whose value is a literal `echo`/`printf` (no `|`, so a
+// real fetch like `$(printf … | git credential fill)` is untouched).
+const SECRET_CMD_LITERAL = new RegExp(SECRET_NAME_LA +
+  /([A-Za-z_]\w{0,63}[ \t]?=[ \t]?\$\((?:echo|printf)[ \t]+)([^|()]{0,512})(\))/.source, 'gi');
+// Secret-named JSON key: `"password":"x"`, `{"token": "x"}`. Key part bounded like a
+// flag name, so a long run of `"` in a 200k-char input stays linear.
+const SECRET_JSON = new RegExp(
+  `"(\\w{0,40}?(?:${SECRET_FLAG_WORD.source})\\w{0,40})"([ \\t]*:[ \\t]*)"([^"\\n]{0,512})"`, 'gi');
+// `mysql -pX` / `sshpass -p X` / `docker login -p X` — `-p` is scoped to these
+// specific commands, so `mkdir -p`, `ssh -p 22` stay readable.
+const SECRET_SHORT_P = /(?<![\w-])(mysql|sshpass|docker[ \t]+login)([ \t]+-p)([ \t]*)(['"]?)([^\s'"`]+)/gi;
+// `gh secret set NAME --body X`.
+const SECRET_GH_BODY = new RegExp(
+  /((?<![\w-])gh[ \t]+secret[ \t]+set\b[^\n]{0,100}?--body(?:=|[ \t]+))/.source +
+  /(?:"([^"\n]{0,512})"|'([^'\n]{0,512})'|([^\s'"`<>|;&()]+))/.source, 'gi');
+// npm's `:_authToken TOKEN` (space form; the `=` form is already SECRET_ASSIGN).
+const SECRET_NPM_AUTHTOKEN = /(?<![\w-])(:_authToken)([ \t]+)([^\s'"`]+)/gi;
+// A value is a reference — `$VAR`, `${VAR}`, `$(…)`, unquoted or double-quoted —
+// and stays. A single-quoted value (`'$foo'`) is a shell literal: no expansion.
+const isRef = v => /^\$/.test(v) || /^"\$/.test(v);
+const firstDefined = (...vs) => vs.find(v => v !== undefined);
 function redactSecrets(s) {
   return s
     .replace(SECRET_URL_CRED, '$1:<secret>@')
     .replace(SECRET_SHAPE, '<secret>')
     .replace(SECRET_HEADER, (m, name, sp, scheme = '', v) => (isRef(v) ? m : `${name}:${sp}${scheme}<secret>`))
     .replace(SECRET_BEARER, (m, b, v) => (isRef(v) ? m : `${b}<secret>`))
-    .replace(SECRET_USERPASS, (m, f, sep, q, user, v) =>
-      (isRef(v) || isRef(q + user) ? m : `${f}${sep}${q}${user}:<secret>`))
-    .replace(SECRET_FLAG, (m, f, sep, q, v) => (isRef(v) || v === '<secret>' ? m : `${f}${sep}${q}<secret>`))
-    .replace(SECRET_ASSIGN, (m, name, eq, v) => (isRef(v) || v === '<secret>' ? m : `${name}${eq}<secret>`));
+    .replace(SECRET_USERPASS, (m, f, sep, dqU, dqP, sqU, sqP, lq, bareU, bareP) => {
+      const user = firstDefined(dqU, sqU, bareU), v = firstDefined(dqP, sqP, bareP);
+      const q = dqU !== undefined ? '"' : sqU !== undefined ? "'" : (lq || '');
+      return isRef(v) || isRef(q + user) ? m : `${f}${sep}${q}${user}:<secret>${q}`;
+    })
+    .replace(SECRET_FLAG, (m, f, sep, dq, sq, lq, bare) => {
+      const v = firstDefined(dq, sq, bare);
+      const q = dq !== undefined ? '"' : sq !== undefined ? "'" : (lq || '');
+      return isRef(v) || v === '<secret>' ? m : `${f}${sep}${q}<secret>${q}`;
+    })
+    .replace(SECRET_ASSIGN, (m, name, eq, v) => (isRef(v) || v === '<secret>' ? m : `${name}${eq}<secret>`))
+    .replace(SECRET_CMD_LITERAL, (m, pre, v, close) => (isRef(v) ? m : `${pre}<secret>${close}`))
+    .replace(SECRET_JSON, (m, k, sep, v) => (isRef(v) || v === '<secret>' ? m : `"${k}"${sep}"<secret>"`))
+    .replace(SECRET_SHORT_P, (m, cmd, pflag, sep, q, v) => (isRef(v) ? m : `${cmd}${pflag}${sep}${q}<secret>${q}`))
+    .replace(SECRET_GH_BODY, (m, pre, dq, sq, bare) => {
+      const v = firstDefined(dq, sq, bare);
+      const q = dq !== undefined ? '"' : sq !== undefined ? "'" : '';
+      return isRef(v) ? m : `${pre}${q}<secret>${q}`;
+    })
+    .replace(SECRET_NPM_AUTHTOKEN, (m, f, sep, v) => (isRef(v) ? m : `${f}${sep}<secret>`));
 }
 const idPatterns = new WeakMap();
 // identity = { username, home, name } — injectable for tests; defaults to this machine.
@@ -802,7 +849,7 @@ const BOILER_MIN_SESSIONS = 5; // same setup prefix in >= N distinct sessions
 // missing tool → skipped (the run goes on past it).
 // Real-data numbers and the definitions that were tried: REFERENCE.md "BOILERPLATE".
 const SETUP_ASSIGN = /^((?:export |\$env:)?[A-Za-z_]\w* ?= ?)(.*)$/s;
-const VAR_ROOTED_PATH = /^(?:<path>|\$\{?\w+\}?)(?:[\/]|$)/;
+const VAR_ROOTED_PATH = /^(?:<path>|\$\{?\w+\}?)(?:[\\/]|$)/;
 const unquote = v => v.replace(/^(["'])(.*)\1$/s, '$2');
 function setupPrefixes(key) {
   const segs = shellSegments(key);

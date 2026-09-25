@@ -195,17 +195,30 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   never prints. Shapes: known token prefixes (`ghp_`/`gho_`/`ghs_`/`ghu_`, `github_pat_`,
   `sk-`/`sk-ant-`, `xoxb-`/`xoxp-`/`xoxa-`/`xoxs-`, `AKIA…`, a JWT `eyJ….….…`); the value of an
   `Authorization:` / `Cookie:` / `*-Token:` / `*-Api-Key:` / `*Secret:` header (a `Bearer` /
-  `Basic` / `token` scheme word stays) and of a bare `Bearer x`; the password of `-u` /
-  `--user user:pass` and of URL credentials (`https://user:pass@host`); the value of a flag
-  whose name contains password/passwd/passphrase/pwd/token/secret/api-key/access-key/
-  private-key/cred (`--password=x`, `--token x`); and `NAME=value` (also `export`, `$env:`,
-  `?access_token=`) where NAME matches `/TOKEN|KEY|SECRET|PASS|PWD|AUTH|CRED/i`. A value that
-  is a reference — `$VAR`, `${VAR}`, `$(…)`, quoted or not — is not a secret and stays
-  (`-H "Authorization: token $TOKEN"`, `TOKEN=$(… git credential fill …)` stay readable). An
-  assignment matches only after start/whitespace/separator/quote/`?`/`:`, so a sed script's
-  `s/^password=//p` stays. Every pattern is anchored to the start of a run and bounds its
-  name part, so it stays linear on 200k-char inputs. Normal keys are untouched (`a=b`,
-  `-o=json`, `PYTHONIOENCODING=utf-N`, `sort --key=N`, `git push -u origin main`). Accepted
+  `Basic` / `token` scheme word stays); the header value runs to the next quote/backtick/
+  newline, not just whitespace, so `Cookie: a=1; b=Zqxv` redacts the whole header, not just
+  its first `;`-pair; the value of a bare `Bearer x`; the password of `-u` / `--user
+  user:pass` and of URL credentials (`https://user:pass@host`); the value of a flag whose
+  name contains password/passwd/passphrase/pwd/token/secret/api-key/access-key/private-key/
+  cred/bearer (`--password=x`, `--token x`, `--oauth2-bearer x`); and `NAME=value` (also
+  `export`, `$env:`, `?access_token=`) where NAME matches
+  `/TOKEN|KEY|SECRET|PASS|PWD|AUTH|CRED/i`. A `-u`/flag/JSON value may be `"…"` / `'…'` with
+  spaces and is redacted whole, not just its first word (`--password "a pass phrase"`,
+  `-u 'jdoe:a pass word'`). Also covered: a secret-named JSON key (`{"password":"x"}`,
+  `{"token": "x"}`); `-p` scoped to `mysql`/`sshpass`/`docker login` only, so `mkdir -p` and
+  `ssh -p 22` stay readable; `gh secret set NAME --body x`; npm's `:_authToken x` (space
+  form; the `=` form was already covered). A value that is a reference — `$VAR`, `${VAR}`,
+  `$(…)`, unquoted or double-quoted — is not a secret and stays (`-H "Authorization: token
+  $TOKEN"`, `TOKEN=$(… git credential fill …)` stay readable); a **single-quoted** value
+  (`PASSWORD='$ecret'`) is a shell literal, not a reference — shell never expands `$` inside
+  `'…'` — so it is redacted like any other literal. A secret-named assignment whose value is
+  a literal `$(echo x)` / `$(printf x)` (no `|`, so it can't be piping through a real lookup)
+  redacts `x` too (`TOKEN=$(echo a-pasted-secret)`); a piped form like `$(printf … | git
+  credential fill)` is a real fetch and stays untouched. An assignment matches only after
+  start/whitespace/separator/quote/`?`/`:`, so a sed script's `s/^password=//p` stays. Every
+  pattern is anchored to the start of a run and bounds its name part, so it stays linear on
+  200k-char inputs. Normal keys are untouched (`a=b`, `-o=json`, `PYTHONIOENCODING=utf-N`,
+  `sort --key=N`, `git push -u origin main`, `ssh -p 22 host`, `mkdir -p a`). Accepted
   over-redaction: an odd NAME containing a keyword (`MONKEY=x`, `GIT_ASKPASS=x`) and a boolean
   flag named like a secret flag followed by a plain word (`--no-token foo`).
 - **Value layer — the current user's name is redacted to `<user>`** wherever it is left in
@@ -280,9 +293,7 @@ sessions / 1210 turns (was 68 / 1171); the credential fetch 8 / 39 and 7 / 18 (w
 and 6 / 15); new: `$env:PYTHONIOENCODING=<value>` (6 / 23, real), `SHA=$(git rev-parse
 HEAD)` (13 / 22), `start=$(date +%s)` (5 / 14) and `n=<value>` (5 / 114, a loop counter —
 noise; Slice 15). The credential fetch is in 54 sessions / 232 calls overall, but in ~15
-spellings (quotes, `
-
-`, `2>/dev/null`, `sed` vs `grep | cut`, `TOKEN` vs `T`), most
+spellings (quotes, `\n\n`, `2>/dev/null`, `sed` vs `grep | cut`, `TOKEN` vs `T`), most
 in 2–4 sessions each, plus some fetches after a non-assignment segment (`S=<path> && cat …
 && TOKEN=$(…)`); the leading run fixes only the few behind an export / path variable. So the
 design's ~110 is right for the fetch overall; the flag reports the two spellings that cross
