@@ -229,16 +229,19 @@ function hashHeredocBodies(s, keep) {
 // No match → ACTIVITY_OTHER.
 const CMD = '‣';
 // Interpreter options allowed before `-m` (numbers already N'd by commandKey):
-// `-X val` / `-W val` (take a value — real Python flags, case-sensitive:
-// lowercase `-x` is a different, no-value flag), any other single-letter flag
-// (`-u`, `-B`, `-O`, …), or a `py`-launcher version selector (`-3`, `-3.N`,
-// already N'd to `-N`/`-N.N`). The three alternatives are kept disjoint:
-// `(?-i:X)` / `(?-i:W)` pin those two letters case-sensitive despite the
-// regex's ambient `i` flag, so `-x -m` is not swallowed as `-X`'s value (was:
-// `python -x -m pytest` → other); the single-letter alt excludes X, W and N
-// (it would otherwise also match `-N`, e.g. `-3` → `-N` — that overlap is
-// what made `-3 ` × 24 backtrack exponentially).
-const PY_OPT = String.raw`(?:-(?-i:X) \S+|-(?-i:W) \S+|-(?!(?-i:X)|(?-i:W)|N)[A-Za-z]|-N(?:\.N)?)`;
+// `-X val` / `-W val` (take a value; the value can't itself start with `-`,
+// so `-x -m` is never swallowed as `-X`'s value — it falls through to the
+// single-letter alt below instead, e.g. `python -x -m pytest` → test/lint/
+// build), any other single-letter flag (`-u`, `-B`, `-O`, lowercase `-x`,
+// …), or a `py`-launcher version selector (`-3`, `-3.N`, already N'd to
+// `-N`/`-N.N`). The three alternatives are kept disjoint: the single-letter
+// alt excludes N (it would otherwise also match `-N`, e.g. `-3` → `-N` —
+// that overlap is what made `-3 ` × 24 backtrack exponentially). Deliberately
+// avoids inline regex-modifier groups (a newer syntax for toggling flags
+// like case-insensitivity mid-pattern) — unsupported before Node 23, throws
+// `SyntaxError: Invalid group` on older engines, e.g. Node 22 LTS, crashing
+// the whole script.
+const PY_OPT = String.raw`(?:-[XW] (?!-)\S+|-(?!N)[A-Za-z]|-N(?:\.N)?)`;
 const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)*|timeout(?: -\S+)* \S+|` +
   String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)?(?: ${PY_OPT})* -m|py(?: ${PY_OPT})* -m|uv run|poetry run|` +
   String.raw`npx(?: -y| --yes)?|bunx|(?:pnpm|yarn) (?:dlx|exec)|npm exec`;

@@ -82,7 +82,7 @@ test('commandKey drops cd / Set-Location segments anywhere; an env prefix never 
 });
 
 test('commandKey: a private-use char already in the input is left alone, not turned into "undefined"', () => {
-  const key = commandKey('echo ""');
+  const key = commandKey('echo "\uE010"');
   assert.ok(!key.includes('undefined'), key);
 });
 
@@ -123,7 +123,7 @@ test('shellSegments drops empty segments from consecutive separators, keeps a tr
 test('hashHeredocBodies: an unterminated heredoc is still hashed, no stray sentinel leaks into the key', () => {
   const key = commandKey('cat <<EOF\nfoo\nbar');
   assert.match(key, /^cat <<EOF \[heredoc [0-9a-f]{8}\]$/, key);
-  assert.ok(!key.includes('￿'), key);
+  assert.ok(!key.includes('\uFFFF'), key);
 });
 
 test('commandKey collapses whitespace, spaces separators canonically', () => {
@@ -256,6 +256,13 @@ test('activityCategory: one example per category, first matching rule wins', () 
   ];
   const got = cases.map(([[tool, input]]) => activityCategory(tool, input));
   assert.deepEqual(got, cases.map(c => c[1]));
+});
+
+test('script source: no inline regex modifier groups (?i:…) / (?-i:…) / (?m:…), unsupported on Node 22', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'skills/token-audit/scripts/token-audit.js'), 'utf8');
+  assert.doesNotMatch(src, /\(\?-?[a-z]+:/, 'inline modifier group found — throws SyntaxError on Node < 23');
 });
 
 test('activityCategory: a long non-matching command after `node ` does not blow up (linear, not quadratic)', () => {
