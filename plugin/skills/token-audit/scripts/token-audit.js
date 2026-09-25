@@ -789,7 +789,10 @@ const FWD_USERS_PATH = new RegExp(
   /(^|[\s=(`'"<>@]|:(?!\/\/))\/(?:mnt\/)?(?:[A-Za-z]\/)?(?:users|home)\//.source +
   /(?:\\ |[^\/|;&()<>'"`])+(?:\/[^\s`'"|;&()<>]*)*/.source, 'gi');
 const TILDE_PATH = /(^|[\s=(`'"<>@:])~[\w.-]*(?:[\\/][^\s`'"|;&()<>]*)?/g;
-const ABS_PATH = /(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()<>]+[\\/][^\s`'"|;&()<>]*/g;
+// A \ before $, " or a backtick is a shell escape (`echo \"\$PW\"`), not a path separator.
+const PATH_SEP = /(?:\/|\\(?![$"`]))/.source;
+const ABS_PATH = new RegExp(/(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?/.source + PATH_SEP +
+  /[^\s\\/`'"|;&()<>]+/.source + PATH_SEP + /[^\s`'"|;&()<>]*/.source, 'g');
 // Value layer: whatever the patterns above miss, the current user's own name is
 // redacted to <user> wherever it appears — in any path spelling (`C:\Users\x`,
 // `C:/Users/x`, `/c/Users/x`, `/mnt/c/Users/x`, `C:\\Users\\x`, `x\ y`), the Claude
@@ -968,7 +971,7 @@ function passwordRanges(v) {
       i = b = Math.min(b, v.length);
     }
     const inner = v.slice(a, b);
-    if (a === (q ? 1 : 0) && isRef(inner, q || undefined)) return []; // first part only
+    if (isRef(inner, q || undefined)) continue; // a reference part stays, a literal one redacts
     if (inner && inner !== '<secret>') ranges.push([a, b]);
   }
   return ranges;
@@ -985,8 +988,8 @@ function unescapeDq(t) {
   pos.push(t.length);
   return { u: out.join(''), pos };
 }
-const cmdName = w => w.slice(Math.max(w.lastIndexOf('/'), w.lastIndexOf('\\')) + 1)
-  .replace(/\.exe$/i, '').toLowerCase();
+// Command name of a word: quotes dropped (`& "C:\…\mysql.exe"`), dir and .exe stripped.
+const cmdName = w => w.replace(/["']/g, '').split(/[\\/]/).pop().replace(/\.exe$/i, '').toLowerCase();
 function redactShortP(s) {
   let out = '', at = 0;
   for (const [a, b, r] of shortPEdits(s, 0)) { out += s.slice(at, a) + r; at = b; }

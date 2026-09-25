@@ -219,3 +219,33 @@ test('BOILERPLATE: grouping stays on the raw value — two different literal val
   }
   assert.equal(flagOf(audit(tmpClaudeDir(files)), 'BOILERPLATE'), undefined);
 });
+
+// Slice 29: shapes that leaked or got mangled after Slice 13.
+test('secret layer: quoted mysql path (PowerShell `& "…\mysql.exe"`) still redacts -pX', () => {
+  for (const cmd of [String.raw`& "C:\Program Files\MySQL\bin\mysql.exe" -p${S} db`,
+    String.raw`& 'C:\Program Files\MySQL\bin\mysql.exe' -p${S}`, `"/usr/bin/mysql" -p${S}`]) {
+    const out = redactPaths(cmd, NO_ID);
+    assert.ok(!LEAK.test(out) && /-p<secret>/.test(out), out);
+  }
+});
+
+test('secret layer: escaped-quote references (\\"$PW\\") stay intact, not path-mangled', () => {
+  for (const k of [String.raw`bash -c "mysql -p\"\$PW\""`, String.raw`bash -c "echo \"\$PW\""`,
+    String.raw`echo \"\$PW\"`]) {
+    assert.equal(redactPaths(k, NO_ID), k);
+  }
+});
+
+test('secret layer: a literal part glued after a reference (-p$X\'lit\') still redacts', () => {
+  assert.equal(redactPaths(`mysql -p$X'${S}' db`, NO_ID), "mysql -p$X'<secret>' db");
+  assert.equal(redactPaths(`mysql -p"$X"${S} db`, NO_ID), 'mysql -p"$X"<secret> db');
+});
+
+test('secret + path layers stay linear on 200k-char escape / quoted-path runs (Slice 29)', () => {
+  for (const s of ['\\$'.repeat(100000), ' \\"'.repeat(66000), '"/a\\$'.repeat(40000),
+    '& "C:\\x\\mysql.exe" -p'.repeat(9000), "mysql -p$X'a'".repeat(15000)]) {
+    const t0 = Date.now();
+    redactPaths(s, NO_ID);
+    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);
+  }
+});

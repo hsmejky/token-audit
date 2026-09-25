@@ -241,7 +241,15 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   the port); mysql's password is attached only, so `mysql -p db` (space) is the prompt form,
   not a secret, and stays; sshpass's own options end at the command it wraps, so in
   `sshpass -p X ssh -p N host` only `X` redacts; a later segment (`…; ssh -p N h`),
-  `mkdir -p a`, `ssh -p 22 host` and `docker run -p N:N` stay readable. Also
+  `mkdir -p a`, `ssh -p 22 host` and `docker run -p N:N` stay readable. Quoted parts are
+  re-scanned as shell text up to 4 levels deep (`bash -c "…"`, `sh -c '…'`, `--cmd="mysql -pX"`,
+  `\"`-escaped inner quotes), and the command may be a quoted path
+  (`& "C:\Program Files\MySQL\bin\mysql.exe" -pX`). A value made of several parts redacts each
+  literal part and keeps each reference part (`-p$X'lit'` → `-p$X'<secret>'`). A `\` before
+  `$`, `"` or a backtick is a shell escape, not a path separator, so `bash -c "mysql -p\"\$PW\""`
+  stays intact. Known limits, left as typed: a 5th or deeper quoting level; a password glued
+  across a quote boundary inside a nested command (`sh -c 'mysql -p'X' db'`); a literal glued
+  onto a reference in the same bare part (`-p${X}lit`). Also
   `gh secret set NAME --body x` / `-b x` / attached `-bx` / `-b'x'`; npm's `:_authToken x`
   (space form; the `=` form was already covered). A value that is a reference — `$VAR`, `${VAR}`,
   `$(…)`, unquoted or double-quoted — is not a secret and stays (`-H "Authorization: token
