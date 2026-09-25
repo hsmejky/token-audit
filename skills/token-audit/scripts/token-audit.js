@@ -650,15 +650,29 @@ const POLL_CATEGORIES = new Set(['wait/poll', 'github', 'read', ACTIVITY_OTHER])
 // contain a space (Explorer displays "First Last"), which the generic rule
 // can't allow without swallowing trailing prose. Emails (`user@host.tld`)
 // are redacted separately — a path trigger char never precedes them.
-const EMAIL = /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g;
+// (?<![\w.+-]) anchors the match to the start of a [\w.+-] run: without it, `\b`
+// re-attempts the whole alternation at every non-word char inside a long unbroken
+// run (`a.a.a.a…`), which is O(n^2) on a pathological 200k-char input.
+const EMAIL = /(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g;
 const FILE_URL = /\bfile:\/\/\/?[^\s'"`<>|;&()]*/gi;
-const WIN_USERS_PATH = /[A-Za-z]:\\Users\\[^\\]+(?:\\[^\s\\'"`<>|;&()]*)*/g;
+// WIN_USERS_PATH: `C:\Users\<name>` / `c:\users\<name>` (root word case-insensitive
+// via [Uu]/[Hh]). The name segment accepts a literal or backslash-escaped space
+// (`Petr Svarc` / `Petr\ Svarc`) but excludes shell metacharacters, so
+// `C:\Users\jdoe | tee …` stops before the pipe instead of swallowing it.
+const WIN_USERS_PATH =
+  /[A-Za-z]:\\(?:[Uu]sers|[Hh]ome)\\(?:\\ |[^\\|;&()<>'"`])+(?:\\[^\s\\'"`<>|;&()]*)*/g;
+// FWD_USERS_PATH: the git-bash / macOS form of the same path (`/c/Users/<name>`,
+// `/home/<name>`), including inside a quoted string (`"see /c/Users/Petr Svarc/x"`)
+// — the name segment stops at the next `/` or a quote, so the closing quote survives.
+const FWD_USERS_PATH =
+  /(^|[\s=(`'"<>@])\/(?:[A-Za-z]\/)?(?:[Uu]sers|[Hh]ome)\/(?:\\ |[^\/|;&()<>'"`])+(?:\/[^\s`'"|;&()<>]*)*/g;
 const TILDE_PATH = /(^|[\s=(`'"<>@:])~[\w.-]*(?:[\\/][^\s`'"|;&()<>]*)?/g;
 const ABS_PATH = /(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()<>]+[\\/][^\s`'"|;&()<>]*/g;
 const redactPaths = key => key
   .replace(EMAIL, '<email>')
   .replace(FILE_URL, '<path>')
   .replace(WIN_USERS_PATH, '<path>')
+  .replace(FWD_USERS_PATH, '$1<path>')
   .replace(TILDE_PATH, '$1<path>')
   .replace(ABS_PATH, '$1<path>');
 // Polling runs in this window: Bash/PowerShell calls of a POLL_CATEGORIES
@@ -677,7 +691,8 @@ function polling(rows) {
     for (const c of r.calls) {
       if (!SHELL_TOOLS.has(c.tool) || !POLL_CATEGORIES.has(categorize(c))) continue;
       const id = sessionKey(r) + '\u0000' + c.key;
-      const g = groups.get(id) || { sid: r.sid, parent: r.isSub ? r.parent : null, key: redactPaths(c.key), count: 0, cost: 0 };
+      const g = groups.get(id) ||
+        { sid: r.sid, parent: r.isSub ? r.parent : null, key: redactPaths(c.key), count: 0, cost: 0 };
       g.count++;
       g.cost += r.cost / r.calls.length; // 1/n of the turn, as in activity()
       groups.set(id, g);
@@ -1033,4 +1048,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { projectFolder, commandKey, shellSegments, activityCategory };
+module.exports = { projectFolder, commandKey, shellSegments, activityCategory, redactPaths };

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
+const { redactPaths } = require('../skills/token-audit/scripts/token-audit.js');
 
 // plan.md Slice 12 / design.md Q9: POLLING = the same normalized command
 // (commandKey) >= POLL_MIN_CALLS (20, provisional) times in one session.
@@ -278,4 +279,88 @@ test('POLLING: an email address is redacted to <email>', () => {
   assert.ok(f);
   assert.ok(!/jdoe@gmail\.com/.test(f.groups[0].key), f.groups[0].key);
   assert.match(f.groups[0].key, /<email>/);
+});
+
+// Re-review finding 1: EMAIL was O(n^2) on a long unbroken [\w.+-] run (no '@' or a
+// pathological one) — `\b` let the alternation restart at every non-word char inside
+// the run. The (?<![\w.+-]) lookbehind anchors matching to run starts, making it O(n).
+test('POLLING: redactPaths is fast on a 200k-char run of "." (no email)', () => {
+  const s = 'a.'.repeat(100000);
+  const t0 = Date.now();
+  redactPaths(s);
+  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+});
+
+test('POLLING: redactPaths is fast on a 200k-char run of "-" (no email)', () => {
+  const s = 'a-'.repeat(100000);
+  const t0 = Date.now();
+  redactPaths(s);
+  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+});
+
+test('POLLING: redactPaths is fast on a 200k-char dotted run ending in "@" (email-shaped)', () => {
+  const s = 'x.'.repeat(99999) + 'x@';
+  const t0 = Date.now();
+  redactPaths(s);
+  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+});
+
+// Re-review finding 2: a path whose name segment has a space, in several shapes.
+test('POLLING: escaped-space forward-slash Users path does not leak the surname', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => String.raw`cat /c/Users/Petr\ Svarc/x`),
+  })));
+  assert.ok(f);
+  assert.ok(!/Svarc/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: escaped-space Windows-backslash Users path does not leak the surname', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => String.raw`type C:\Users\Petr\ Svarc\x`),
+  })));
+  assert.ok(f);
+  assert.ok(!/Svarc/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: quoted forward-slash Users path with a literal space does not leak the surname', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => 'echo "see /c/Users/Petr Svarc/x"'),
+  })));
+  assert.ok(f);
+  assert.ok(!/Svarc/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: lowercase drive/users root is redacted case-insensitively', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => String.raw`type c:\users\Petr Svarc\x`),
+  })));
+  assert.ok(f);
+  assert.ok(!/Svarc/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: unquoted Windows path with a space in the user name does not leak the surname', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => String.raw`echo C:\Users\Petr Svarc\x`),
+  })));
+  assert.ok(f);
+  assert.ok(!/Svarc/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: redactPaths does not swallow a trailing pipe after a Windows-users path', () => {
+  const out = redactPaths(String.raw`echo C:\Users\jdoe | tee out.log`);
+  assert.ok(!/jdoe/.test(out), out);
+  assert.match(out, /\| tee out\.log$/, out);
+});
+
+test('POLLING: assignment, key:value and flag=value pairs are not over-redacted', () => {
+  for (const cmd of ['echo a=b', 'echo key:value', 'echo -o=json']) {
+    const [f] = pollingFlags(audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(25, 't', () => cmd) })));
+    assert.ok(f, cmd);
+    assert.ok(!/<path>|<email>/.test(f.groups[0].key), `${cmd} -> ${f.groups[0].key}`);
+  }
 });
