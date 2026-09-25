@@ -26,15 +26,23 @@ const ROOT = path.join(CLAUDE, 'projects');
 
 // ---------------------------------------------------------------- pricing
 // $/MTok: [input, cacheWrite5m, cacheWrite1h, cacheRead, output]
+// Source: https://claude.com/pricing (lookup 2026-09-25). Opus 5.5 has its own
+// row — it is NOT the same price as Opus 5 (cheaper across the board), so it
+// gets a distinct rate here even though it still rolls into the "Opus" family
+// bucket in SPEND (see REFERENCE.md).
 const PRICES = {
   opus: [5, 6.25, 10, 0.5, 25],
+  opus55: [4, 5, 8, 0.2, 20],
+  fable: [10, 12.5, 20, 0.25, 50],
   sonnet46: [3, 3.75, 6, 0.3, 15],
   sonnet: [2, 2.5, 4, 0.2, 10],
   haiku: [1, 1.25, 2, 0.1, 5],
 };
 function rateFor(model) {
   const m = model.toLowerCase();
+  if (m.includes('opus-5-5') || m.includes('opus-5.5')) return ['Opus', PRICES.opus55];
   if (m.includes('opus')) return ['Opus', PRICES.opus];
+  if (m.includes('fable')) return ['Fable', PRICES.fable];
   if (m.includes('sonnet-4-6') || m.includes('sonnet-4.6')) return ['Sonnet', PRICES.sonnet46];
   if (m.includes('sonnet')) return ['Sonnet', PRICES.sonnet];
   if (m.includes('haiku')) return ['Haiku', PRICES.haiku];
@@ -63,9 +71,16 @@ function walk(dir, out = []) {
 // a partial usage (output_tokens still streaming), so the line with the largest
 // output wins. An id recurring in another file is still the same response; it
 // stays with the session where it was first seen.
+// Unknown models (e.g. a new family the pricing table hasn't caught up with
+// yet) are counted here instead of being silently dropped: rows seen and raw
+// token volume (input + cache write + cache read + output), keyed by the
+// model string as it appears in the transcript. Not deduped by message.id —
+// these tokens are never priced, so exact turn accounting doesn't matter,
+// only "were they seen at all".
 async function collect() {
   const rows = [];
   const byId = new Map();
+  const unpriced = new Map();
   for (const f of walk(ROOT)) {
     const dir = path.dirname(f);
     const isSub = path.basename(dir) === 'subagents';
@@ -78,8 +93,16 @@ async function collect() {
       try { j = JSON.parse(line); } catch { continue; }
       const u = j.message && j.message.usage;
       if (!u) continue;
-      const r = rateFor(j.message.model || '');
-      if (!r) continue;
+      const modelName = j.message.model || '(unknown)';
+      const r = rateFor(modelName);
+      if (!r) {
+        const tok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) +
+          (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
+        const e = unpriced.get(modelName) || { model: modelName, rows: 0, tokens: 0 };
+        e.rows++; e.tokens += tok;
+        unpriced.set(modelName, e);
+        continue;
+      }
       const [family, p] = r;
 
       const cc = u.cache_creation;
@@ -103,7 +126,7 @@ async function collect() {
       }
     }
   }
-  return rows;
+  return { rows, unpriced: [...unpriced.values()].sort((a, b) => b.tokens - a.tokens) };
 }
 
 // -------------------------------------------------------------- summarize
@@ -309,9 +332,9 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
     console.error('no transcripts at ' + ROOT);
     process.exit(1);
   }
-  const rows = await collect();
-  if (!rows.length) {
-    console.error('no priced messages found in ' + ROOT);
+  const { rows, unpriced } = await collect();
+  if (!rows.length && !unpriced.length) {
+    console.error('no transcripts found in ' + ROOT);
     process.exit(1);
   }
 
@@ -332,7 +355,7 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
     const trim = s => ({ ...s, sessions: s.sessions.slice(0, TOP) });
     console.log(JSON.stringify({ windowDays: DAYS, cur: trim(cur), prev: trim(prev),
       all: { cost: all.cost, msgs: all.msgs, sessions: all.sessions.length },
-      weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl }, null, 2));
+      weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced }, null, 2));
     return;
   }
 
@@ -344,6 +367,12 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
     console.log(`  ${f.padEnd(8)} ${money(v).padStart(8)}  ${pct(v / cur.cost)}`);
   console.log(`  main ${money(cur.byChain.main)} (${pct(cur.byChain.main / (cur.cost || 1))})   ` +
     `subagents ${money(cur.byChain.sub)} (${pct(cur.byChain.sub / (cur.cost || 1))})`);
+  if (unpriced.length) {
+    const totTok = unpriced.reduce((a, u) => a + u.tokens, 0);
+    console.log(`UNPRICED     ${unpriced.length} model(s), ${(totTok / 1e6).toFixed(2)}M tokens not in pricing table`);
+    for (const u of unpriced)
+      console.log(`  ${u.model.padEnd(28)} rows=${String(u.rows).padStart(6)}  tokens=${(u.tokens / 1e6).toFixed(2)}M`);
+  }
   console.log('');
   console.log(`PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
     (prev.msgs ? `   prev ${k(prev.avgCtx)} / ${money(prev.costPerMsg)}` : ''));

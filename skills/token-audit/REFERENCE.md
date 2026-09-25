@@ -10,19 +10,49 @@ Context is re-sent on **every** turn, so spend grows with `context × turns` —
 quadratic in session length, and nearly independent of how many files were read.
 This single fact drives every playbook entry below.
 
-`$/MTok` used by the script:
+`$/MTok` used by the script. Source: https://claude.com/pricing (lookup 2026-09-25).
+The page publishes input, output, cache read and 5-minute cache write directly; the
+1-hour cache write column is not on the page itself — it is documented as a flat 2×
+the input rate, applied uniformly across models (confirmed at
+https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration,
+lookup 2026-09-25) and matches every model's 5m/1h ratio below, so it is used as-is
+rather than re-derived per model.
 
 | model | input | cache write 5m | cache write 1h | cache read | output |
 |---|---|---|---|---|---|
+| Opus 5.5 | 4 | 5.00 | 8 | 0.20 | 20 |
 | Opus 5 | 5 | 6.25 | 10 | 0.50 | 25 |
+| Fable 5.1 | 10 | 12.50 | 20 | 0.25 | 50 |
 | Sonnet 5 | 2 | 2.50 | 4 | 0.20 | 10 |
 | Sonnet 4.6 | 3 | 3.75 | 6 | 0.30 | 15 |
 | Haiku 4.5 | 1 | 1.25 | 2 | 0.10 | 5 |
 
-Multipliers: cache read 0.1×, 5m write 1.25×, 1h write 2× the input rate. When a
-transcript entry has no 5m/1h breakdown the script assumes 1h (the pessimistic case).
-There is **no long-context premium tier** on current models — a 900k request bills at
-the same per-token rate as a 9k one.
+`opus-5-5` was checked against the `Opus` row per the implementation plan's open
+question — it does **not** match: Opus 5.5 is the current/cheaper tier, Opus 5 is
+legacy pricing on the same page. The script gives `opus-5-5` its own rate row
+(`PRICES.opus55`) so its actual (cheaper) cost is used, but keeps it in the same
+`Opus` family bucket in SPEND/`byFamily` — the plan only asked for Fable to show as
+its own SPEND family, and splitting the SPEND bucket too would move `OPUS_HEAVY`'s
+threshold behaviour out of scope for this slice.
+
+Read multiplier is **not** a flat 0.1× for every model — the source page gives it per
+row (e.g. Opus 5.5 reads at 0.05× input, Fable 5.1 at 0.025×), so the table above is
+taken verbatim rather than computed. 5m write is 1.25× and 1h write is 2× input,
+uniformly, per the prompt-caching doc above. When a transcript entry has no 5m/1h
+breakdown the script assumes 1h (the pessimistic case). There is **no long-context
+premium tier** on current models — a 900k request bills at the same per-token rate as
+a 9k one.
+
+### Unknown models — `UNPRICED`
+
+A model string `rateFor` doesn't recognize is **not** dropped: `collect()` counts its
+rows and total tokens (input + cache write + cache read + output, summed per raw
+JSONL line — not deduped by `message.id`, since these tokens are never priced and
+exact turn accounting doesn't matter here) and reports them under `UNPRICED`, keyed
+by the literal model string. Printed as its own line below `SPEND` in the text report
+(only when non-empty) and always present as top-level `unpriced` in `--json`, so a
+new/renamed model family shows up as a visible line item instead of silently
+vanishing from the totals the way Fable did before this fix.
 
 ## Flag playbook
 
