@@ -150,7 +150,7 @@ function stripCdAndEnv(s) {
     // standalone `TOKEN=$(… | git credential fill)` assignment stays.
     .map(g => {
       let text = g.text.replace(/\s+/g, ' ')
-        .replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$]*) )+(?=\S)/, '');
+        .replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$'"]*) )+(?=\S)/, '');
       const grp = /^\((.*)\)$/s.exec(text);
       if (grp) text = `(${stripCdAndEnv(grp[1])})`;
       return { ...g, text };

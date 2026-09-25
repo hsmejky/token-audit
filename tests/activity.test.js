@@ -31,6 +31,9 @@ test('commandKey strips env-var prefixes but keeps a standalone assignment (BOIL
     'sed -n \'s/^password=//p\')';
   const key = commandKey(cred + '; curl -s x');
   assert.ok(key.startsWith('TOKEN=$(printf'), key);
+  // a quoted value containing a space is not treated as ending after its first word
+  assert.equal(commandKey("MSG='a b'; echo hi"), "MSG='a b' ; echo hi");
+  assert.equal(commandKey('MSG="a b" echo hi'), 'echo hi');
 });
 
 test('commandKey replaces quoted paths and hex/uuid ids, keeps other quoted text', () => {
@@ -241,6 +244,8 @@ test('activityCategory: one example per category, first matching rule wins', () 
     // SHOT_EXEC must not cross a command boundary into the next command
     [sh('node build.js && git add scripts/screenshot.ts'), 'git'],
     [sh('curl -s https://api.github.com/repos/o/r/actions/runs/123/jobs'), 'wait/poll'],
+    // quoted env value with a space must not corrupt the segment that follows it
+    [sh("( TIMEFORMAT='%R sec'; time python -m pytest )"), 'test/lint/build'],
     [['NewToolWeNeverSaw', {}], 'other'],
   ];
   const got = cases.map(([[tool, input]]) => activityCategory(tool, input));
