@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir, turn } = require('./harness');
-const { commandKey, shellSegments, activityCategory } = require('../skills/token-audit/scripts/token-audit.js');
+const { commandKey, shellSegments, activityCategory } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // One API response that makes tool calls, as Claude Code writes it: one JSONL
 // line per content part (here one per tool_use), all sharing message.id + usage.
@@ -261,7 +261,7 @@ test('activityCategory: one example per category, first matching rule wins', () 
 test('script source: no inline regex modifier groups (?i:…) / (?-i:…) / (?m:…), unsupported on Node 22', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const src = fs.readFileSync(path.join(__dirname, '..', 'skills/token-audit/scripts/token-audit.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin/skills/token-audit/scripts/token-audit.js'), 'utf8');
   assert.doesNotMatch(src, /\(\?-?[a-z]+:/, 'inline modifier group found — throws SyntaxError on Node < 23');
 });
 

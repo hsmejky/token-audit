@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { audit, auditCwd, auditRaw, tmpClaudeDir, tmpDir, turn } = require('./harness');
-const { projectFolder } = require('../skills/token-audit/scripts/token-audit.js');
+const { projectFolder } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Real on-disk convention (~/.claude/projects/<folder>/): the folder name is
 // the absolute, resolved path Claude Code was launched from, with every

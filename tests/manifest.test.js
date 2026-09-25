@@ -6,7 +6,7 @@ const path = require('node:path');
 // Repo is public: manifests must not carry a personal email. Any email
 // present must be a GitHub noreply address.
 const ROOT = path.join(__dirname, '..');
-const MANIFESTS = ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json'];
+const MANIFESTS = ['plugin/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json'];
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
 for (const rel of MANIFESTS) {

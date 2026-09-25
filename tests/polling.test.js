@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
-const { redactPaths } = require('../skills/token-audit/scripts/token-audit.js');
+const { redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // plan.md Slice 12 / design.md Q9: POLLING = the same normalized command
 // (commandKey) >= POLL_MIN_CALLS (20, provisional) times in one session.

@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const SCRIPT = path.join(__dirname, '..', 'skills', 'token-audit', 'scripts', 'token-audit.js');
+const SCRIPT = path.join(__dirname, '..', 'plugin', 'skills', 'token-audit', 'scripts', 'token-audit.js');
 
 const fixture = name => path.join(__dirname, 'fixtures', name);
 

@@ -710,3 +710,19 @@ never outranks a real one, and an exact tie keeps whichever occurrence was seen 
 A subagent session's identity is `(parent, sid)`, not `sid` alone — the same subagent
 id can recur under two different parent sessions, and those are two distinct sessions;
 main sessions have no parent and keep keying by `sid` alone.
+
+## Packaging (Slice 24)
+
+`claude plugin install` copies the marketplace entry's whole `source` directory tree into
+`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` (confirmed by installing this repo
+into an isolated `CLAUDE_CONFIG_DIR` and inspecting the cache) — nothing outside `source` is
+copied, but everything inside it is, with no `.claudeignore`/allowlist mechanism to exclude
+files within it. Repo root previously *was* the plugin source (`marketplace.json`'s
+`"source": "./"`), so `tests/` and `design/` rode along into every install.
+
+Fix: plugin content (`.claude-plugin/plugin.json`, `skills/`) moved under `plugin/`, and
+`marketplace.json`'s `source` changed to `./plugin`. `marketplace.json` itself stays at the
+repo root (that's what `claude plugin marketplace add` reads), but it is not part of what gets
+installed — only the `source` subtree is. `tests/` and `design/` stay siblings of `plugin/` at
+repo root and are never copied. Verified: fresh install's cache dir contains only
+`.claude-plugin/plugin.json` and `skills/token-audit/**`.

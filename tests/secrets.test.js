@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
-const { redactPaths } = require('../skills/token-audit/scripts/token-audit.js');
+const { redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Secret layer of the shared printed-key redaction (redactPaths), which POLLING keys
 // and BOILERPLATE prefixes both go through, plus BOILERPLATE's `NAME=<value>` rule

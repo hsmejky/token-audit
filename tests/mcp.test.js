@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { auditCwd, tmpClaudeDir, tmpUserConfig, tmpDir, turn } = require('./harness');
-const { projectFolder } = require('../skills/token-audit/scripts/token-audit.js');
+const { projectFolder } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 14: CONFIG lists MCP servers from 3 sources — `.mcp.json` in the
 // scoped project (design.md "project" / plan.md ".mcp.json"), the user-scope
@@ -41,7 +41,7 @@ test('text output: mcp servers line + one line per server with its scope', () =>
   fs.writeFileSync(path.join(cwd, '.mcp.json'), JSON.stringify({ mcpServers: { foo: {} } }));
 
   const { execFileSync } = require('node:child_process');
-  const script = path.join(__dirname, '..', 'skills', 'token-audit', 'scripts', 'token-audit.js');
+  const script = path.join(__dirname, '..', 'plugin', 'skills', 'token-audit', 'scripts', 'token-audit.js');
   const out = execFileSync(process.execPath,
     [script, '--claude-dir', dir, '--days', '36500'], { encoding: 'utf8', cwd });
   const lines = out.split('\n');
@@ -66,7 +66,7 @@ test('no MCP config anywhere → no mcp servers line, summary stays short', () =
   const { cwd, dir } = setupProject();
 
   const { execFileSync } = require('node:child_process');
-  const script = path.join(__dirname, '..', 'skills', 'token-audit', 'scripts', 'token-audit.js');
+  const script = path.join(__dirname, '..', 'plugin', 'skills', 'token-audit', 'scripts', 'token-audit.js');
   const out = execFileSync(process.execPath,
     [script, '--claude-dir', dir, '--days', '36500'], { encoding: 'utf8', cwd });
   assert.ok(!out.includes('mcp servers='), 'did not expect an mcp servers line');
@@ -82,7 +82,7 @@ test('--all scope: only user-scope servers count, project/.mcp.json are skipped 
   tmpUserConfig(dir, { mcpServers: { bar: {} } });
 
   const { execFileSync } = require('node:child_process');
-  const script = path.join(__dirname, '..', 'skills', 'token-audit', 'scripts', 'token-audit.js');
+  const script = path.join(__dirname, '..', 'plugin', 'skills', 'token-audit', 'scripts', 'token-audit.js');
   const out = execFileSync(process.execPath,
     [script, '--claude-dir', dir, '--days', '36500', '--all', '--json'], { encoding: 'utf8', cwd });
   const r = JSON.parse(out);
