@@ -782,7 +782,8 @@ const DETAIL_SECTIONS = [
       `p90 ${k(d.distribution.peakCtx.p90).padStart(5)}  max ${k(d.distribution.peakCtx.max).padStart(5)}`,
   ] : ['SUBAGENT DISTRIBUTION  none in this window'],
   // Cost by activity, top TOP_ACTIVITIES by cost (full list in --json). Turns
-  // are fractional after the per-call split; shown rounded.
+  // are fractional after the per-call split; shown rounded, a fraction below one as `<1` so a
+  // category with a cost never shows 0 turns.
   // Columns: 2+16+2+6+2+7+2+7+2+6 = 52 chars.
   d => {
     const top = d.activity.filter(a => a.turns > 0).slice(0, TOP_ACTIVITIES);
@@ -790,12 +791,13 @@ const DETAIL_SECTIONS = [
       `COST BY ACTIVITY (this window, top ${TOP_ACTIVITIES}; a turn's cost split evenly over its tool calls)`,
       `  ${'category'.padEnd(16)}  ${'turns'.padStart(6)}  ${'avg ctx'.padStart(7)}  ${'cost'.padStart(7)}  ` +
         `${'share'.padStart(6)}`,
-      ...top.map(a => `  ${a.category.padEnd(16)}  ${String(Math.round(a.turns)).padStart(6)}  ` +
+      ...top.map(a => `  ${a.category.padEnd(16)}  ${turnsText(a.turns).padStart(6)}  ` +
         `${k(a.avgCtx).padStart(7)}  ${money(a.cost).padStart(7)}  ${pct(a.share).padStart(6)}`),
     ] : ['COST BY ACTIVITY  none in this window'];
   },
 ];
 
+const turnsText = t => (t > 0 && t < 1 ? '<1' : String(Math.round(t)));
 function renderDetail(d) {
   return ['DETAIL', ...DETAIL_SECTIONS.flatMap(section => section(d))];
 }

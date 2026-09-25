@@ -317,7 +317,7 @@ Decisions not fixed by design.md (judgment calls):
   list. On demo-proj (2026-09-25) ≈ 8 % of turns had no tool call.
 - **Split = per call, evenly.** A turn with n tool calls gives 1/n of its cost, 1/n of a turn
   and 1/n of its context weight to each call's category (k calls in one category → k/n). So
-  `turns` can be fractional in `--json` (shown rounded in text), `avgCtx` is
+  `turns` can be fractional in `--json` (shown rounded in text, `<1` below one), `avgCtx` is
   `Σ(w·ctx) / Σw`, and turns, cost and share each sum to the window totals.
 - **Tool calls of a turn = union over its JSONL lines** (one line per content part, all
   sharing `message.id`); a `tool_use.id` seen twice counts once.

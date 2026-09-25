@@ -107,12 +107,12 @@ test('turn with 2 tool calls (git + Read) splits its cost 50/50', () => {
   assert.equal(cats.read.cost, 2);
   assert.equal(cats.git.share, 0.5);
   assert.equal(cats.read.share, 0.5);
-  // Text: fractional turns shown rounded; zero-turn categories get no row.
+  // Text: fractional turns shown rounded, below one as `<1` (never 0 next to a cost); zero-turn categories: no row.
   const lines = auditText(dir).split('\n');
   const h = lines.findIndex(l => l.startsWith('COST BY ACTIVITY'));
   const rows = lines.slice(h + 2).filter(l => l.startsWith('  '));
   assert.equal(rows.length, 2, rows.join('\n'));
-  assert.match(rows[0], /^\s+git\s+1\s+0k\s+\$2\.00\s+50\.0%$/);
+  assert.match(rows[0], /^\s+git\s+<1\s+0k\s+\$2\.00\s+50\.0%$/);
 });
 
 test('turn without tool_use -> other; text-only lines of a tool turn do not dilute its split', () => {
