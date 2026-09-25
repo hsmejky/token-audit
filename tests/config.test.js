@@ -62,6 +62,39 @@ test('neither root nor modelSettings effortLevel set → unset', () => {
   assert.ok(line.includes('effortLevel=unset'), `expected unset, got: ${line}`);
 });
 
+// Mixed case: root effortLevel is a fallback default for any model without
+// its own modelSettings entry, so it still applies and must not be hidden
+// once modelSettings entries exist.
+test('root effortLevel + modelSettings entries: CONFIG prints default= alongside per-model levels', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': {
+      effortLevel: 'low',
+      modelSettings: {
+        'claude-opus-5': { effortLevel: 'high' },
+        'claude-opus-5-5': { effortLevel: 'high' },
+        'claude-fable-5-1': { effortLevel: 'medium' },
+      },
+    },
+  });
+
+  const r = audit(dir);
+  assert.equal(r.config.effortLevel, 'low');
+  assert.deepEqual(r.config.modelEffort, [
+    { model: 'claude-fable-5-1', effortLevel: 'medium' },
+    { model: 'claude-opus-5', effortLevel: 'high' },
+    { model: 'claude-opus-5-5', effortLevel: 'high' },
+  ]);
+
+  const out = auditText(dir);
+  const line = out.split('\n').find(l => l.includes('effortLevel='));
+  assert.ok(line, 'expected a CONFIG line with effortLevel=');
+  assert.ok(line.includes('default=low'), `expected default=low, got: ${line}`);
+  assert.ok(line.includes('claude-opus-5=high'), `expected opus-5 level, got: ${line}`);
+  assert.ok(line.includes('claude-opus-5-5=high'), `expected opus-5-5 level, got: ${line}`);
+  assert.ok(line.includes('claude-fable-5-1=medium'), `expected fable-5-1 level, got: ${line}`);
+});
+
 // CONFIG must read settings.json from --claude-dir, never the real ~/.claude
 // (the harness's tmpClaudeDir already proves this if it passes at all, since
 // the fixture dir has no real ~/.claude modelSettings mixed in).

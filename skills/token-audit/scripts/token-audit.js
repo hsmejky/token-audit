@@ -446,7 +446,8 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
 
   console.log('CONFIG');
   const effortText = cfg.modelEffort.length
-    ? cfg.modelEffort.map(m => `${m.model}=${m.effortLevel}`).join(', ')
+    ? [...cfg.modelEffort.map(m => `${m.model}=${m.effortLevel}`),
+        ...(cfg.effortLevel ? [`default=${cfg.effortLevel}`] : [])].join(', ')
     : (cfg.effortLevel ?? 'unset');
   console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}   ` +
     `effortLevel=${effortText}`);
