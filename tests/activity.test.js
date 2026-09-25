@@ -96,6 +96,28 @@ test('commandKey / shellSegments: separators inside quotes and $(…) are not sp
     [['a', '&&'], ['b', '|'], ['c', ';'], ['d', '||'], ['e', '']]);
 });
 
+test('shellScan: backtick-quoted text is not split by separators inside it', () => {
+  assert.deepEqual(shellSegments('echo `a && b` && git status').map(s => s.text),
+    ['echo `a && b`', 'git status']);
+});
+
+test('shellScan: a backslash outside quotes escapes the next char (does not open a quote)', () => {
+  // Without the escape, the \" would open a quote and swallow the real `&&` below it,
+  // leaving one unsplit segment instead of two.
+  assert.deepEqual(shellSegments('echo a\\"b && c').map(s => s.text), ['echo a\\"b', 'c']);
+});
+
+test('shellSegments drops empty segments from consecutive separators, keeps a trailing empty one', () => {
+  assert.deepEqual(shellSegments('a;;b').map(s => [s.text, s.sep]), [['a', ';'], ['b', '']]);
+  assert.deepEqual(shellSegments('a &&').map(s => [s.text, s.sep]), [['a', '&&'], ['', '']]);
+});
+
+test('hashHeredocBodies: an unterminated heredoc is still hashed, no stray sentinel leaks into the key', () => {
+  const key = commandKey('cat <<EOF\nfoo\nbar');
+  assert.match(key, /^cat <<EOF \[heredoc [0-9a-f]{8}\]$/, key);
+  assert.ok(!key.includes('￿'), key);
+});
+
 test('commandKey collapses whitespace, spaces separators canonically', () => {
   assert.equal(commandKey('a&&b|c;d||e'), 'a && b | c ; d || e');
   assert.equal(commandKey('pnpm   test \\\n  2>&1 |grep  -E x'), 'pnpm test N>&N | grep -E x');
