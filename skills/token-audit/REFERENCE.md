@@ -230,3 +230,7 @@ several transcript lines of one response count once, priced with the final (larg
 `output_tokens`, since earlier lines carry a partial streaming usage. Lines without a
 `message.id` are counted one by one. An id that recurs in another file (resumed
 subagent) stays with the session where it was first seen.
+
+A subagent session's identity is `(parent, sid)`, not `sid` alone — the same subagent
+id can recur under two different parent sessions, and those are two distinct sessions;
+main sessions have no parent and keep keying by `sid` alone.

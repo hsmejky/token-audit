@@ -154,6 +154,12 @@ function aggregateUnpriced(rows, fromTs) {
   return [...byModel.values()].sort((a, b) => b.tokens - a.tokens);
 }
 
+// A subagent id can recur under two different parent sessions (e.g. two
+// separate runs both spawning an agent named `agent-shared`) — sid alone is
+// not a unique session identity for subagents. Identity is (parent, sid);
+// main sessions have no parent and keep keying by sid alone.
+const sessionKey = r => r.isSub ? r.parent + '\u0000' + r.sid : r.sid;
+
 // -------------------------------------------------------------- summarize
 function summarize(rows) {
   const byFamily = {};
@@ -166,11 +172,12 @@ function summarize(rows) {
     ctx += r.ctx;
     byFamily[r.family] = (byFamily[r.family] || 0) + r.cost;
     byChain[r.isSub ? 'sub' : 'main'] += r.cost;
-    let s = sessions.get(r.sid);
+    const key = sessionKey(r);
+    let s = sessions.get(key);
     if (!s) {
       s = { sid: r.sid, project: r.project, isSub: r.isSub, parent: r.parent, cost: 0, msgs: 0, ctx: 0,
             ctxMax: 0, first: r.ts || Infinity, last: r.ts || 0, opus: 0 };
-      sessions.set(r.sid, s);
+      sessions.set(key, s);
     }
     s.cost += r.cost;
     s.msgs++;
@@ -302,11 +309,11 @@ function flags(cur, prev, cfg, span) {
   const out = [];
   const add = (id, text) => out.push({ id, text });
 
-  const multiday = cur.sessions.filter(s => span(s.sid) > DAY);
+  const multiday = cur.sessions.filter(s => span(s) > DAY);
   if (multiday.length) {
     const w = multiday.slice().sort((a, b) => b.cost - a.cost)[0];
     add('MULTIDAY', `${multiday.length} session(s) span >1 day — worst ${w.sid.slice(0, 8)} ` +
-      `${(span(w.sid) / DAY).toFixed(1)}d ${money(w.cost)}`);
+      `${(span(w) / DAY).toFixed(1)}d ${money(w.cost)}`);
   }
   const long = cur.sessions.filter(s => s.msgs >= 250);
   if (long.length) {
@@ -373,9 +380,11 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
   // all-history totals under a header that says "this window".
   const unpriced = aggregateUnpriced(unprizedRows, curFrom);
   const cfg = config();
-  // spans measured over full history, not clipped to the window
-  const spans = new Map(all.sessions.map(s => [s.sid, s.last - s.first]));
-  const span = sid => spans.get(sid) || 0;
+  // spans measured over full history, not clipped to the window. Keyed by
+  // (parent, sid) same as summarize() — a bare sid would collide across
+  // parents for a repeated subagent id.
+  const spans = new Map(all.sessions.map(s => [sessionKey(s), s.last - s.first]));
+  const span = s => spans.get(sessionKey(s)) || 0;
   const fl = flags(cur, prev, cfg, span);
   const secFl = securityFlags(cfg);
 
@@ -411,7 +420,7 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
 
   console.log(`TOP ${TOP} SESSIONS (this window)`);
   for (const s of cur.sessions.slice(0, TOP)) {
-    const sp = span(s.sid) > 0 ? (span(s.sid) / DAY).toFixed(1) + 'd' : '<1d';
+    const sp = span(s) > 0 ? (span(s) / DAY).toFixed(1) + 'd' : '<1d';
     console.log(`  ${s.sid.slice(0, 8)}  ${money(s.cost).padStart(7)}  ${pct(s.cost / cur.cost).padStart(6)}  ` +
       `msgs=${String(s.msgs).padStart(4)}  avgCtx=${k(s.ctx / s.msgs).padStart(5)}  ` +
       `maxCtx=${k(s.ctxMax).padStart(5)}  span=${sp.padStart(5)}  ${s.isSub ? 'sub ' : ''}${s.project}`);
