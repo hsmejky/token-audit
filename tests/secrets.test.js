@@ -82,10 +82,46 @@ test('secret layer: normal keys stay readable (no over-redaction)', () => {
     'curl -u "$GH_USER:$GH_PASS" https://x.test', 'deploy --token "$TOKEN"', 'export GH_TOKEN=${GH_TOKEN}',
     'curl -s https://api.github.com/repos/o/r/actions/runs?per_page=N', 'npm run task-list-summary-for-ci',
     'mkdir -p a', 'ssh -p 22 host', 'mysql -p db', String.raw`TOKEN=$(printf 'protocol=https\nhost=github.com\n' | ` +
-    `git credential fill | sed -n 's/^password=//p')`]) {
+    `git credential fill | sed -n 's/^password=//p')`,
+    'mysql -P 3306 -h h', 'mysql -P3306 db', 'mysql -h h -P N -p db', 'mysql -p$MYSQL_PWD db', 'mysql -p"$PW" db',
+    'sshpass -f pwfile ssh -p N host', 'sshpass -p $PW ssh -p N host', 'sshpass -P assword ssh -p N h',
+    'docker login -p $PW reg; ssh -p N h', 'docker run -p N:N img', 'mysql db; ssh -pN host',
+    'docker login -u me reg && ssh -p N host', 'gh secret set N --repo o/web-build -b $B', 'gh secret set N -b"$B"']) {
     assert.equal(redactPaths(k, NO_ID), k);
   }
 });
+
+// `-p` password of mysql / sshpass / docker login: every password occurrence is
+// redacted and every other token (flags, hosts, a later `ssh -p N`) kept exactly.
+const S = tok('Zqxv');
+const SHORT_P_EXACT = [
+  [`mysql -p${S} -P N`, 'mysql -p<secret> -P N'],
+  [`sshpass -p ${S} ssh -p $PORT host`, 'sshpass -p <secret> ssh -p $PORT host'],
+  [`docker login -p ${S} reg; ssh -p $P h`, 'docker login -p <secret> reg; ssh -p $P h'],
+  [`mysql -p${S} db < x; ssh -p N host`, 'mysql -p<secret> db < x; ssh -p N host'],
+  [`mysql -p${S} -h h -p db`, 'mysql -p<secret> -h h -p db'],
+  [`sshpass -p ${S} ssh -p N host`, 'sshpass -p <secret> ssh -p N host'],
+  [`mysql -u root -p${S} db`, 'mysql -u root -p<secret> db'],
+  [`docker login -u 'me' -p ${S}`, "docker login -u 'me' -p <secret>"],
+  [`docker login -u "me" -p ${S} reg`, 'docker login -u "me" -p <secret> reg'],
+  [`mysql -p"${S}"`, 'mysql -p"<secret>"'],
+  [`mysql -p'${S}' db`, "mysql -p'<secret>' db"],
+  [`sshpass -p '$${S}' ssh h`, "sshpass -p '<secret>' ssh h"],
+  [`sshpass -p${S} ssh -p N h`, 'sshpass -p<secret> ssh -p N h'],
+  [`sshpass -e -p "${S} two" ssh h`, 'sshpass -e -p "<secret>" ssh h'],
+  [`mysql -h h -p${S} -e "select N" && mysql -p${S} db`,
+    'mysql -h h -p<secret> -e "select N" && mysql -p<secret> db'],
+  [`bash -c "mysql -u root -p${S} db"`, 'bash -c "mysql -u root -p<secret> db"'],
+  [`X=$(docker login -u me -p ${S} reg)`, 'X=$(docker login -u me -p <secret> reg)'],
+  [`sudo /usr/bin/mysql -p${S}\nssh -p N h`, 'sudo <path> -p<secret>\nssh -p N h'],
+  [`gh secret set N -b${S}`, 'gh secret set N -b<secret>'],
+  [`gh secret set N -b'${S}'`, "gh secret set N -b'<secret>'"],
+];
+for (const [cmd, want] of SHORT_P_EXACT) {
+  test(`secret layer: -p password redacted, rest kept — ${want}`, () => {
+    assert.equal(redactPaths(cmd, NO_ID), want);
+  });
+}
 
 test('secret layer: Cookie header redacts the whole value, not just the first pair', () => {
   const out = redactPaths(`curl -H "Cookie: session=abc; other=${tok('Zqxv')}" https://x.test/a`, NO_ID);
@@ -99,7 +135,9 @@ test('secret layer is fast on 200k-char pathological inputs', () => {
     'ghp_'.repeat(50000), 'sk-'.repeat(70000), 'Bearer '.repeat(30000), 'TOKEN'.repeat(40000) + '=x',
     '-' + 'a'.repeat(200000), 'X-' + 'a'.repeat(200000) + ':', '"token"'.repeat(20000),
     'A_TOKEN=$(echo '.repeat(15000), 'mysql -p'.repeat(20000), '--oauth2-bearer'.repeat(20000),
-    'gh secret set '.repeat(10000) + '--body', ':_authToken '.repeat(20000)]) {
+    'gh secret set '.repeat(10000) + '--body', ':_authToken '.repeat(20000), 'sshpass -p'.repeat(20000),
+    'docker login -p '.repeat(12000), 'mysql -pX '.repeat(20000), 'bash -c "'.repeat(20000), '"'.repeat(200000),
+    "'\\".repeat(100000), 'sshpass -f '.repeat(20000), 'gh secret set N -b'.repeat(10000), '\\'.repeat(200000)]) {
     const t0 = Date.now();
     redactPaths(s, NO_ID);
     assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);

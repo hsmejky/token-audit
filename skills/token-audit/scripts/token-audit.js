@@ -755,20 +755,10 @@ const SECRET_CMD_LITERAL = new RegExp(SECRET_NAME_LA +
 // flag name, so a long run of `"` in a 200k-char input stays linear.
 const SECRET_JSON = new RegExp(
   `"(\\w{0,40}?(?:${SECRET_FLAG_WORD.source})\\w{0,40})"([ \\t]*:[ \\t]*)"([^"\\n]{0,512})"`, 'gi');
-// `mysql -pX` / `sshpass -p X` / `docker login -p X` — `-p` is scoped to these
-// specific commands, so `mkdir -p`, `ssh -p 22` stay readable. A short, bounded
-// run of other flags/args may sit between the command and `-p` (so
-// `mysql -u root -pX db` still redacts); bounded to 6 tokens of <=64 chars, so
-// a 200k-char run stays linear. mysql's `-p` only takes an attached value
-// (`-pX`) — `mysql -p db` (space) is the prompt form, not a secret, so that
-// case is skipped in the replacer below, not the regex.
-const SHORT_P_GAP = /(?:[ \t]+[^\s'"`]{1,64}){0,6}/.source;
-const SHORT_P_TAIL = /([ \t]+-p)([ \t]*)(['"]?)([^\s'"`]+)/.source;
-const SECRET_SHORT_P = new RegExp(
-  `(?<![\\w-])(mysql|sshpass|docker[ \\t]+login)${SHORT_P_GAP}${SHORT_P_TAIL}`, 'gi');
-// `gh secret set NAME --body X` / `gh secret set NAME -b X` (short form).
+// `gh secret set NAME --body X` / `-b X` / `-bX` / `-b'X'` (short form, attached too).
 const SECRET_GH_BODY = new RegExp(
-  /((?<![\w-])gh[ \t]+secret[ \t]+set\b[^\n]{0,100}?(?:--body|-b)(?:=|[ \t]+))/.source +
+  '(' + /(?<![\w-])gh[ \t]+secret[ \t]+set\b[^\n]{0,100}?/.source +
+  /(?:(?<![\w-])--body(?:=|[ \t]+)|(?<![\w-])-b(?:=|[ \t]+)?)/.source + ')' +
   /(?:"([^"\n]{0,512})"|'([^'\n]{0,512})'|([^\s'"`<>|;&()]+))/.source, 'gi');
 // npm's `:_authToken TOKEN` (space form; the `=` form is already SECRET_ASSIGN).
 const SECRET_NPM_AUTHTOKEN = /(?<![\w-])(:_authToken)([ \t]+)([^\s'"`]+)/gi;
@@ -777,8 +767,96 @@ const SECRET_NPM_AUTHTOKEN = /(?<![\w-])(:_authToken)([ \t]+)([^\s'"`]+)/gi;
 // so a single-quoted `quote` always redacts, regardless of the value's text.
 const isRef = (v, quote) => (quote === "'" ? false : /^\$/.test(v) || /^"\$/.test(v));
 const firstDefined = (...vs) => vs.find(v => v !== undefined);
+// `mysql -pX` / `sshpass -p X` / `docker login -p X` — not a regex but a small token
+// scan per command segment (split at `;` `&` `|` `(` `)` backtick newline), so `-p`
+// is a password only inside that command: `mkdir -p a`, `ssh -p 22 host` and a later
+// `ssh -p N` in another segment (or the command sshpass wraps) stay readable, every
+// password occurrence in the segment redacts, and all other tokens are kept byte for
+// byte. `-p` is case-sensitive (`mysql -P 3306` is the port). mysql's password is
+// attached only (`-pX`) — `mysql -p db` is the prompt form, not a secret. One pass
+// over the words, plus one re-scan of a quoted word's inside (`bash -c "mysql -pX"`)
+// up to depth 2, so a 200k-char run stays linear.
+const SHORT_P_BREAK = new Set([';', '&', '|', '(', ')', '`', '\n']);
+const SHORT_P_SPACE = new Set([' ', '\t', '\r']);
+const MYSQL_CMD = /^(?:mysql|mysqldump|mysqladmin|mariadb)$/;
+// Words of s as { start, end, brk } spans: quotes group, `\` escapes, and a segment
+// break is its own one-char word with brk: true.
+function shellWords(s) {
+  const words = [];
+  let i = 0;
+  while (i < s.length) {
+    if (SHORT_P_SPACE.has(s[i])) { i++; continue; }
+    if (SHORT_P_BREAK.has(s[i])) { words.push({ start: i, end: ++i, brk: true }); continue; }
+    const start = i;
+    while (i < s.length && !SHORT_P_SPACE.has(s[i]) && !SHORT_P_BREAK.has(s[i])) {
+      const q = s[i++];
+      if (q === '\\') i++;
+      else if (q === '"' || q === "'") {
+        while (i < s.length && s[i] !== q) i += q === '"' && s[i] === '\\' ? 2 : 1;
+        i++;
+      }
+    }
+    words.push({ start, end: Math.min(i, s.length), brk: false });
+  }
+  return words;
+}
+// A `-p` password word → its redacted text, or null when it is a reference (`$X`,
+// `"$X"`) — a single-quoted `'$X'` is a literal and redacts.
+function redactPassword(v) {
+  const q = v[0] === '"' || v[0] === "'" ? v[0] : '';
+  const inner = q && v.length > 1 && v.endsWith(q) ? v.slice(1, -1) : v.slice(q.length);
+  return !v || isRef(inner, q || undefined) || inner === '<secret>' ? null : `${q}<secret>${q}`;
+}
+const cmdName = w => w.slice(Math.max(w.lastIndexOf('/'), w.lastIndexOf('\\')) + 1)
+  .replace(/\.exe$/i, '').toLowerCase();
+function redactShortP(s, depth = 0) {
+  const words = shellWords(s), edits = [];
+  const text = w => s.slice(w.start, w.end);
+  const word = j => (j < words.length && !words[j].brk ? text(words[j]) : null);
+  // `-pX` (attached, `-p=X` too) at word j, or `-p X` taking word j+1; → words used.
+  const password = (j, spaced) => {
+    const t = text(words[j]), eq = t[2] === '=' ? 1 : 0;
+    if (t.length > 2) {
+      const r = redactPassword(t.slice(2 + eq));
+      if (r !== null) edits.push([words[j].start + 2 + eq, words[j].end, r]);
+      return 1;
+    }
+    const v = spaced ? word(j + 1) : null;
+    if (v === null) return 1;
+    const r = redactPassword(v);
+    if (r !== null) edits.push([words[j + 1].start, words[j + 1].end, r]);
+    return 2;
+  };
+  let mode = null; // 'mysql' | 'docker': rest of this segment is that command's args
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i], t = text(w);
+    if (w.brk) { mode = null; continue; }
+    if (mode && t.startsWith('-p')) { i += password(i, mode === 'docker') - 1; continue; }
+    const q = t[0];
+    if ((q === '"' || q === "'") && t.length > 1 && t.endsWith(q)) {
+      const inner = t.slice(1, -1), r = depth < 2 ? redactShortP(inner, depth + 1) : inner;
+      if (r !== inner) edits.push([w.start + 1, w.end - 1, r]);
+      continue;
+    }
+    const name = cmdName(t);
+    if (MYSQL_CMD.test(name)) mode = 'mysql';
+    else if (name === 'docker' && word(i + 1) === 'login') { mode = 'docker'; i++; }
+    else if (name === 'sshpass') {
+      // sshpass's own options, up to the command it wraps (whose `-p` is its own).
+      let j = i + 1;
+      for (let o = word(j); o !== null && o.startsWith('-'); o = word(j)) {
+        if (o.startsWith('-p')) j += password(j, true);
+        else j += o === '-f' || o === '-d' || o === '-P' ? 2 : 1;
+      }
+      i = Math.min(j, words.length) - 1;
+    }
+  }
+  let out = '', at = 0;
+  for (const [a, b, r] of edits) { out += s.slice(at, a) + r; at = b; }
+  return out + s.slice(at);
+}
 function redactSecrets(s) {
-  return s
+  return redactShortP(s
     .replace(SECRET_URL_CRED, '$1:<secret>@')
     .replace(SECRET_SHAPE, '<secret>')
     .replace(SECRET_HEADER, (m, name, sp, scheme = '', v, off, str) => {
@@ -804,18 +882,13 @@ function redactSecrets(s) {
     .replace(SECRET_ASSIGN, (m, name, eq, v) => (isRef(v) || v === '<secret>' ? m : `${name}${eq}<secret>`))
     .replace(SECRET_CMD_LITERAL, (m, pre, v, close) => (isRef(v) ? m : `${pre}<secret>${close}`))
     .replace(SECRET_JSON, (m, k, sep, v) => (isRef(v) || v === '<secret>' ? m : `"${k}"${sep}"<secret>"`))
-    .replace(SECRET_SHORT_P, (m, cmd, pflag, sep, q, v) => {
-      if (/^mysql$/i.test(cmd) && sep) return m; // mysql `-p ` (space) is the prompt form
-      const quote = q === "'" ? "'" : undefined;
-      return isRef(v, quote) ? m : `${cmd}${pflag}${sep}${q}<secret>${q}`;
-    })
     .replace(SECRET_GH_BODY, (m, pre, dq, sq, bare) => {
       const v = firstDefined(dq, sq, bare);
       const quote = dq !== undefined ? '"' : sq !== undefined ? "'" : undefined;
       const q = quote || '';
       return isRef(v, quote) ? m : `${pre}${q}<secret>${q}`;
     })
-    .replace(SECRET_NPM_AUTHTOKEN, (m, f, sep, v) => (isRef(v) ? m : `${f}${sep}<secret>`));
+    .replace(SECRET_NPM_AUTHTOKEN, (m, f, sep, v) => (isRef(v) ? m : `${f}${sep}<secret>`)));
 }
 const idPatterns = new WeakMap();
 // identity = { username, home, name } — injectable for tests; defaults to this machine.

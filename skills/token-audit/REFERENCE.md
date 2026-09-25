@@ -205,13 +205,24 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   `/TOKEN|KEY|SECRET|PASS|PWD|AUTH|CRED/i`. A `-u`/flag/JSON value may be `"…"` / `'…'` with
   spaces and is redacted whole, not just its first word (`--password "a pass phrase"`,
   `-u 'jdoe:a pass word'`). Also covered: a secret-named JSON key (`{"password":"x"}`,
-  `{"token": "x"}`); `-p` scoped to `mysql`/`sshpass`/`docker login` only, so `mkdir -p` and
-  `ssh -p 22` stay readable; `gh secret set NAME --body x`; npm's `:_authToken x` (space
-  form; the `=` form was already covered). A value that is a reference — `$VAR`, `${VAR}`,
+  `{"token": "x"}`); the `-p` password of `mysql` / `mysqldump` / `mysqladmin` / `mariadb`
+  (`-pX`, `-p"X"`, `-p'X'`), `sshpass` (`-p X` / `-pX`) and `docker login` (`-p X` / `-pX`).
+  `-p` is found by a small token scan per command segment (split at `;` `&` `|` `(` `)`
+  backtick newline; a quoted `bash -c "mysql -pX"` is scanned inside), not one regex: other
+  flags and args may sit before `-p` (`mysql -u root -pX db`, `docker login -u 'me' -p X`),
+  every password in the segment redacts (`mysql -pX … && mysql -pY`), and every other token
+  is kept exactly (`mysql -u root -p<secret> db`). `-p` is case-sensitive (`mysql -P 3306` is
+  the port); mysql's password is attached only, so `mysql -p db` (space) is the prompt form,
+  not a secret, and stays; sshpass's own options end at the command it wraps, so in
+  `sshpass -p X ssh -p N host` only `X` redacts; a later segment (`…; ssh -p N h`),
+  `mkdir -p a`, `ssh -p 22 host` and `docker run -p N:N` stay readable. Also
+  `gh secret set NAME --body x` / `-b x` / attached `-bx` / `-b'x'`; npm's `:_authToken x`
+  (space form; the `=` form was already covered). A value that is a reference — `$VAR`, `${VAR}`,
   `$(…)`, unquoted or double-quoted — is not a secret and stays (`-H "Authorization: token
-  $TOKEN"`, `TOKEN=$(… git credential fill …)` stay readable); a **single-quoted** value
-  (`PASSWORD='$ecret'`) is a shell literal, not a reference — shell never expands `$` inside
-  `'…'` — so it is redacted like any other literal. A secret-named assignment whose value is
+  $TOKEN"`, `TOKEN=$(… git credential fill …)`, `mysql -p"$PW"` stay readable); a
+  **single-quoted** value (`PASSWORD='$ecret'`, `-H 'Authorization: token $x'`,
+  `--password '$x'`, `sshpass -p '$x'`) is a shell literal, not a reference — shell never
+  expands `$` inside `'…'` — so it is redacted like any other literal. A secret-named assignment whose value is
   a literal `$(echo x)` / `$(printf x)` (no `|`, so it can't be piping through a real lookup)
   redacts `x` too (`TOKEN=$(echo a-pasted-secret)`); a piped form like `$(printf … | git
   credential fill)` is a real fetch and stays untouched. An assignment matches only after
