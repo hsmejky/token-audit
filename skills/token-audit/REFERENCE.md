@@ -303,8 +303,13 @@ N (57 turns). Merging spellings is the "no fuzzing" call below — Slice 15.
   (`export PYTHONIOENCODING=<value>`). Any other prefix is redacted with `redactPaths()`
   (secret layer — see POLLING — then paths, then the user's name), so a token inside `$(…)`
   prints as `<secret>`. Grouping uses the raw prefix — two users' `$(cat /home/<name>/.token)`
-  are two groups, and two different literal values of one NAME are two groups. The prefix is
-  cut in the middle so the flag line stays ≤ 120 chars; the full prefix is in `--json`.
+  are two groups, and two different literal values of one NAME are two groups. A prefix too
+  long for its flag line (≤ 120 chars) loses values before command words: quoted strings
+  become `'…'`, then each stage of a `NAME=$(…)` keeps only its leading command words
+  (`TOKEN=$(printf … | git credential fill | sed …)`), then a one-word stage becomes `…`,
+  and only then is it cut in the middle; the full prefix is in `--json`. The flag line
+  leaves out the ≥ 5 threshold to make room. A share under 0.5 % prints `<1%` (also
+  POLLING), not `0%`.
 
 ### `BIG_CTX` — average context per message > 150k
 

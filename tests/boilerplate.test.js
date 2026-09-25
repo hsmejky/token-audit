@@ -20,7 +20,8 @@ function bashTurn(id, commands, usage = USAGE) {
 const bashTurns = (n, prefix, cmd, usage) =>
   Array.from({ length: n }, (_, i) => bashTurn(`${prefix}-${i}`, [cmd(i)], usage)).flat();
 
-const CRED = String.raw`TOKEN=$(printf 'protocol=https\nhost=github.com\n' | git credential fill | sed -n 's/^password=//p')`;
+const CRED = String.raw`TOKEN=$(printf 'protocol=https\nhost=github.com\n' | git credential fill |` +
+  String.raw`sed -n 's/^password=//p')`;
 const credCurl = i => `cd /c/Users/me/proj && ${CRED} && curl -s -H "Authorization: token $TOKEN" ` +
   `https://api.github.com/repos/o/r/pulls/${100 + i} -d @body.json`;
 // sessions × turnsPer turns, each session its own transcript file.
@@ -60,9 +61,9 @@ test('BOILERPLATE: flag text has prefix, #sessions, #turns, cost share; a multi-
   assert.ok(f, JSON.stringify(r.flags));
   const g = f.groups[0];
   assert.deepEqual([g.sessions, g.turns, +g.cost.toFixed(6), +g.share.toFixed(6)], [6, 11, 42, 0.5]);
-  assert.match(f.text, /^1 prefix\(es\) in ≥5 sessions = \$42\.0, 50% of spend; top 6 sess\/11 turns TOKEN=\$\(printf /);
-  assert.ok(f.text.includes('…'), 'long prefix is cut in the middle: ' + f.text);
-  assert.ok(f.text.endsWith("password=//p')"), f.text);
+  assert.match(f.text, /^1 prefix\(es\) = \$42\.0, 50% of spend; top 6 sess\/11 turns TOKEN=\$\(printf /);
+  // too long for the line: quoted values, then non-command words go first — command words stay
+  assert.ok(f.text.endsWith('TOKEN=$(printf … | git credential fill | sed …)'), f.text);
 });
 
 test('BOILERPLATE: one prefix before different commands (other endpoints, PR numbers) is one group', () => {
@@ -117,7 +118,10 @@ test('BOILERPLATE: a long prefix keeps the flag line ≤ 120 chars', () => {
   const long = () => `TOKEN=$(printf '${'x'.repeat(300)}' | git credential fill) && curl -s https://example.com`;
   const line = auditText(tmpClaudeDir(sessions(5, long))).split('\n').filter(l => l.startsWith('  BOILERPLATE '));
   assert.equal(line.length, 1);
-  assert.equal([...line[0]].length, 120, line[0]);
+  assert.ok([...line[0]].length <= 120 && line[0].endsWith("TOKEN=$(printf '…' | git credential fill)"), line[0]);
+  const bare = () => `TOKEN=$(${'x'.repeat(300)}) && ls`; // nothing to drop: cut in the middle
+  const cut = auditText(tmpClaudeDir(sessions(5, bare))).split('\n').find(l => l.startsWith('  BOILERPLATE '));
+  assert.ok([...cut].length === 120 && cut.includes('…'), cut);
 });
 
 test('BOILERPLATE: setup-prefix detection is fast on 200k-char inputs', () => {
@@ -145,7 +149,8 @@ test('BOILERPLATE: several prefixes → one flag, all groups, most expensive fir
   const fl = boilerFlags(audit(tmpClaudeDir(files)));
   assert.equal(fl.length, 1);
   assert.deepEqual(fl[0].groups.map(g => [g.sessions, g.prefix.slice(0, 6)]), [[5, 'TOKEN='], [7, 'export']]);
-  assert.match(fl[0].text, /^2 prefix\(es\) in ≥5 sessions = \$47\.0, 100% of spend; top 5 sess\/10 turns TOKEN=/);
+  assert.match(fl[0].text, /^2 prefix\(es\) = \$47\.0, 100% of spend; top 5 sess\/10 turns TOKEN=/);
+  assert.ok(fl[0].text.endsWith('TOKEN=$(… | git credential fill | …)'), fl[0].text);
 });
 
 // Every assignment in the leading run is its own prefix, so the credential
@@ -193,4 +198,40 @@ test('BOILERPLATE: PowerShell $env:NAME=value prefix is recognised', () => {
   assert.ok(f);
   assert.equal(f.groups[0].prefix, '$env:PYTHONIOENCODING=<value>');
   assert.deepEqual(setupPrefixes(`$env:X = 'v'; python x.py`), [`$env:X = 'v'`]);
+});
+
+test('BOILERPLATE / POLLING: a non-zero share under 1% prints <1%, not 0%', () => {
+  const tiny = { input_tokens: 1000, output_tokens: 0 }; // $0.004 a turn
+  const files = {};
+  for (let s = 0; s < 5; s++) files[`projects/p/s${s}.jsonl`] = bashTurns(1, `s${s}`, credCurl, tiny);
+  files['projects/p/w.jsonl'] = [...bashTurns(20, 'w', () => 'echo waiting', tiny),
+    ...bashTurns(1, 'big', () => 'git status', { input_tokens: 1e7, output_tokens: 0 })];
+  const r = audit(tmpClaudeDir(files));
+  for (const id of ['BOILERPLATE', 'POLLING']) {
+    const f = r.flags.find(x => x.id === id);
+    assert.ok(f, id);
+    assert.match(f.text, /, <1% of spend;/, f.text);
+  }
+});
+
+test('BOILERPLATE: printed prefix drops the user\'s own name (value layer), text and --json', () => {
+  // Identity is injected through the environment: home folder "Zelda Quux", no git user.name.
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ta-id-'));
+  const home = path.join(tmp, 'Zelda Quux');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(tmp, 'gitconfig'), '');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, GIT_CONFIG_GLOBAL: path.join(tmp, 'gitconfig'),
+    GIT_CONFIG_NOSYSTEM: '1' };
+  const dir = tmpClaudeDir(sessions(5, () => 'NOTE=$(grep -c Quux notes.txt) && echo done'));
+  const run = (...a) => execFileSync(process.execPath, [require.resolve('../skills/token-audit/scripts/token-audit.js'),
+    '--claude-dir', dir, '--all', '--days', '36500', ...a], { encoding: 'utf8', env, cwd: tmp });
+  const [f] = boilerFlags(JSON.parse(run('--json')));
+  assert.ok(f);
+  assert.equal(f.groups[0].prefix, 'NOTE=$(grep -c <user> notes.txt)');
+  const line = run().split('\n').find(l => l.startsWith('  BOILERPLATE '));
+  assert.ok(line && !/quux|zelda/i.test(line), line);
 });

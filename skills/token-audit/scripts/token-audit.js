@@ -886,7 +886,7 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
     const cost = polls.reduce((a, g) => a + g.cost, 0);
     const share = polls.reduce((a, g) => a + g.share, 0);
     const head = `${polls.length} run(s) ≥${POLL_MIN_CALLS}×/session = ${money(cost)}, ` +
-      `${(100 * share).toFixed(0)}% of spend; top ${polls[0].count}× `;
+      `${sharePct(share)} of spend; top ${polls[0].count}× `;
     out.push({ id: 'POLLING', text: head + fitMiddle(polls[0].key, FLAG_TEXT_WIDTH - head.length),
       groups: polls });
   }
@@ -894,9 +894,9 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
   if (boilers.length) {
     const { cost, share } = boiler;
     const b = boilers[0];
-    const head = `${boilers.length} prefix(es) in ≥${BOILER_MIN_SESSIONS} sessions = ${money(cost)}, ` +
-      `${(100 * share).toFixed(0)}% of spend; top ${b.sessions} sess/${b.turns} turns `;
-    out.push({ id: 'BOILERPLATE', text: head + fitMiddle(b.prefix, FLAG_TEXT_WIDTH - head.length),
+    const head = `${boilers.length} prefix(es) = ${money(cost)}, ${sharePct(share)} of spend; ` +
+      `top ${b.sessions} sess/${b.turns} turns `;
+    out.push({ id: 'BOILERPLATE', text: head + fitPrefix(b.prefix, FLAG_TEXT_WIDTH - head.length),
       groups: boilers });
   }
   if (cur.avgCtx > 150e3) {
@@ -961,6 +961,30 @@ function fitMiddle(text, n) {
   const tail = Math.floor((n - 1) / 2);
   return chars.slice(0, n - 1 - tail).join('') + '…' + chars.slice(chars.length - tail).join('');
 }
+// A BOILERPLATE prefix too long for its line loses its values before its command
+// words: quoted strings → '…', then (for `NAME=$(…)`) each stage keeps only its leading
+// command words (`TOKEN=$(printf … | git credential fill | sed …)`), then one-word stages → `…`,
+// then fitMiddle().
+const QUOTED = /'[^']*'|"[^"]*"/g;
+function fitPrefix(prefix, n) {
+  const one = String(prefix).replace(/\s+/g, ' ').trim();
+  if ([...one].length <= n) return one;
+  const unq = one.replace(QUOTED, q => (q.length > 3 ? `${q[0]}…${q[0]}` : q));
+  if ([...unq].length <= n) return unq;
+  const m = /^([^=]*=\$\()(.*)\)$/s.exec(unq);
+  const stage = t => {
+    const w = t.split(' ');
+    const k = w.findIndex(x => !/^[A-Za-z_][\w.-]*$/.test(x));
+    return k < 1 ? t : `${w.slice(0, k).join(' ')} …`;
+  };
+  const words = m && m[1] + shellSegments(m[2])
+    .map((g, i, a) => (i < a.length - 1 ? `${stage(g.text)} ${g.sep} ` : stage(g.text))).join('') + ')';
+  if (!words || [...words].length <= n) return fitMiddle(words || unq, n);
+  // still too long: a one-word stage (`printf …`) → `…`, so a multi-word command stays whole
+  return fitMiddle(words.replace(/(?<=\$\(| [|&;]+ )[A-Za-z_][\w.-]* …(?= [|&;]+ |\)$)/g, '…'), n);
+}
+// Share of spend as a whole percent; a non-zero share under 0.5 % prints `<1%`, not `0%`.
+const sharePct = share => `${share > 0 && share < 0.005 ? '<1' : (100 * share).toFixed(0)}%`;
 // FLAGS lines are `  <id padded to 14> <text>`; text keeps the line ≤ 120 chars.
 const FLAG_TEXT_WIDTH = 120 - 17;
 const TOP_SUBAGENTS = 10;
