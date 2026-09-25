@@ -99,7 +99,7 @@ A subagent is just another session — the same "context re-sent every turn" mec
 because it lives inside a work unit, not at the top of TOP SESSIONS. The script prints how
 many subagents cross either threshold and their combined share of window spend. Thresholds
 (`LONG_AGENT_TURNS` = 150, `LONG_AGENT_CTX` = 300k, named constants in the script) are
-provisional — Slice 15 re-tunes both on real data.
+provisional, to be re-tuned on real data.
 
 **Do:**
 - Give the agent a hard `maxTurns` in its `.claude/agents/*.md` frontmatter. A limit hit
@@ -111,16 +111,13 @@ provisional — Slice 15 re-tunes both on real data.
 - After `maxTurns` is hit, start a **new** agent with the report plus `git log`, rather than
   resuming — resuming carries the full prior history straight back in.
 
-### `LONG_AGENT` — judgment calls
-
-design.md Q5 says "over N turns or peak context > 300k" but leaves three details unstated;
-decided at implementation time (Slice 10):
+**Judgment calls:** design.md Q5 says "over N turns or peak context > 300k" but leaves three
+details unstated; decided at implementation time:
 
 **Decided**: both comparisons are strict `>` (151 turns fires, 150 does not; 300 001 ctx fires,
-300 000 does not) — "over N" and "> 300k" both read as strictly-greater in the design text, and
-this matches how every other turn-count flag in the script (`LONG_SESSION` uses `>=`, chosen
-there instead because "250" was stated as the threshold itself, not "over 250") is phrased in
-its own source.
+300 000 does not) — design.md phrases the threshold as "over N turns" and "peak context > 300k,"
+both explicitly strictly-greater language. `LONG_SESSION` instead uses `>=`, because its own
+threshold ("250 messages") is stated as the boundary itself, not phrased as "over 250".
 
 **Decided**: "share of spend" is the flagged subagents' combined cost as a fraction of the
 **current window's total spend** (`cur.cost`, main + subagent), not just the subagent chain's
