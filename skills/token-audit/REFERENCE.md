@@ -207,6 +207,62 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   Accepted: within one wait the body is identical (same PR), which is what a run counts.
   No real-data hit was heredoc-driven.
 
+### `BOILERPLATE` — the same setup prefix in ≥ 5 sessions
+
+The same setup typed again in session after session is a tool or setting that is missing:
+every session re-derives it (and re-spends turns getting it right). The script prints the
+number of boilerplate prefixes (a setup prefix seen in ≥ `BOILER_MIN_SESSIONS` = 5 distinct
+sessions, a named constant, provisional — Slice 15 re-tunes it), the combined cost and share
+of window spend of the turns carrying them, and the most expensive prefix with its #sessions
+and #turns. `--json`: the flag carries `groups[]` = `{ prefix, sessions, turns, cost, share }`,
+most expensive first.
+
+**Do:** replace the setup with the tool or setting it stands in for:
+- `TOKEN=$(printf 'protocol=https\nhost=github.com\n' | git credential fill | …)` + `curl
+  api.github.com` + a JSON body file → install and authenticate `gh` (`gh auth login`), then
+  `gh pr view` / `gh pr checks` / `gh api`. Demo-proj case: this is what the fix was.
+- An env var exported before every command (`export PYTHONIOENCODING=utf-8 && python …`) →
+  set it once in `settings.json` `env` (or `PYTHONUTF8=1` system-wide).
+- Any other multi-step setup → a script in the repo (`scripts/…`) the agent calls by name,
+  and a line in CLAUDE.md saying it exists.
+
+**Prefix definition** (plan.md left it open): the **setup prefix** of a command key
+(`commandKey()`) is its first top-level segment (`shellSegments(key)[0].text`, `$(…)` intact)
+when (a) that segment is a variable assignment — `NAME=…` or `export NAME=…` (an assignment
+with a command after it in the same segment was already stripped as an env prefix), (b) at
+least one more segment follows (a prefix *of* something), and (c) the value is not just a
+path — `<path>`, an absolute/relative path, or a `$VAR`-rooted one (`"$HOME/x"`), quotes
+stripped. Grouped over all sessions (`sessionKey`, so a subagent is its own session) by the
+exact raw prefix; Bash/PowerShell calls only, all activity categories.
+
+**Real-data validation** (2026-09-25, `--all --days 3650`, 895 transcripts), hits at N = 5:
+- first segment of every key: 324 prefixes — nearly all noise (`git status --short` 287
+  sessions, `git log --oneline -N`, `python -m pytest …`, `cat <path>`, `ls -la`). Rejected.
+- first segment of a key with ≥ 2 segments: 238 — same noise. Rejected.
+- assignment-first (a + b, no path rule): 17 — 3 real (below) + 10 scratchpad-variable
+  shorthands (`S=<path>`, `SP=<path>`, `SCRATCH=<path>`, unquoted `S=/c/Users/…/scratchpad`
+  per project) + 4 file shorthands (`F=<path>`, `T=<path>`, `D=<path>`, `W=<path>` — many
+  different files collapsed to `<path>`). A path shorthand only names a location; no missing
+  tool behind it, so rule (c) drops them.
+- **chosen rule (a + b + c): 3 hits, all real boilerplate**, 1 % of spend ($138 of $13.5k):
+  `export PYTHONIOENCODING=utf-N` (68 sessions, 1171 turns, $134) and two spellings of the
+  `git credential fill` token fetch (8 sessions / 38 turns and 6 / 15; a third spelling with
+  `grep "^password="` is in 3 sessions). Hand-count check: design.md estimated ~110 `pulls`
+  calls with a fresh credential fill in demo-proj; 53 turns carry the two spellings here.
+
+**Judgment calls:**
+- **Exact prefix, no fuzzing**: the credential fetch in three spellings is three groups (quote
+  style, `\n\n`, `sed` vs `grep`). Merging them would need a looser key; not needed — the two
+  main spellings each cross N on their own. Revisit in Slice 15 if a real case splits below N.
+- **Cost = the turns carrying the prefix**, 1/n of an n-call turn (as in COST BY ACTIVITY), not
+  the prefix's own tokens: cost = turns × context, and those turns are what a `gh` call or a
+  setting would have made shorter or fewer. It over-states the saving (the turn also did real
+  work), so read the share as "spend on turns that needed this setup". #turns counts a turn
+  once even if several of its calls carry the prefix.
+- **Printed prefix is redacted with `redactPaths()`** (text and `groups[].prefix`), grouping
+  uses the raw prefix — two users' `$(cat /home/<name>/.token)` are two groups. The prefix is
+  cut in the middle so the flag line stays ≤ 120 chars; the full prefix is in `--json`.
+
 ### `BIG_CTX` — average context per message > 150k
 
 Threshold, not a cliff: nothing bills extra, but it means most turns are dragging
@@ -410,7 +466,7 @@ Decisions not fixed by design.md (judgment calls):
 `commandKey(command)` (exported) turns a `Bash` / `PowerShell` command into a key so the same
 command against a different PR number, commit, path or cwd groups together. `POLLING`
 counts identical keys per session (wait-type categories only — see its playbook entry);
-`BOILERPLATE` (Slice 13) takes a prefix of it.
+`BOILERPLATE` groups its setup prefix across sessions (see its playbook entry).
 Steps, in order:
 
 1. Heredoc bodies hashed: the line with `<<TAG` / `<<'TAG'` / `<<-TAG` stays; the body through

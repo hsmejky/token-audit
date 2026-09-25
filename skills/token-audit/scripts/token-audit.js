@@ -753,7 +753,51 @@ function polling(rows) {
     .map(g => ({ ...g, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.count - a.count);
 }
-function flags(cur, prev, cfg, span, polls = []) {
+// BOILERPLATE threshold (design.md Q9) — provisional, Slice 15 re-tunes it.
+const BOILER_MIN_SESSIONS = 5; // same setup prefix in >= N distinct sessions
+// Setup prefix of a command key: its first top-level segment, when that
+// segment is a variable assignment (`NAME=…` / `export NAME=…`) and at least
+// one more segment follows — the setup a command needs before it can run
+// (`TOKEN=$(… | git credential fill …) && curl …`, `export PYTHONIOENCODING=…
+// && python …`). A value that is only a path (`S=<path>`, `S=/c/…/scratchpad`,
+// `F="$HOME/x"`) is a shorthand for a location, not a missing tool → null.
+// Real-data numbers and the definitions that were tried: REFERENCE.md "BOILERPLATE".
+const SETUP_ASSIGN = /^(?:export )?[A-Za-z_]\w*=(.*)$/s;
+const VAR_ROOTED_PATH = /^(?:<path>|\$\{?\w+\}?)(?:[\\/]|$)/;
+function setupPrefix(key) {
+  const segs = shellSegments(key);
+  const m = segs.length > 1 && SETUP_ASSIGN.exec(segs[0].text);
+  if (!m) return null;
+  const value = m[1].replace(/^(["'])(.*)\1$/s, '$2');
+  return value && !isPathText(value) && !VAR_ROOTED_PATH.test(value) ? segs[0].text : null;
+}
+// Boilerplate prefixes in this window: Bash/PowerShell calls grouped by
+// setupPrefix() (raw, unredacted) over all sessions (sessionKey); a prefix seen
+// in >= BOILER_MIN_SESSIONS sessions is a hit. turns = distinct turns with the
+// prefix; cost = k/n of a turn with k of its n calls carrying it (as in
+// activity()); share = of window spend; most expensive first. `groups[].prefix`
+// is path-redacted. See REFERENCE.md "BOILERPLATE".
+function boilerplate(rows) {
+  const groups = new Map();
+  let total = 0;
+  for (const r of rows) {
+    total += r.cost;
+    for (const c of r.calls) {
+      const p = SHELL_TOOLS.has(c.tool) ? setupPrefix(c.key) : null;
+      if (!p) continue;
+      const g = groups.get(p) || { prefix: p, sessions: new Set(), turns: new Set(), cost: 0 };
+      g.sessions.add(sessionKey(r));
+      g.turns.add(r);
+      g.cost += r.cost / r.calls.length;
+      groups.set(p, g);
+    }
+  }
+  return [...groups.values()].filter(g => g.sessions.size >= BOILER_MIN_SESSIONS)
+    .map(g => ({ prefix: redactPaths(g.prefix), sessions: g.sessions.size, turns: g.turns.size,
+      cost: g.cost, share: total ? g.cost / total : 0 }))
+    .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions);
+}
+function flags(cur, prev, cfg, span, polls = [], boilers = []) {
   const out = [];
   const add = (id, text) => out.push({ id, text });
 
@@ -784,6 +828,15 @@ function flags(cur, prev, cfg, span, polls = []) {
       `${(100 * share).toFixed(0)}% of spend; top ${polls[0].count}× `;
     out.push({ id: 'POLLING', text: head + fitMiddle(polls[0].key, FLAG_TEXT_WIDTH - head.length),
       groups: polls });
+  }
+  if (boilers.length) {
+    const cost = boilers.reduce((a, g) => a + g.cost, 0);
+    const share = boilers.reduce((a, g) => a + g.share, 0);
+    const b = boilers[0];
+    const head = `${boilers.length} prefix(es) in ≥${BOILER_MIN_SESSIONS} sessions = ${money(cost)}, ` +
+      `${(100 * share).toFixed(0)}% of spend; top ${b.sessions} sess/${b.turns} turns `;
+    out.push({ id: 'BOILERPLATE', text: head + fitMiddle(b.prefix, FLAG_TEXT_WIDTH - head.length),
+      groups: boilers });
   }
   if (cur.avgCtx > 150e3) {
     add('BIG_CTX', `avg context/message ${(cur.avgCtx / 1e3).toFixed(0)}k (threshold 150k)`);
@@ -1014,7 +1067,7 @@ async function main() {
   // parents for a repeated subagent id.
   const spans = new Map(all.sessions.map(s => [sessionKey(s), s.last - s.first]));
   const span = s => spans.get(sessionKey(s)) || 0;
-  const fl = flags(cur, prev, cfg, span, polling(curRows));
+  const fl = flags(cur, prev, cfg, span, polling(curRows), boilerplate(curRows));
   const secFl = securityFlags(cfg);
 
   const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: SCOPE_PROJECT };
@@ -1099,4 +1152,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { projectFolder, commandKey, shellSegments, activityCategory, redactPaths };
+module.exports = { projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefix };
