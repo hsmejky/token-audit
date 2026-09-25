@@ -1,0 +1,12 @@
+{
+  "name": "token-audit",
+  "displayName": "Token Audit",
+  "version": "1.0.0",
+  "description": "Periodic checkup of Claude Code token spend and habits: cost, context-per-message, session concentration, config drift, and a ranked list of concrete habit fixes.",
+  "author": {
+    "name": "Jan Smejkal"
+  },
+  "skills": [
+    "./skills/token-audit"
+  ]
+}

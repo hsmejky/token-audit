@@ -1,0 +1,15 @@
+{
+  "name": "token-audit",
+  "owner": {
+    "name": "Jan Smejkal"
+  },
+  "description": "Marketplace for the token-audit plugin.",
+  "plugins": [
+    {
+      "name": "token-audit",
+      "source": "./",
+      "description": "Periodic checkup of Claude Code token spend and habits.",
+      "version": "1.0.0"
+    }
+  ]
+}
