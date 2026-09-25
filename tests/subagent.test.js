@@ -55,13 +55,16 @@ test('--json `all` (ALL-TIME): sessions/msgs are main-only, cost includes subage
 // session entirely while `all` still must include its cost — the actual scenario
 // the SPEND <= ALL-TIME invariant exists to cover.
 test('--json `all`: includes cost from sessions outside the --days window', () => {
+  // Dates relative to Date.now() (the script's own "today"), not hardcoded, so this
+  // test keeps meaning whenever it runs instead of going stale after a fixed date.
+  const daysAgo = n => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
   const dir = tmpClaudeDir({
-    // Outside a 7-day window as of "today" (2026-09-25): excluded from cur/prev,
-    // included in all-time.
-    'projects/p/old-main.jsonl': turn({ id: 'old-1', ts: '2026-09-01T10:00:00.000Z' }),
-    'projects/p/old-main/subagents/agent-old.jsonl': turns(3, 'old-sub', { ts: '2026-09-01T10:00:00.000Z' }),
+    // Well outside a 7-day window as of "today": excluded from cur/prev, included
+    // in all-time.
+    'projects/p/old-main.jsonl': turn({ id: 'old-1', ts: daysAgo(24) }),
+    'projects/p/old-main/subagents/agent-old.jsonl': turns(3, 'old-sub', { ts: daysAgo(24) }),
     // Inside the window: counted in both cur and all.
-    'projects/p/new-main.jsonl': turn({ id: 'new-1', ts: '2026-09-24T10:00:00.000Z' }),
+    'projects/p/new-main.jsonl': turn({ id: 'new-1', ts: daysAgo(1) }),
   });
   const r = audit(dir, '--days', '7');
   assert.equal(r.cur.sessions.some(s => s.sid === 'old-main' || s.sid === 'agent-old'), false,

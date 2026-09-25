@@ -384,7 +384,7 @@ test('activityCategory: `pnpm` + `--a ` x40 with a non-matching tail classifies 
   assert.equal(cat, 'other');
 });
 
-test('activityCategory: 50k nested `(…)` in a command key processes well under 1s (was ~10s, quadratic)', () => {
+test('activityCategory: 50k nested `(…)` in a command key processes well under 1.5s (was ~10s, quadratic)', () => {
   const command = '('.repeat(50000) + 'echo hi' + ')'.repeat(50000);
   const t0 = Date.now();
   activityCategory('Bash', { command });

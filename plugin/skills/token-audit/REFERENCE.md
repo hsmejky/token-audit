@@ -794,13 +794,16 @@ of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (dem
   from two different points in time, not a controlled comparison). Ran the pre-`CMD_PIPE`-fix
   script (commit `5561717`, immediately before the `CMD_PIPE` fix) against the *same*
   `--all --days 3650` local history, seconds apart from the post-fix run: `other` 0.28% →
-  0.48%, `read` 34.2% → 29.3%, `script run` 11.3% → 16.0% (all other categories unchanged to
-  the cent — `git` $1417.86 → $1417.88, `screenshot/image` $64.65 both). So the `other`
+  0.48%, `read` 34.2% → 29.3%, `script run` 11.3% → 16.0% (all other categories within a
+  cent — `git` $1417.86 → $1417.88, `screenshot/image` $64.65 both). So the `other`
   0.28% → 0.48% move is **not** data growth (same live history, measured moments apart) —
-  it's turns that used to read as plain `read` under the old single-CMD marker (piped calls
-  after a wrapper word like `timeout`/`xargs`, now fixed above) that neither `READERS` nor
-  `SCRIPT_INTERP` matches once they correctly carry `CMD_PIPE`, so they fall to `other`
-  instead of `script run`; still comfortably under the ~1% target. `script run`'s 16.0%
+  it's 258 turns (commit `8328f46`) where an unrecognized command is piped into a
+  read-style filter (`curl | grep`, `cut -f | grep`, `pnpm ingest | tail`, `npm view | tail`,
+  `unzip -l | head`): under the "a filter after `|` is not `read`" decision, `READERS`
+  no longer credits these once they correctly carry `CMD_PIPE`, so they fall to `other`
+  instead ($65.56 of `other`'s total, +$27.8 over the pre-fix run). The wrapper-after-pipe
+  fix in `b30c5e3` moved 0 calls on this population — the whole increase is this
+  filter-after-pipe decision; still comfortably under the ~1% target. `script run`'s 16.0%
   above design/slice15-proposal.md:252's ~11.3% hand-estimate target for "all" the same way:
   that estimate was computed before the `CMD_PIPE` fix existed (11.3% is what this same
   before-fix run reproduces almost exactly), on the assumption that a piped-into-filter
