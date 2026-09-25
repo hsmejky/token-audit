@@ -82,7 +82,7 @@ test('commandKey drops cd / Set-Location segments anywhere; an env prefix never 
 });
 
 test('commandKey: a private-use char already in the input is left alone, not turned into "undefined"', () => {
-  const key = commandKey('echo "\\uE010"');
+  const key = commandKey('echo ""');
   assert.ok(!key.includes('undefined'), key);
 });
 
@@ -123,7 +123,7 @@ test('shellSegments drops empty segments from consecutive separators, keeps a tr
 test('hashHeredocBodies: an unterminated heredoc is still hashed, no stray sentinel leaks into the key', () => {
   const key = commandKey('cat <<EOF\nfoo\nbar');
   assert.match(key, /^cat <<EOF \[heredoc [0-9a-f]{8}\]$/, key);
-  assert.ok(!key.includes('\\uFFFF'), key);
+  assert.ok(!key.includes('￿'), key);
 });
 
 test('commandKey collapses whitespace, spaces separators canonically', () => {
@@ -231,6 +231,7 @@ test('activityCategory: one example per category, first matching rule wins', () 
     // interpreter options before -m (real transcripts: python -X utf8 -m pytest … | tail)
     [sh('python -X utf8 -m pytest tests/ -q | tail'), 'test/lint/build'],
     [sh('python -u -m pytest -x'), 'test/lint/build'],
+    [sh('python -x -m pytest'), 'test/lint/build'],
     [sh('py -3 -m pytest -x'), 'test/lint/build'],
     [sh('py -3.11 -m pytest -x'), 'test/lint/build'],
     [sh('pnpm --filter web test'), 'test/lint/build'],
@@ -278,6 +279,14 @@ test('activityCategory: many `-X val` interpreter options before -m do not blow 
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
   assert.ok(Date.now() - t0 < 1000, 'should classify 40 `-X val` flags in well under 1s');
+  assert.equal(cat, 'test/lint/build');
+});
+
+test('activityCategory: many `py -3` version flags do not blow up (linear, not quadratic)', () => {
+  const command = 'py ' + '-3 '.repeat(40) + '-m pytest';
+  const t0 = Date.now();
+  const cat = activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 1000, 'should classify 40 `-3` flags in well under 1s');
   assert.equal(cat, 'test/lint/build');
 });
 
