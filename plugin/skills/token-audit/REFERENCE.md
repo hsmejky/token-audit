@@ -32,7 +32,7 @@ rather than re-derived per model.
 question — it does **not** match: Opus 5.5 is the current/cheaper tier, Opus 5 is
 legacy pricing on the same page. The script gives `opus-5-5` its own rate row
 (`PRICES.opus55`) so its actual (cheaper) cost is used, but keeps it in the same
-`Opus` family bucket in SPEND/`byFamily` — the plan only asked for Fable to show as
+`Opus` family bucket in SPEND/`byFamily` — only Fable was meant to show as
 its own SPEND family, and splitting the SPEND bucket too would move `OPUS_HEAVY`'s
 threshold behaviour out of scope for this slice.
 
@@ -107,16 +107,16 @@ one `… +N more: IDs` line for the rest:
 | tier | flags | sorted by |
 |---|---|---|
 | 0 — extra cost defined | `REGRESSION`, `POLLING`, `BOILERPLATE` | `amount` desc |
-| 1 — the design phase Q5's main lever | `LONG_AGENT` | — |
+| 1 — design decision Q5's main lever | `LONG_AGENT` | — |
 | 2 — session habits | `LONG_SESSION`, `MULTIDAY` | `amount` desc (tie-break) |
 | 3 — spend mix | `OPUS_HEAVY`, `CONCENTRATION` | `amount` desc (tie-break) |
 | 4 — no dollar figure | `BIG_CTX`, `PLUGIN_BLOAT` | id |
 | 5 | `CLEAN` | — |
 
-Tier 0 holds the flags whose saving the design phase defines: `REGRESSION`'s `amount` is the extra
+Tier 0 holds the flags whose saving design decision Q5 defines: `REGRESSION`'s `amount` is the extra
 cost vs the previous window's cost/message, `cur.cost − prev.costPerMsg × cur.msgs` (clamped
 ≥ 0); `POLLING`/`BOILERPLATE`'s is the cost of those turns (the saving's upper bound, see
-below). The design phase defines no saveable part for `OPUS_HEAVY` (its `amount` is all Opus spend)
+below). Design decision Q5 defines no saveable part for `OPUS_HEAVY` (its `amount` is all Opus spend)
 or `CONCENTRATION` (top-5 session spend), nor for `LONG_AGENT`/`LONG_SESSION`/`MULTIDAY`
 (their flagged spend), so those rank by the fixed tier and use `amount` only as a tie-break
 inside a tier — a large Opus bill never outranks a smaller extra-cost flag. Ties fall back to
@@ -208,12 +208,12 @@ stays clean on the project that already follows the playbook below.
 - After `maxTurns` is hit, start a **new** agent with the report plus `git log`, rather than
   resuming — resuming carries the full prior history straight back in.
 
-**Judgment calls:** the design phase Q5 says "over N turns or peak context > 300k" but leaves three
+**Judgment calls:** design decision Q5 says "over N turns or peak context > 300k" but leaves three
 details unstated; decided at implementation time:
 
 **Decided**: both comparisons are strict `>` (151 turns fires, 150 does not; 400 001 ctx fires,
 400 000 does not — the boundary moved with the Slice 15 re-tune, the comparison direction did
-not) — the design phase phrases the threshold as "over N turns" and "peak context > 300k," both
+not) — design decision Q5 phrases the threshold as "over N turns" and "peak context > 300k," both
 explicitly strictly-greater language. `LONG_SESSION` instead uses `>=`, because its own
 threshold ("200 messages") is stated as the boundary itself, not phrased as "over 200".
 
@@ -250,12 +250,12 @@ log tails, progress `grep -c`); the main false-positive risk at that band was re
 same script while iterating (`python <path>` × 10–17), fixed by moving script runs to their
 own `script run` activity category (below) and leaving it out of `POLL_CATEGORIES` — a
 `python foo.py` re-run is work, not a wait. Note: the second project GitHub-polling case (89
-`check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of the second project spend) still
+`check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of the second project's spend) still
 does not trip `POLLING` even at N = 10 — it is spread over 33 sessions (max 8 calls/session)
 behind ~87 distinct per-call keys (a fresh PR/commit id each time), so no single key repeats
-enough in one session. A cross-session version of this detector — flagging the same polling shape spread across many
-sessions instead of repeated within one — is out of scope for a per-session threshold and
-remains a possible future addition.
+enough in one session. A cross-session version of this detector — flagging the same
+polling shape spread across many sessions instead of repeated within one — is out of
+scope for a per-session threshold and remains a possible future addition.
 
 **Do:** turn the wait into one waiting turn instead of dozens:
 - `gh pr checks --watch` (or `gh run watch`) — blocks until CI finishes, one call, one turn.
@@ -267,7 +267,7 @@ remains a possible future addition.
 Also never burn turns on purpose to wait (`echo waiting-N`, `sleep 30` one call at a time):
 one `sleep`/`until … done` loop inside a single call waits for free.
 
-**Judgment calls** (the plan says "same normalized command ≥ N times", not which commands):
+**Judgment calls** (fixed during design as "same normalized command ≥ N times", not which commands):
 
 - **Unit = one Bash/PowerShell call, grouped by `commandKey()` per session** (`sessionKey`:
   a subagent is its own session, also vs. a same-named agent under another parent). Other
@@ -417,7 +417,7 @@ Real-data check: all-history 7 prefixes = $188 = 1% of spend; the second project
 - Any other multi-step setup → a script in the repo (`scripts/…`) the agent calls by name,
   and a line in CLAUDE.md saying it exists.
 
-**Prefix definition** (the plan left it open): the **setup prefixes** of a command key
+**Prefix definition** (left open during design): the **setup prefixes** of a command key
 (`commandKey()`) are the segments of its leading run of variable assignments
 (`shellSegments(key)`, `$(…)` intact) — `NAME=…`, `export NAME=…` or PowerShell
 `$env:NAME=…` (spaces around `=` allowed; an assignment with a command after it in the
@@ -444,7 +444,7 @@ hit prefixes counts in both groups, but once in the flag's total cost/share.
 - **chosen rule (a + b + c): 3 hits, all real boilerplate**, 1 % of spend ($138 of $13.5k):
   `export PYTHONIOENCODING=utf-N` (68 sessions, 1171 turns, $134) and two spellings of the
   `git credential fill` token fetch (8 sessions / 38 turns and 6 / 15; a third spelling with
-  `grep "^password="` is in 3 sessions). Hand-count check: the design phase estimated ~110 `pulls`
+  `grep "^password="` is in 3 sessions). Hand-count check: design decision Q9 estimated ~110 `pulls`
   calls with a fresh credential fill in the second project; 53 turns carry the two spellings here.
 
 **Leading-run + `$env:` rule** (2026-09-25, same data, vs. first-segment-only above):
@@ -569,7 +569,7 @@ targets 0.15 % of spend. It cannot pay for itself, and for customer code it coll
 with the confidentiality rules anyway.
 
 **Subagents are a non-lever only when their measured share is small and they run on
-Sonnet — report the number, never assert it (the design phase Q6).** The claim held for the
+Sonnet — report the number, never assert it (design decision Q6).** The claim held for the
 first project this script measured (below: 20.4 % of spend, pre-dedupe) but not for the
 second project that motivated this rewrite (85 % of spend, mostly Opus — 82 % is
 that project's share of *input tokens*, not spend) or
@@ -691,7 +691,7 @@ when the summary's `fitFlags()` guard moved any flags here — it gets only the 
   `sorted[floor(q*n)]` quantile as the summary's SESSIONS median/p90, so both read the same way;
   `q=1` for max.
 - **COST BY ACTIVITY** (this window, top 6 by cost): what the deduped turns were spent on
-  (the design phase Q9). Columns: category, turns, avg ctx, cost, share of window spend. Categories
+  (design decision Q9). Columns: category, turns, avg ctx, cost, share of window spend. Categories
   with no turns get no row; no turns at all prints one "none in this window" line. `--json`:
   `detail.activity[]` = `{ category, turns, cost, avgCtx, share }` for **every** category
   (zeros included, sorted by cost desc) — the full breakdown, not just the top 6. Rules below.
@@ -726,9 +726,9 @@ and `timeout 600 python -m pytest | tail` is a test run. Priority order and what
 | – | other | no rule matched at all |
 | – | reply (Slice 15) | the turn made no tool call (final answer, plan, question to the user) |
 
-Decisions not fixed by the design phase (judgment calls):
+Decisions not fixed by design decision Q9 (judgment calls):
 
-- **Status checks count as wait/poll, not GitHub.** The design phase lists "repeated status checks"
+- **Status checks count as wait/poll, not GitHub.** Design decision Q9 lists "repeated status checks"
   under wait/poll; a single call can't know it is repeated, so every `check-runs` /
   `actions/runs` / `gh pr checks` / `gh run watch|view` call is wait/poll. `POLLING` (Slice 12)
   is the repeat detector.
@@ -762,9 +762,9 @@ Decisions not fixed by the design phase (judgment calls):
 - **`harness` and `script run` (Slice 15) pulled out of `other`.** Measured on 2026-09-25,
   all-history real data, `other`'s composition (share of total spend) was: reply-shaped
   turns ≈ 7% (now `reply`, above), shell runs of a script (`python …`, `node …`,
-  `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% the second project / 2.4% token-audit (now
+  `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% second project / 2.4% token-audit (now
   `script run`), harness tools (`Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, …)
-  ≈ 1.6% all / 1.4% the second project / 5.4% token-audit (now `harness`), wait-shaped commands
+  ≈ 1.6% all / 1.4% second project / 5.4% token-audit (now `harness`), wait-shaped commands
   (`echo waiting-*`, `tasklist`, `true`) ≈ 0.2% (folded into `wait/poll`'s busy-poll row,
   table row 9 above), misc shell (`mkdir`, `cp`, `rm`, `for`, `export …`) ≈ 0.2–0.6%,
   genuinely unmatched ≈ 0.1%. So `other` was never one thing — it was mostly replies, script
@@ -787,8 +787,8 @@ Decisions not fixed by the design phase (judgment calls):
 
 ### Activity table vs Q9 hand estimates (Slice 15)
 
-The design phase Q9 gave two hand estimates to verify once this feature existed: polling ≈ 1–2%
-of the second project spend, screenshots ≈ 2.6%. Measured with the finished script (the second project,
+Design decision Q9 gave two hand estimates to verify once this feature existed: polling ≈ 1–2%
+of the second project's spend, screenshots ≈ 2.6%. Measured with the finished script (the second project,
 `--all --days 3650`, real data):
 
 - **Polling: `wait/poll` 1.35% + `github` 1.49% = 2.84%.** The hand estimate holds
@@ -796,17 +796,17 @@ of the second project spend, screenshots ≈ 2.6%. Measured with the finished sc
   / `sleep` loops, i.e. the `wait/poll` category alone); it reads 2.8% if every GitHub API
   call counts, including `pulls` fetches and the `git credential fill` setup that isn't
   itself a wait. No bug — a definition gap, not a measurement gap. This case (89 `check-runs`
-  + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of the second project spend, spread across 33
+  + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of the second project's spend, spread across 33
   sessions with ≤ 8 calls/session and ~87 distinct keys) is also why `POLLING` itself never
   fires on it — catching this would need a cross-session detector, out of scope here.
-- **Screenshots: `screenshot/image` table row = 4.89% of the second project spend.** Higher than the
+- **Screenshots: `screenshot/image` table row = 4.89% of the second project's spend.** Higher than the
   2.6% hand estimate because the table charges the *whole turn* (full context) to the
   category, not just the image's own tokens. A second, narrower measure — the tokens a
   screenshot actually carries forward in context (image tokens × remaining turns in that
   session, at the session's cache-read price) — comes to ≈ 1.4% (the original hand estimate,
   2.6%, was computed on non-deduped turns; 2.6 / 1.9, the dedupe factor, ≈ 1.4%, i.e. the
   gap there was the pre-Slice-2 dedupe bug, not a real difference). The conclusion from
-  the design phase Q6 stands either way: screenshots are a non-lever (≈ 1.4% actually carried in
+  design decision Q6 stands either way: screenshots are a non-lever (≈ 1.4% actually carried in
   context); the table's 4.9% is turn cost that the verification step would spend regardless
   of whether it looked at a screenshot.
 - **`other` (now `other` + `reply` + `script run` + `harness` together, so they can be
@@ -900,10 +900,10 @@ Example: `cd /c/r && curl -s https://api.github.com/repos/o/r/pulls/123/check-ru
 (`cur.sessions` filtered to `isSub`), not just the TOP 10 SUBAGENTS-by-cost list printed just
 above it.
 
-**Reason**: the design phase Q3 specifies the stat ("median, p90, max" for turns and peak ctx) but not
+**Reason**: design decision Q3 specifies the stat ("median, p90, max" for turns and peak ctx) but not
 its population. The top-10 list is a leaderboard of the most expensive subagents; the
-distribution's job is to say whether a leaderboard entry is typical or an outlier (the design phase's own
-example: "agent A ran 288 turns — is that normal?"), which only works if it is computed over the
+distribution's job is to say whether a leaderboard entry is typical or an outlier (an example
+considered during design: "agent A ran 288 turns — is that normal?"), which only works if it is computed over the
 full population, not the 10 rows the reader is already looking at (those would show a distribution
 dominated by the leaderboard itself, converging to roughly the top-10's own median as list size
 shrinks). This mirrors the summary's SESSIONS median/p90 (Slice 15: main sessions only,
