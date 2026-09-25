@@ -214,6 +214,14 @@ test('activityCategory: one example per category, first matching rule wins', () 
   assert.deepEqual(got, cases.map(c => c[1]));
 });
 
+test('activityCategory: a long non-matching command after `node ` does not blow up (linear, not quadratic)', () => {
+  const command = 'node ' + 'x'.repeat(200000);
+  const t0 = Date.now();
+  const cat = activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 1000, 'should classify a 200k-char command in well under 1s');
+  assert.equal(cat, 'other');
+});
+
 // Lines of the DETAIL block (from the DETAIL header to end of output).
 const detailLines = out => {
   const lines = out.split('\n');

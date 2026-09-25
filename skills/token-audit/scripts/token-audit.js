@@ -224,9 +224,13 @@ const CHECKERS = String.raw`vitest|jest|pytest|unittest|ruff|mypy|eslint|prettie
 const READERS = String.raw`cat|sed -n|grep|rg|head|tail|ls|find|wc|awk|Get-Content`;
 const IMAGE = String.raw`^Read .*\.(?:png|jpe?g|gif|webp|bmp)$`;
 // A screenshot script *run* (by an interpreter or directly), not a read / edit / git of it.
-const SHOT_EXEC = String.raw`(?:node|python\S*|bun|deno|tsx|ts-node|bash|sh|pwsh)\s[^${CMD}]*?`;
-const SHOT_RUN = String.raw`${CMD}(?:${SHOT_EXEC})?[^\s${CMD}]*screenshot[\w.-]*\.(?:m?js|ts|py|sh)\b|` +
-  String.raw`${CMD}${SHOT_EXEC}\.screenshot\(`;
+// Token-bounded (whitespace vs. non-whitespace never overlap), so this is
+// linear even over a long non-matching command — the old `[^CMD]*?` scan
+// overlapped with the target's own `[^\s CMD]*` char class, which meant
+// O(n^2) backtracking on e.g. `node ` + 200k non-matching chars.
+const SHOT_EXEC = String.raw`(?:node|python\S*|bun|deno|tsx|ts-node|bash|sh|pwsh)(?:\s+\S+)*?\s+`;
+const SHOT_TARGET = String.raw`[^\s${CMD}]*(?:screenshot[\w.-]*\.(?:m?js|ts|py|sh)\b|\.screenshot\()`;
+const SHOT_RUN = String.raw`${CMD}(?:${SHOT_EXEC})?${SHOT_TARGET}`;
 const rx = (strings, ...vals) => new RegExp(String.raw(strings, ...vals), 'i');
 const ACTIVITY_RULES = [
   [rx`^(?:Agent|Task|SendMessage) `, 'agent spawn'],
