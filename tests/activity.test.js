@@ -189,6 +189,11 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [sh('python -m pytest tests/ -q 2>&1 | tail -20'), 'test/lint/build'],
     [sh('timeout 600 python3 -m pytest -x'), 'test/lint/build'],
     [sh('uv run pytest -k foo | grep -E "passed|failed"'), 'test/lint/build'],
+    // interpreter options before -m (real transcripts: python -X utf8 -m pytest … | tail)
+    [sh('python -X utf8 -m pytest tests/ -q | tail'), 'test/lint/build'],
+    [sh('python -u -m pytest -x'), 'test/lint/build'],
+    [sh('py -3 -m pytest -x'), 'test/lint/build'],
+    [sh('py -3.11 -m pytest -x'), 'test/lint/build'],
     [sh('pnpm --filter web test'), 'test/lint/build'],
     [sh('cargo test --all 2>&1 | head -50'), 'test/lint/build'],
     [sh('npx vitest run'), 'test/lint/build'],

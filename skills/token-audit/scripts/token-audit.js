@@ -208,9 +208,13 @@ function hashHeredocBodies(s, keep) {
 // run, `grep "a|git"` is not git, `uv run pytest | tail` is a test run.
 // No match → ACTIVITY_OTHER.
 const CMD = '‣';
+// Interpreter options allowed before `-m` (numbers already N'd by commandKey):
+// `-X val` / `-W val` (take a value), any other single-letter flag (`-u`, `-B`,
+// `-O`, …), or a `py`-launcher version selector (`-3`, `-3.N`).
+const PY_OPT = String.raw`(?:-X \S+|-W \S+|-[A-Za-z]|-N(?:\.N)?)`;
 const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)*|timeout(?: -\S+)* \S+|` +
-  String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)? -m|py -m|uv run|poetry run|npx(?: -y| --yes)?|bunx|` +
-  String.raw`(?:pnpm|yarn) (?:dlx|exec)|npm exec`;
+  String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)?(?: ${PY_OPT})* -m|py(?: ${PY_OPT})* -m|uv run|poetry run|` +
+  String.raw`npx(?: -y| --yes)?|bunx|(?:pnpm|yarn) (?:dlx|exec)|npm exec`;
 // Word lists the rules share (regex alternations).
 const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`;
 const RUNNERS = String.raw`(?:pnpm|npm|yarn|bun)(?: -{1,2}[\w-]+(?:[ =][^\s${CMD}-]\S*)?)*(?: run| exec)? ` +

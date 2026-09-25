@@ -306,7 +306,11 @@ Decisions not fixed by design.md (judgment calls):
   commit` is one call → test/lint/build. Splitting is per *tool call*, not per shell segment.
   So a runner outranks the pipe helpers after it: `python -m pytest … | tail` is a test run.
 - **Wrappers are looked through, a closed list.** Real transcripts had ≈ 4.5k pytest calls
-  behind `python -m` / `timeout` / `uv run` or piped to `tail` that fell to read/other.
+  behind `python -m` / `timeout` / `uv run` or piped to `tail` that fell to read/other. A
+  follow-up pass found ≈ 1.8k more behind `python -m` with interpreter options first
+  (`python -X utf8 -m pytest`, `python -u -m pytest`, `py -3 -m pytest`) that the original
+  `python -m` / `py -m` wrappers didn't allow for — `python`/`py` now accept zero or more
+  `-X val` / `-W val` / single-letter / `py`-version-selector options before `-m`.
   `pnpm`/`npm`/`yarn` are *not* generic wrappers (`pnpm test` vs the shell's `test -f`);
   their options are skipped only in front of a known script name.
 - **Screenshot = running a screenshot script**, not touching it: `cat` / `git log --` / `Write`
