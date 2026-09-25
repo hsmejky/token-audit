@@ -260,10 +260,11 @@ test('show(): bidi override (U+202E) is stripped so it cannot reorder printed te
   assert.ok(!out.includes('\u202E'), 'U+202E (RLO) survived show()');
 });
 
-// Slice 20 3rd review, finding 1: the inline `model=/cleanupPeriodDays=/effortLevel=`
-// line (no modelSettings) prints all three fields on one line. Three hostile-long
-// values at once must still fit the 120-char budget (dynamic budget, not a static
-// per-field guess that assumes they're never all maxed together).
+// Slice 20 3rd review, finding 1: the one-line CONFIG row (no modelSettings, so
+// just `model=`/`retention=`/`effort=`) prints all three fields together. Three
+// hostile-long values at once must still fit the 120-char budget (dynamic
+// budget, not a static per-field guess that assumes they're never all maxed
+// together).
 test('CONFIG: hostile-long model + cleanupPeriodDays + effortLevel together still fit one line', () => {
   const dir = tmpClaudeDir({
     'projects/p/s1.jsonl': turn({ id: 'm1' }),

@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { audit, auditText, tmpClaudeDir, tmpUserConfig } = require('./harness');
+const { fitFlags, flagsMoreLine, continuedFlagLines } =
+  require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // plan.md Slice 28 / design.md Q3: the summary (everything above DETAIL) stays
 // ≤ 24 lines. The fixture below fires every section at once: all cost flags,
@@ -211,4 +213,74 @@ test('DETAIL incl. FLAGS (continued) stays <= 40 lines when every section fires'
   const detail = lines.slice(lines.indexOf('DETAIL'));
   assert.ok(detail.length <= 40, `DETAIL is ${detail.length} lines:\n${detail.join('\n')}`);
   assert.ok(detail.some(l => l.startsWith('FLAGS (continued')), detail.join('\n'));
+});
+
+// Slice 28 review, finding 1: fitFlags() is the hard guard behind both the
+// summary's FLAGS block and DETAIL's "FLAGS (continued)" — it must never hand
+// back more rows (+ the "+N more" marker, if any are left over) than `room`,
+// however many flags or how long their (possibly wrapped) text is. SECURITY
+// itself never goes through fitFlags(); main() reserves its lines first by
+// computing `room` from what SECURITY (and everything else fixed) already
+// cost, so a fitFlags() that respects `room` by construction is what keeps
+// SECURITY from ever being displaced.
+test('fitFlags(): never exceeds room, whatever N or how many lines each item wraps to', () => {
+  for (let n = 0; n <= 8; n++) {
+    // mix of 1-line and artificially wrapped (2-line) synthetic flags
+    const items = Array.from({ length: n }, (_, i) => ({
+      id: `F${i}`, text: i % 3 === 0 ? 'word '.repeat(40) : 'short text', amount: n - i,
+    }));
+    for (let room = 0; room <= 10; room++) {
+      const { rows, moved } = fitFlags(items, room);
+      // Callers only spend a line on "+N more" when one is actually left
+      // (see main()'s `flagRoom > flagRows.length` guard) — at room=0 not even
+      // that fits, so nothing is printed at all.
+      const total = rows.length + (moved.length && room > rows.length ? 1 : 0);
+      assert.ok(total <= room, `n=${n} room=${room}: used ${total} lines (rows ${rows.length} + more?)`);
+      // shown items are exactly a prefix of the ranked list; nothing is lost
+      // or duplicated between rows and moved.
+      const shownCount = items.length - moved.length;
+      assert.deepEqual(moved, items.slice(shownCount), `n=${n} room=${room}`);
+    }
+  }
+});
+
+// Slice 28 review, finding 1/2: with exactly 4 (or fewer) flags and normal room,
+// all show and there is no "+N more" line at all (nothing left to name).
+test('fitFlags(): N <= room shows every flag, no "+N more" line', () => {
+  const items = ['A', 'B', 'C', 'D'].map(id => ({ id, text: 'x', amount: 1 }));
+  const { rows, moved } = fitFlags(items, 24);
+  assert.equal(rows.length, 4);
+  assert.equal(moved.length, 0);
+});
+
+// Slice 28 review, finding 2: with 5 flags and room for all 5, every one shows —
+// summarizing the 5th as "+1 more" would cost the same one line as just
+// printing it, so fitFlags() prints it instead (no pointless "+1 more").
+test('fitFlags(): 5 flags with room for all 5 print all 5, not "top 4 + 1 more"', () => {
+  const items = ['A', 'B', 'C', 'D', 'E'].map(id => ({ id, text: 'x', amount: 1 }));
+  const { rows, moved } = fitFlags(items, 5);
+  assert.equal(rows.length, 5, rows.join('\n'));
+  assert.equal(moved.length, 0);
+});
+
+// Slice 28 review, finding 2: DETAIL on, but continuedFlagLines() has no room at
+// all for even one flag -> the summary's "+N more" must still say "(--json)",
+// not "(DETAIL / --json)" (nothing actually landed in DETAIL to point at).
+test('flagsMoreLine: DETAIL on but no room for continued flags -> "(--json)" not "(DETAIL / --json)"', () => {
+  const moved = ['X', 'Y'].map(id => ({ id, text: 'x', amount: 1 }));
+  const contFlags = continuedFlagLines(moved, 0);
+  assert.deepEqual(contFlags, []);
+  assert.equal(flagsMoreLine(moved, contFlags.length > 0), '  … +2 more: X, Y (--json)');
+});
+
+// Slice 28 review, finding 2: POLLING/BOILERPLATE carry a real `amount` (the
+// cost of the flagged turns) in --json, same as every other cost-driven flag.
+test('--json flags: POLLING/BOILERPLATE amount = the $ figure printed in their own text', () => {
+  const r = audit(everySection(), '--days', '7');
+  for (const id of ['POLLING', 'BOILERPLATE']) {
+    const f = r.flags.find(x => x.id === id);
+    const want = Number(f.text.match(/= \$([\d.]+),/)[1]);
+    assert.ok(f.amount > 0, `${id}.amount should be > 0, got ${f.amount}`);
+    assert.ok(Math.abs(f.amount - want) < 0.01, `${id}: amount ${f.amount} vs text $${want}`);
+  }
 });

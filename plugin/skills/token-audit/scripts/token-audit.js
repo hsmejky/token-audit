@@ -1418,8 +1418,11 @@ function wrapWords(text, width) {
   if (cur) lines.push(cur);
   return lines;
 }
-// Prints one FLAGS/SECURITY row; wraps f.text (already redacted/fit upstream) instead
-// of letting it overrun 120 chars.
+// Builds the printed row(s) for one FLAGS/SECURITY entry; wraps f.text (already
+// redacted/fit upstream) instead of letting it overrun 120 chars. Callers
+// either console.log() these directly (printFlagLine, below) or fold them into
+// a larger array first (main()'s summary/SECURITY blocks, continuedFlagLines())
+// so the hard line-budget guards can count them before anything is printed.
 // POLLING/BOILERPLATE text is a literal shell command, pre-fit to FLAG_TEXT_WIDTH by
 // fitMiddle()/fitPrefix() when built (see flags()) — it's guaranteed to already fit on
 // one line. Running it through wrapWords() anyway would risk splitting the command
@@ -1432,13 +1435,21 @@ function flagLines(f) {
   const lines = wrapWords(f.text, FLAG_TEXT_WIDTH);
   return [`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`, ...lines.slice(1).map(l => `${' '.repeat(17)}${l}`)];
 }
+// Prints one FLAGS/SECURITY row straight to stdout (used by tests exercising
+// flagLines()'s wrapping in isolation); main()'s own report building goes
+// through flagLines() directly so it can budget lines before printing.
 function printFlagLine(f) {
   for (const l of flagLines(f)) console.log(l);
 }
-// Slice 28 (design.md Q3, HITL): the summary shows the top FLAGS_SUMMARY_CAP
-// flags in rankFlags() order plus one "+N more: IDs" line; the rest continue in
-// DETAIL (inside DETAIL_MAX_LINES) and always in --json.
-const FLAGS_SUMMARY_CAP = 4;
+// Slice 28 review, finding 1: SUMMARY_MAX_LINES/DETAIL_MAX_LINES are hard guards,
+// not just a hope that the pieces below happen to add up. The summary shows as
+// many flags (in rankFlags() order) as fit the lines left after every fixed
+// line — SPEND/CONFIG/... and the *whole* SECURITY block, computed first so
+// SECURITY is never displaced (fitFlags() below; normally 4 flags on the
+// worst-case fixture, fewer if SECURITY needs more room, more if it doesn't)
+// — plus one "+N more: IDs" line for the rest; those continue in DETAIL (inside
+// DETAIL_MAX_LINES, same fitFlags() guard) and always in --json.
+const SUMMARY_MAX_LINES = 24;
 const DETAIL_MAX_LINES = 40;
 // Slice 28 (design.md Q5, HITL Q-B): rank by extra cost where design.md defines
 // one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE
@@ -1471,21 +1482,34 @@ function moreIdsLine(moved, where) {
   return head + list + tail;
 }
 const flagsMoreLine = (moved, inDetail) => moreIdsLine(moved, inDetail ? 'DETAIL / --json' : '--json');
+// Shared hard-guard fitter (Slice 28 review, finding 1): fills `ranked` flags,
+// in rank order, into `room` lines via flagLines() (1 line normally, more if a
+// flag's text wraps), reserving a line ahead of time for the eventual "+N more"
+// marker while any flag remains unshown — so the budget is enforced by
+// construction, never by assuming every flag renders as exactly one line or
+// that a fixed count (e.g. "top 4") always fits. `room <= 0` shows nothing.
+// Used by both the summary's FLAGS block and DETAIL's "FLAGS (continued)".
+function fitFlags(ranked, room) {
+  const rows = [];
+  let shown = 0;
+  for (const f of ranked) {
+    const ls = flagLines(f);
+    const need = ls.length + (shown + 1 < ranked.length ? 1 : 0);
+    if (rows.length + need > room) break;
+    rows.push(...ls);
+    shown++;
+  }
+  return { rows, moved: ranked.slice(shown) };
+}
 // FLAGS (continued) block for DETAIL, never more than `room` lines (review of
 // ff55682, finding 1: it counts against DETAIL_MAX_LINES). Flags that don't fit
 // are named on a "+N more: IDs (--json)" line; no room for even one flag -> [].
 function continuedFlagLines(moved, room) {
-  const out = [`FLAGS (continued, ranked, ${moved.length} total)`];
-  let shown = 0;
-  for (const f of moved) {
-    const ls = flagLines(f);
-    const need = ls.length + (shown + 1 < moved.length ? 1 : 0);
-    if (out.length + need > room) break;
-    out.push(...ls);
-    shown++;
-  }
-  if (!shown) return [];
-  if (shown < moved.length) out.push(moreIdsLine(moved.slice(shown), '--json'));
+  const header = `FLAGS (continued, ranked, ${moved.length} total)`;
+  const { rows, moved: stillMoved } = fitFlags(moved, room - 1);
+  if (!rows.length) return [];
+  const out = [header, ...rows];
+  if (stillMoved.length) out.push(moreIdsLine(stillMoved, '--json'));
   return out;
 }
 // TREND (Slice 28): one line for the whole history. "span N wk" = calendar weeks
@@ -1516,10 +1540,14 @@ function joinFit(parts, budget, sep, more) {
   if (out.length < parts.length) out.push(more(parts.length - out.length));
   return out.join(sep);
 }
+// Slice 28 review, finding 3: no model family this window (an empty cur, e.g. a
+// scope/window with zero cost) used to print a bare "  " (two spaces, no text) —
+// return null instead so main() skips the line entirely rather than printing
+// nothing meaningful.
 function familyLine(cur) {
   const fams = Object.entries(cur.byFamily).sort((a, b) => b[1] - a[1])
     .map(([f, v]) => `${f} ${money(v)} ${pct(v / (cur.cost || 1))}`);
-  return '  ' + joinFit(fams, 118, '   ', n => `+${n} more (--json)`);
+  return fams.length ? '  ' + joinFit(fams, 118, '   ', n => `+${n} more (--json)`) : null;
 }
 function unpricedLine(unpriced) {
   const tok = unpriced.reduce((a, u) => a + u.tokens, 0);
@@ -1565,7 +1593,8 @@ const TOP_ACTIVITIES = 6;
 // `peakCtx` = the single largest context hit by any session in the unit.
 // `span` = full-history first-seen -> last-seen across every session in the
 // unit (not clipped to the window, same convention as the per-session `span`
-// used in TOP SESSIONS) — looked up from `all`, not `cur`, so a unit whose
+// on cur.sessions/--json, Slice 28 dropped the printed table) — looked up from
+// `all`, not `cur`, so a unit whose
 // activity started before this window still reports its real span.
 function workUnits(cur, all) {
   const allByKey = new Map(all.sessions.map(s => [sessionKey(s), s]));
@@ -1678,8 +1707,15 @@ const DETAIL_SECTIONS = [
 ];
 
 const turnsText = t => (t > 0 && t < 1 ? '<1' : String(Math.round(t)));
+// Slice 28 review, finding 1: hard guard on DETAIL's own line count — capped
+// here explicitly rather than relying on TOP_UNITS/TOP_SUBAGENTS/TOP_ACTIVITIES
+// happening to add up under DETAIL_MAX_LINES by construction. main()'s
+// continuedFlagLines() room is DETAIL_MAX_LINES - this result's length, so this
+// guard protects that budget too, not just DETAIL's own.
 function renderDetail(d) {
-  return ['DETAIL', ...DETAIL_SECTIONS.flatMap(section => section(d))];
+  const lines = ['DETAIL', ...DETAIL_SECTIONS.flatMap(section => section(d))];
+  return lines.length <= DETAIL_MAX_LINES ? lines :
+    [...lines.slice(0, DETAIL_MAX_LINES - 1), '… DETAIL truncated, full data in --json'];
 }
 
 // ------------------------------------------------------------ redacted view
@@ -1817,61 +1853,73 @@ async function main() {
     return;
   }
 
+  // Slice 28 review, finding 1 (hard guard): the summary is assembled into `pre`
+  // (everything up to and including the "FLAGS" header) and `post` (the blank
+  // line + the *entire* SECURITY block) before a single flag-row is chosen, so
+  // the room left for FLAGS is whatever SUMMARY_MAX_LINES minus those two
+  // actually costs — not a static guess (a fixture that happens to need 0
+  // spare lines is no longer "lucky"; an extra SECURITY row or a flag whose
+  // text wraps to 2 lines simply shrinks FLAGS' room, never SECURITY's).
+
   // Budget the project name against whatever's left of the 120-char line after the
   // fixed prefix/suffix (window range width varies with DAYS's digit count), rather
   // than a static guess that could itself run the line past 120 (Slice 20 review).
-  {
-    const prefix = 'TOKEN AUDIT   scope ';
-    const suffix = `   window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`;
-    const budget = Math.max(10, 120 - [...prefix].length - [...suffix].length);
-    const shownProject = scope.project ? fitMiddle(scope.project, budget) : 'all projects';
-    console.log(prefix + shownProject + suffix);
-  }
-  console.log('');
-  console.log(`SPEND        ${money(cur.cost)}   prev window ${money(prev.cost)}` +
-    (prev.cost ? `  ${cur.cost >= prev.cost ? '+' : ''}${(100 * (cur.cost / prev.cost - 1)).toFixed(0)}%` : ''));
-  console.log(familyLine(cur));
-  console.log(`  main ${money(cur.byChain.main)} (${pct(cur.byChain.main / (cur.cost || 1))})   ` +
-    `subagents ${money(cur.byChain.sub)} (${pct(cur.byChain.sub / (cur.cost || 1))})`);
-  if (unpriced.length) console.log(unpricedLine(unpriced));
-  console.log('');
-  console.log(`PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
-    (prev.msgs ? `   prev ${k(prev.avgCtx)} / ${money(prev.costPerMsg)}` : ''));
-  console.log(`SESSIONS     ${cur.sessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
-    `≥250 msgs: ${cur.sessions.filter(s => s.msgs >= 250).length}`);
-  console.log(`ALL-TIME     ${money(all.cost)} over ${all.sessions.length} sessions, ${all.msgs} messages`);
+  const bannerPrefix = 'TOKEN AUDIT   scope ';
+  const bannerSuffix = `   window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`;
+  const bannerBudget = Math.max(10, 120 - [...bannerPrefix].length - [...bannerSuffix].length);
+  const shownProject = scope.project ? fitMiddle(scope.project, bannerBudget) : 'all projects';
 
-  // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
-  // it overlaps WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
-  // overrun sources on real --all data. Still in --json as cur.sessions (trimmed to
-  // --top, unchanged). WEEKS (a full per-week table, unbounded with history length)
-  // is replaced by one TREND line spanning all history; --json keeps the full table
-  // under `weeks`.
-  console.log(trendLine(weeks(rows)));
-  console.log(configLine(cfg));
-  console.log('');
+  const pre = [
+    bannerPrefix + shownProject + bannerSuffix,
+    '',
+    `SPEND        ${money(cur.cost)}   prev window ${money(prev.cost)}` +
+      (prev.cost ? `  ${cur.cost >= prev.cost ? '+' : ''}${(100 * (cur.cost / prev.cost - 1)).toFixed(0)}%` : ''),
+    ...(familyLine(cur) ? [familyLine(cur)] : []),
+    `  main ${money(cur.byChain.main)} (${pct(cur.byChain.main / (cur.cost || 1))})   ` +
+      `subagents ${money(cur.byChain.sub)} (${pct(cur.byChain.sub / (cur.cost || 1))})`,
+    ...(unpriced.length ? [unpricedLine(unpriced)] : []),
+    '',
+    `PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
+      (prev.msgs ? `   prev ${k(prev.avgCtx)} / ${money(prev.costPerMsg)}` : ''),
+    `SESSIONS     ${cur.sessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
+      `≥250 msgs: ${cur.sessions.filter(s => s.msgs >= 250).length}`,
+    `ALL-TIME     ${money(all.cost)} over ${all.sessions.length} sessions, ${all.msgs} messages`,
+    // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
+    // it overlapped WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
+    // overrun sources on real --all data. Still in --json as cur.sessions (trimmed to
+    // --top, unchanged). WEEKS (a full per-week table, unbounded with history length)
+    // is replaced by one TREND line spanning all history; --json keeps the full table
+    // under `weeks`.
+    trendLine(weeks(rows)),
+    configLine(cfg),
+    '',
+    'FLAGS',
+  ];
+  const secLines = ['SECURITY (confidentiality, not cost)',
+    ...(secFl.length ? secFl.flatMap(flagLines) : ['  none'])];
+  const post = ['', ...secLines];
+  // The blank line before DETAIL prints only when DETAIL runs, but the room
+  // budget reserves it either way — FLAGS' cap must not depend on --no-detail
+  // (design.md Q-B/Q-C: the summary shows the same ranked flags in both modes,
+  // only the "+N more" line's "(DETAIL / --json)" vs "(--json)" differs).
+  const detSeparator = det ? [''] : [];
 
-  // Slice 28 (design.md Q3/Q5, HITL Q-B/Q-C): top FLAGS_SUMMARY_CAP in rank
-  // order; the rest continue in DETAIL within its line budget. --json's
-  // `flags` always carries every flag (unranked).
-  console.log('FLAGS');
+  // Slice 28 (design.md Q3/Q5, HITL Q-B/Q-C): flags in rankFlags() order fill
+  // whatever room is left (fitFlags(), same hard guard DETAIL's "FLAGS
+  // (continued)" uses); the rest continue there within its own line budget.
+  // --json's `flags` always carries every flag (unranked).
   const rankedFlags = rankFlags(fl);
-  const flagsMoved = rankedFlags.slice(FLAGS_SUMMARY_CAP);
+  const flagRoom = Math.max(0, SUMMARY_MAX_LINES - pre.length - post.length - 1);
+  const { rows: flagRows, moved: flagsMoved } = fitFlags(rankedFlags, flagRoom);
   const detLines = det ? renderDetail(det) : [];
   const contFlags = det ? continuedFlagLines(flagsMoved, DETAIL_MAX_LINES - detLines.length) : [];
-  for (const f of rankedFlags.slice(0, FLAGS_SUMMARY_CAP)) printFlagLine(f);
-  if (flagsMoved.length) console.log(flagsMoreLine(flagsMoved, contFlags.length > 0));
-  console.log('');
+  // Only spend a line on "+N more" when one is actually left in the budget
+  // (flagRoom === 0 means not even that fits — see fitFlags()'s own room=0 case).
+  if (flagsMoved.length && flagRoom > flagRows.length) flagRows.push(flagsMoreLine(flagsMoved, contFlags.length > 0));
 
-  console.log('SECURITY (confidentiality, not cost)');
-  if (secFl.length) {
-    for (const f of secFl) printFlagLine(f);
-  } else {
-    console.log('  none');
-  }
+  for (const l of [...pre, ...flagRows, ...post, ...detSeparator]) console.log(l);
 
   if (det) {
-    console.log('');
     for (const l of [...detLines, ...contFlags]) console.log(l);
   }
 }
@@ -1879,5 +1927,6 @@ async function main() {
 if (require.main === module) main();
 module.exports = {
   projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, printFlagLine,
-  rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine,
+  rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags,
+  SUMMARY_MAX_LINES, DETAIL_MAX_LINES,
 };
