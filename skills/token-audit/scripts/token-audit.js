@@ -469,22 +469,73 @@ function fit(text, n) {
 
 // ------------------------------------------------------------------ detail
 // DETAIL = drill-down printed below the summary (off with --no-detail).
-// Data and layout are split so each later section (work units, distribution
-// line, cost by activity) adds one field in detail() + one renderer in
-// DETAIL_SECTIONS. No blank lines between sections: the whole block has a
-// line budget (see REFERENCE "DETAIL"). Every line ≤ 120 chars.
+// Data and layout are split so each later section (distribution line, cost by
+// activity) adds one field in detail() + one renderer in DETAIL_SECTIONS. No
+// blank lines between sections: the whole block has a line budget (see
+// REFERENCE "DETAIL"). Every line ≤ 120 chars.
 const TOP_SUBAGENTS = 10;
 const TASK_WIDTH = 70;
+const TOP_UNITS = 10;
 
-function detail(cur, tasks) {
+// A "work unit" = one main (non-sub) session rolled up with the subagents it
+// spawned (sub.parent === main.sid), per design.md Q3. Keyed by main sid so a
+// main session with no subagent rows still forms its own unit (sub 0%); a
+// subagent whose parent main session has no priced turns in this window (rare
+// — e.g. the main thread was entirely outside the window) still rolls up
+// under its parent id, giving an orphan unit with mainCost 0.
+// `turns` = total msgs across every session in the unit (main + all its
+// subagents) — the unit's total turn volume, matching how `cost` is a sum.
+// `peakCtx` = the single largest context hit by any session in the unit.
+// `span` = full-history first-seen -> last-seen across every session in the
+// unit (not clipped to the window, same convention as the per-session `span`
+// used in TOP SESSIONS) — looked up from `all`, not `cur`, so a unit whose
+// activity started before this window still reports its real span.
+function workUnits(cur, all) {
+  const allByKey = new Map(all.sessions.map(s => [sessionKey(s), s]));
+  const units = new Map();
+  for (const s of cur.sessions) {
+    const key = s.isSub ? s.parent : s.sid;
+    let u = units.get(key);
+    if (!u) {
+      u = { key, project: s.project, mainCost: 0, subCost: 0, agents: 0, turns: 0,
+            peakCtx: 0, first: Infinity, last: 0 };
+      units.set(key, u);
+    }
+    if (s.isSub) { u.subCost += s.cost; u.agents++; } else { u.mainCost += s.cost; }
+    u.turns += s.msgs;
+    if (s.ctxMax > u.peakCtx) u.peakCtx = s.ctxMax;
+    const full = allByKey.get(sessionKey(s));
+    if (full) {
+      if (full.first < u.first) u.first = full.first;
+      if (full.last > u.last) u.last = full.last;
+    }
+  }
+  return [...units.values()].map(u => {
+    const cost = u.mainCost + u.subCost;
+    return { ...u, cost, subShare: cost ? u.subCost / cost : 0,
+      span: (u.last > u.first) ? u.last - u.first : 0 };
+  }).sort((a, b) => b.cost - a.cost).slice(0, TOP_UNITS);
+}
+
+function detail(cur, tasks, all) {
   const topSubagents = cur.sessions.filter(s => s.isSub).slice(0, TOP_SUBAGENTS).map(s => ({
     sid: s.sid, parent: s.parent, project: s.project, task: tasks.get(sessionKey(s)) || null,
     model: s.model, turns: s.msgs, peakCtx: s.ctxMax, cost: s.cost,
   }));
-  return { topSubagents };
+  return { topSubagents, units: workUnits(cur, all) };
 }
 
 const DETAIL_SECTIONS = [
+  // Work units: parent + subagent rollup. Columns: 2+8+2+7+2+6+2+3+2+5+2+5+2+5+2+proj.
+  d => d.units.length ? [
+    `TOP ${TOP_UNITS} WORK UNITS (this window, parent + subagents)`,
+    `  ${'sid'.padEnd(8)}  ${'cost'.padStart(7)}  ${'sub%'.padStart(6)}  ${'#ag'.padStart(3)}  ` +
+      `${'turns'.padStart(5)}  ${'peak'.padStart(5)}  ${'span'.padStart(5)}  project`,
+    ...d.units.map(u =>
+      `  ${String(u.key).slice(0, 8).padEnd(8)}  ${money(u.cost).padStart(7)}  ${pct(u.subShare).padStart(6)}  ` +
+      `${String(u.agents).padStart(3)}  ${String(u.turns).padStart(5)}  ${k(u.peakCtx).padStart(5)}  ` +
+      `${(u.span > 0 ? (u.span / DAY).toFixed(1) + 'd' : '<1d').padStart(5)}  ${fit(u.project, 40)}`),
+  ] : ['TOP WORK UNITS  none in this window'],
   // Top subagents by cost. Columns: 2+7+2+5+2+5+2+10+2+8+2+70 = 117 chars max.
   d => d.topSubagents.length ? [
     `TOP ${TOP_SUBAGENTS} SUBAGENTS (this window, by cost)`,
@@ -536,7 +587,7 @@ async function main() {
   const secFl = securityFlags(cfg);
 
   const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: SCOPE_PROJECT };
-  const det = DETAIL ? detail(cur, tasks) : null;
+  const det = DETAIL ? detail(cur, tasks, all) : null;
 
   if (JSON_OUT) {
     const trim = s => ({ ...s, sessions: s.sessions.slice(0, TOP) });

@@ -113,3 +113,59 @@ test('same agent id under two parents keeps each own task text', () => {
   const byParent = Object.fromEntries(audit(dir).detail.topSubagents.map(a => [a.parent, a.task]));
   assert.deepEqual(byParent, { 'parent-aaa': 'first run', 'parent-bbb': 'second run' });
 });
+
+test('WORK UNITS: parent + 2 subagents roll up into one unit, cost = sum, main/sub split correct', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': turns(4, 'main', { usage: { input_tokens: 1000, output_tokens: 0 } }),
+    [SUB + '.jsonl']: turns(3, 'sub-a', { usage: { input_tokens: 1000, output_tokens: 0 } }),
+    [SUB + '.meta.json']: { description: 'first agent' },
+    'projects/p/3ac91e04-uuid/subagents/agent-second.jsonl':
+      turns(2, 'sub-b', { usage: { input_tokens: 1000, output_tokens: 0 } }),
+    'projects/p/3ac91e04-uuid/subagents/agent-second.meta.json': { description: 'second agent' },
+  });
+  const { units } = audit(dir).detail;
+  assert.equal(units.length, 1);
+  const [u] = units;
+  assert.equal(u.agents, 2);
+  assert.equal(u.turns, 4 + 3 + 2);
+  assert.ok(Math.abs(u.cost - (u.mainCost + u.subCost)) < 1e-9, 'cost = mainCost + subCost');
+  assert.ok(Math.abs(u.subShare - u.subCost / u.cost) < 1e-9, 'subShare = subCost / cost');
+  assert.ok(u.subShare > 0 && u.subShare < 1, `expect a real mixed split, got ${u.subShare}`);
+});
+
+test('WORK UNITS: session with no subagents -> unit with sub 0%', () => {
+  const dir = tmpClaudeDir({ 'projects/p/solo-sess.jsonl': turns(5, 'solo') });
+  const { units } = audit(dir).detail;
+  assert.equal(units.length, 1);
+  assert.equal(units[0].agents, 0);
+  assert.equal(units[0].subShare, 0);
+  assert.equal(units[0].subCost, 0);
+});
+
+test('WORK UNITS: text report shows a WORK UNITS section, sorted by cost desc, lines <= 120 chars', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': turns(4, 'main'),
+    [SUB + '.jsonl']: turns(3, 'sub-a'),
+    [SUB + '.meta.json']: { description: 'first agent' },
+    'projects/p/solo-sess.jsonl': turns(1, 'solo', { usage: { input_tokens: 10, output_tokens: 0 } }),
+  });
+  const detail = detailLines(auditText(dir));
+  const header = detail.find(l => l.includes('WORK UNIT'));
+  assert.ok(header, `expected a WORK UNITS header, got:\n${detail.join('\n')}`);
+  for (const l of detail) assert.ok([...l].length <= 120, `line too long (${[...l].length}): ${l}`);
+  const rows = detail.filter(l => l.includes('3ac91e04') || l.includes('solo-sess'));
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].includes('3ac91e04'), 'bigger unit (with subagent) sorts first');
+});
+
+test('WORK UNITS: --json includes units at top level of detail; --no-detail omits it', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': turns(4, 'main'),
+    [SUB + '.jsonl']: turns(3, 'sub-a'),
+    [SUB + '.meta.json']: { description: 'first agent' },
+  });
+  const full = audit(dir);
+  assert.ok(Array.isArray(full.detail.units));
+  const compact = audit(dir, '--no-detail');
+  assert.equal(compact.detail, undefined);
+});

@@ -203,6 +203,17 @@ Printed by default **below** the summary (after SECURITY); `--no-detail` turns i
 Same data under `detail` in `--json`. Fixed-width, every line ≤ 120 chars, no blank lines
 between sections (the whole block has a line budget: ≤ 30, later ≤ 40 lines). Sections, in order:
 
+- **TOP 10 WORK UNITS** (this window, parent + subagents): each main (non-subagent) session
+  rolled up with the subagents it spawned (`sub.parent === main.sid`), sorted by unit cost desc.
+  Columns: sid (main session id, 8 chars — or the parent id for an orphan unit, see below), cost
+  (main + subs), sub % (`subCost / cost`), #ag (subagent count), turns (total msgs across every
+  session in the unit — main + all its subagents), peak (largest single context hit by any
+  session in the unit), span (full-history first-seen → last-seen across every session in the
+  unit, not clipped to the window — same convention as the per-session span in TOP SESSIONS),
+  project. A main session with no subagents still forms its own unit (sub 0%). A subagent whose
+  parent main session has no priced turns in this window still rolls up under its parent id as
+  an orphan unit (mainCost 0). `--json`: `detail.units[]` =
+  `{ key, project, mainCost, subCost, agents, turns, peakCtx, span, cost, subShare }`.
 - **TOP 10 SUBAGENTS** (this window, by cost): cost, turns (deduped), peak ctx, model (the
   model string that cost the session most, `claude-` and date suffix stripped), parent session
   id (8 chars), task (≤ 70 chars, whitespace collapsed, cut with `…`). `--json`:
