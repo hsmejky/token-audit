@@ -366,16 +366,27 @@ test('SUBAGENT DISTRIBUTION: text report shows turns and peak-ctx lines, <= 120 
   });
 });
 
-test('DETAIL block stays <= 30 lines with full sections: 10 work units, 10 subagents, distribution',
-  () => {
-    const files = {};
-    for (let i = 1; i <= 10; i++) {
-      const proj = `projects/p${i}`;
-      files[`${proj}/main-${i}.jsonl`] = turns(5, `m${i}`);
-      const base = `${proj}/main-${i}/subagents/agent-${i}`;
-      files[base + '.jsonl'] = turns(i, `s${i}`, { model: i % 2 ? 'claude-opus-5-5' : 'claude-sonnet-4-6' });
-      files[base + '.meta.json'] = { description: `task ${i}` };
-    }
-    const detail = detailLines(auditText(tmpClaudeDir(files)));
-    assert.ok(detail.length <= 30, `DETAIL block has ${detail.length} lines, want <= 30:\n${detail.join('\n')}`);
-  });
+// Slice 11 raised the budget from 30 to 40 (design.md: "With Q9 the DETAIL
+// block is ~40 lines") — every section at full size, incl. 6 activity rows.
+test('DETAIL block stays <= 40 lines, <= 120 chars, with full sections: 10 units, 10 subagents, ' +
+  'distribution, 6 activity rows', () => {
+  const tool = (id, name, input) => ({ type: 'assistant', timestamp: '2026-09-01T10:00:00.000Z',
+    message: { id, model: 'claude-opus-5-5', role: 'assistant', usage: { input_tokens: 1000, output_tokens: 0 },
+      content: [{ type: 'tool_use', id: id + '-t', name, input }] } });
+  const calls = [['WebFetch', {}], ['Agent', {}], ['Edit', {}], ['Read', {}], ['Monitor', {}],
+    ['Bash', { command: 'git log' }], ['Bash', { command: 'pnpm test' }], ['WebSearch', {}]];
+  const files = {};
+  for (let i = 1; i <= 12; i++) {
+    const proj = `projects/p${i}`;
+    files[`${proj}/main-${i}.jsonl`] = [...turns(5, `m${i}`),
+      ...calls.map(([n, inp], c) => tool(`t${i}-${c}`, n, inp))];
+    const base = `${proj}/main-${i}/subagents/agent-${i}`;
+    files[base + '.jsonl'] = turns(i, `s${i}`, { model: i % 2 ? 'claude-opus-5-5' : 'claude-sonnet-4-6' });
+    files[base + '.meta.json'] = { description: `task ${i} `.repeat(20) };
+  }
+  const detail = detailLines(auditText(tmpClaudeDir(files)));
+  assert.ok(detail.some(l => l.startsWith('COST BY ACTIVITY')), 'activity section present');
+  assert.equal(detail.length, 36, `DETAIL block:\n${detail.join('\n')}`);
+  assert.ok(detail.length <= 40, `DETAIL block has ${detail.length} lines, want <= 40`);
+  for (const l of detail) assert.ok([...l].length <= 120, `line too long (${[...l].length}): ${l}`);
+});

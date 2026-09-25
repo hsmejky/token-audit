@@ -237,7 +237,8 @@ Anchor for trend questions. 283 sessions, 63 910 transcript lines, 198 MB.
 
 Printed by default **below** the summary (after SECURITY); `--no-detail` turns it off.
 Same data under `detail` in `--json`. Fixed-width, every line ≤ 120 chars, no blank lines
-between sections (the whole block has a line budget: ≤ 30, later ≤ 40 lines). Sections, in order:
+between sections (the whole block has a line budget: ≤ 40 lines; 36 when every section is
+full). Sections, in order:
 
 - **TOP 10 WORK UNITS** (this window, parent + subagents): each main (non-subagent) session
   rolled up with the subagents it spawned (`sub.parent === main.sid`), sorted by unit cost desc.
@@ -263,6 +264,78 @@ between sections (the whole block has a line budget: ≤ 30, later ≤ 40 lines)
   `{ count, turns: { median, p90, max }, peakCtx: { median, p90, max } }`. Same
   `sorted[floor(q*n)]` quantile as the summary's SESSIONS median/p90, so both read the same way;
   `q=1` for max.
+- **COST BY ACTIVITY** (this window, top 6 by cost): what the deduped turns were spent on
+  (design.md Q9). Columns: category, turns, avg ctx, cost, share of window spend. Categories
+  with no turns get no row; no turns at all prints one "none in this window" line. `--json`:
+  `detail.activity[]` = `{ category, turns, cost, avgCtx, share }` for **every** category
+  (zeros included, sorted by cost desc) — the full breakdown, not just the top 6. Rules below.
+
+### Cost by activity — categories
+
+**One table** in the script, `ACTIVITY_RULES` (regex → category), **first match wins**, so
+table order is priority. Adding a category = one entry. Each regex runs over the call's
+*subject*: `<tool name> <key>`, where key = the normalized command (below) for `Bash` /
+`PowerShell`, and `input.file_path` for other tools. Shell words are matched only at the start
+of a command segment (after `&&`, `||`, `|`, `;`, `do`, `then`, `(`), so `cat foo.test.ts`
+is a read, not a test run. Priority order and what each catches:
+
+| # | category | tool / command |
+|---|---|---|
+| 1 | agent spawn | `Agent`, `Task`, `SendMessage` |
+| 2 | web | `WebFetch`, `WebSearch` |
+| 3 | screenshot/image | `Read` of a .png/.jpg/.gif/.webp/.bmp; any tool named `*screenshot*` (MCP); a `screenshot*.mjs/js/ts/py/sh` script; `.screenshot(` |
+| 4 | wait/poll | `Monitor`, `TaskOutput`, `BashOutput`; `sleep`, `Start-Sleep`, `gh pr checks`, `gh run watch/view`; any `check-runs` / `actions/runs` URL |
+| 5 | github | `api.github.com`, `gh …` |
+| 6 | test/lint/build | `pnpm/npm/yarn/npx/bun [run/exec] test/lint/build/typecheck/…`, `vitest`, `jest`, `pytest`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make` |
+| 7 | git | `git …` |
+| 8 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
+| 9 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
+| – | other | no rule matched (python/node scripts, `ToolSearch`, `Skill`, `AskUserQuestion`, …) |
+
+Decisions not fixed by design.md (judgment calls):
+
+- **Status checks count as wait/poll, not GitHub.** design.md lists "repeated status checks"
+  under wait/poll; a single call can't know it is repeated, so every `check-runs` /
+  `actions/runs` / `gh pr checks` / `gh run watch|view` call is wait/poll. `POLLING` (Slice 12)
+  is the repeat detector.
+- **Compound commands take the highest-priority category**, not a split: `pnpm test && git
+  commit` is one call → test/lint/build. Splitting is per *tool call*, not per shell segment.
+- **Turn with no `tool_use` → `other`.** A text-only or thinking-only turn (final answer,
+  plan, question to the user) has no tool to attribute it to. `other` keeps totals whole
+  (turns and cost sum to the window's totals); a separate "text" category was not in the Q9
+  list. On demo-proj (2026-09-25) ≈ 8 % of turns had no tool call.
+- **Split = per call, evenly.** A turn with n tool calls gives 1/n of its cost, 1/n of a turn
+  and 1/n of its context weight to each call's category (k calls in one category → k/n). So
+  `turns` can be fractional in `--json` (shown rounded in text), `avgCtx` is
+  `Σ(w·ctx) / Σw`, and turns, cost and share each sum to the window totals.
+- **Tool calls of a turn = union over its JSONL lines** (one line per content part, all
+  sharing `message.id`); a `tool_use.id` seen twice counts once.
+
+### Cost by activity — command key
+
+`commandKey(command)` (exported) turns a `Bash` / `PowerShell` command into a key so the same
+command against a different PR number, commit, path or cwd groups together. `POLLING`
+(Slice 12) counts identical keys per session; `BOILERPLATE` (Slice 13) takes a prefix of it.
+Steps, in order:
+
+1. Heredoc bodies dropped: the line with `<<TAG` / `<<'TAG'` / `<<-TAG` stays, the body
+   through the closing `TAG` line goes (`<<<` here-strings are left alone). Line
+   continuations (`\` + newline) become a space.
+2. One leading `cd <dir> &&` / `cd <dir>;` / `cd <dir>` + newline removed (also `Set-Location`).
+3. Leading `NAME=value` env prefixes removed (`PYTHONIOENCODING=utf-8 python …` → `python …`).
+   A value containing `$(` or `(` is not a prefix, so `TOKEN=$(… | git credential fill); curl …`
+   keeps its assignment — that is the BOILERPLATE signal.
+4. Quoted paths → `<path>`: quoted text starting with `/`, `\`, `~`, `./`, `../` or a drive
+   (`C:\`, `C:/`), or made only of path characters with at least one separator
+   (`"docs/plan.md"`). Other quoted text (grep patterns, printf bodies, sed scripts) stays.
+5. UUIDs and hex runs of ≥ 7 chars containing a digit (commit SHAs) → `<id>`; then every
+   remaining digit run → `N`.
+6. Newlines → ` ; `; separators spelled canonically as ` && `, ` || `, ` | `, ` ; `;
+   whitespace collapsed; leading/trailing `;` trimmed.
+
+Example: `cd /c/r && curl -s https://api.github.com/repos/o/r/pulls/123/check-runs` and
+`cd "C:\r2" && curl -s …/pulls/456/check-runs` → both
+`curl -s https://api.github.com/repos/o/r/pulls/N/check-runs`.
 
 ### Subagent distribution — population
 

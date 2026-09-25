@@ -109,6 +109,111 @@ function rateFor(model) {
   return null;
 }
 
+// --------------------------------------------------------------- activity
+// Bash / PowerShell command → normalized key, so the same command run against
+// a different PR number, commit, path or cwd groups together (design.md Q9).
+// The key is the unit POLLING counts per session and BOILERPLATE takes a
+// prefix of; segment separators are canonical (` && `, ` || `, ` | `, ` ; `)
+// so a prefix is a plain string split. Steps and reasons: REFERENCE
+// "Cost by activity — command key".
+const isPathText = t => /^(?:[A-Za-z]:[\\/]|[\\/~]|\.\.?[\\/])/.test(t) || /^[\w.-]+(?:[\\/][\w.-]+)+$/.test(t);
+function commandKey(command) {
+  let s = dropHeredocBodies(String(command || '')).replace(/\\\r?\n/g, ' ');
+  s = s.replace(/^\s*(?:cd|Set-Location)\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;|\n)\s*/, '');
+  // `NAME=value cmd` env prefixes. A value with `$(`/`(` is not matched, so a
+  // standalone `TOKEN=$(… | git credential fill)` assignment stays in the key.
+  s = s.replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$]*)\s+)+(?=[^\s;&|])/, '');
+  // Quoted paths: absolute / home / dot-relative, or a bare `dir/file` of
+  // path characters only. Other quoted text (grep patterns, printf bodies,
+  // sed scripts) is kept — it is what tells two commands apart.
+  s = s.replace(/"([^"]*)"|'([^']*)'/g, (m, dq, sq) => (isPathText(dq ?? sq) ? '<path>' : m));
+  s = s.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>');
+  s = s.replace(/\b[0-9a-f]{7,}\b/gi, m => (/\d/.test(m) ? '<id>' : m)); // commit SHAs, hex ids
+  s = s.replace(/\d+/g, 'N');
+  // Newline = command separator; then one canonical spelling per separator.
+  s = s.replace(/\s*\r?\n\s*/g, ' ; ').replace(/\s*(&&|\|\||\||;)\s*/g, ' $1 ');
+  s = s.replace(/(?: ; )+/g, ' ; ').replace(/\s+/g, ' ').replace(/^[\s;]+|[\s;]+$/g, '');
+  return s;
+}
+// `<<TAG` / `<<'TAG'` / `<<-TAG`: keep the line that opens the heredoc, drop
+// the body through the closing TAG line (a script body is not the command).
+function dropHeredocBodies(s) {
+  const out = [];
+  let tag = null;
+  for (const line of s.split(/\r?\n/)) {
+    if (tag) { if (line.trim() === tag) tag = null; continue; }
+    out.push(line);
+    const m = /(?<!<)<<-?\s*(['"]?)([\w-]+)\1/.exec(line);
+    if (m) tag = m[2];
+  }
+  return out.join('\n');
+}
+
+// Tool call → activity category (design.md Q9). ONE table, first match wins,
+// so order is priority: a compound `pnpm test && git commit` is test, a
+// `curl …/check-runs` is wait/poll before it is GitHub. Adding a category =
+// one line. Each rule's regex runs over the call's subject: `<Tool> <key>`,
+// key = commandKey() for Bash/PowerShell, file_path for other tools (so a
+// Read of a .png can count as image). `CMD` anchors a word at the start of a
+// shell command segment (after the tool name, a separator, `do`/`then`, `(`),
+// so `cat foo.test.ts` is not a test run. No match → ACTIVITY_OTHER.
+const CMD = String.raw`(?:^(?:Bash|PowerShell) |(?:&&|\|\||[|;]|\bdo|\bthen) |\()`;
+// Word lists the rules share (regex alternations).
+const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`;
+const RUNNERS = String.raw`(?:pnpm|npm|yarn|npx|bun)(?: run| exec)? ` +
+  String.raw`(?:test|lint|build|typecheck|vitest|jest|eslint|prettier|tsc|playwright test)`;
+const CHECKERS = String.raw`vitest|jest|pytest|eslint|prettier|tsc|playwright test|node --test|make`;
+const READERS = String.raw`cat|sed -n|grep|rg|head|tail|ls|find|wc|awk|Get-Content`;
+const IMAGE = String.raw`^Read .*\.(?:png|jpe?g|gif|webp|bmp)$`;
+const rx = (strings, ...vals) => new RegExp(String.raw(strings, ...vals), 'i');
+const ACTIVITY_RULES = [
+  [rx`^(?:Agent|Task|SendMessage) `, 'agent spawn'],
+  [rx`^(?:WebFetch|WebSearch) `, 'web'],
+  [rx`${IMAGE}|^\S*screenshot\S* |screenshot[\w.-]*\.(?:m?js|ts|py|sh)\b|\.screenshot\(`, 'screenshot/image'],
+  [rx`^(?:Monitor|TaskOutput|BashOutput) |${CMD}(?:${POLLERS})\b|check-runs|actions/runs`, 'wait/poll'],
+  [rx`api\.github\.com|${CMD}gh `, 'github'],
+  [rx`${CMD}(?:${RUNNERS}|${CHECKERS})\b`, 'test/lint/build'],
+  [rx`${CMD}git\b`, 'git'],
+  [rx`^(?:Edit|Write|MultiEdit|NotebookEdit) |${CMD}(?:sed -i|cat >|tee )`, 'edit'],
+  [rx`^(?:Read|Grep|Glob) |${CMD}(?:${READERS})\b`, 'read'],
+];
+const ACTIVITY_OTHER = 'other';
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+// One tool_use content part → { id, tool, key } as stored on a turn.
+function toolCall(part) {
+  const input = part.input || {};
+  const key = SHELL_TOOLS.has(part.name) ? commandKey(input.command) : String(input.file_path || '');
+  return { id: part.id, tool: String(part.name), key };
+}
+function categorize(call) {
+  const subject = `${call.tool} ${call.key}`;
+  const rule = ACTIVITY_RULES.find(([re]) => re.test(subject));
+  return rule ? rule[1] : ACTIVITY_OTHER;
+}
+// Public form of the above: a tool_use's name + input → category.
+const activityCategory = (name, input) => categorize(toolCall({ name, input }));
+
+// Cost by activity over deduped turns. A turn's cost, turn count and context
+// are split evenly over its tool calls (k of n calls in one category → k/n of
+// the turn), so turns and cost both sum to the window totals and shares sum
+// to 100 %. A turn with no tool_use (plain text / thinking answer) → other.
+// Every category is listed (zeros included), sorted by cost desc.
+function activity(rows) {
+  const cats = new Map([...ACTIVITY_RULES.map(([, c]) => c), ACTIVITY_OTHER]
+    .map(c => [c, { category: c, turns: 0, ctx: 0, cost: 0 }]));
+  let total = 0;
+  for (const r of rows) {
+    total += r.cost;
+    const hit = r.calls.length ? r.calls.map(categorize) : [ACTIVITY_OTHER];
+    for (const c of hit) {
+      const e = cats.get(c);
+      e.turns += 1 / hit.length; e.ctx += r.ctx / hit.length; e.cost += r.cost / hit.length;
+    }
+  }
+  return [...cats.values()].sort((a, b) => b.cost - a.cost).map(({ ctx, ...e }) =>
+    ({ ...e, avgCtx: e.turns ? ctx / e.turns : 0, share: total ? e.cost / total : 0 }));
+}
+
 // ---------------------------------------------------------------- collect
 function walk(dir, out = []) {
   let entries;
@@ -204,7 +309,8 @@ async function collect() {
       const inp = u.input_tokens || 0;
 
       const cost = (inp * p[0] + w5 * p[1] + w1h * p[2] + read * p[3] + out * p[4]) / 1e6;
-      const row = { ts, sid, project, isSub, parent, family, model: modelName, cost, ctx: read + ccTotal, out };
+      const row = { ts, sid, project, isSub, parent, family, model: modelName, cost, ctx: read + ccTotal, out,
+                    calls: [] };
       const id = j.message.id;
       const seen = id && byId.get(id);
       if (!seen) {
@@ -212,6 +318,15 @@ async function collect() {
         rows.push(row);
       } else if (out > seen.out) {
         Object.assign(seen, { family, model: modelName, cost, ctx: row.ctx, out });
+      }
+      // Each line of a turn carries one content part; the turn's tool calls
+      // are the union over its lines (a repeated tool_use id counts once).
+      const turnRow = seen || row;
+      const parts = Array.isArray(j.message.content) ? j.message.content : [];
+      for (const part of parts) {
+        if (!part || part.type !== 'tool_use') continue;
+        if (part.id && turnRow.calls.some(c => c.id === part.id)) continue;
+        turnRow.calls.push(toolCall(part));
       }
     }
     if (isSub) tasks.set(sessionKey({ isSub, parent, sid }), metaTask || firstPrompt || null);
@@ -490,6 +605,7 @@ function fit(text, n) {
 const TOP_SUBAGENTS = 10;
 const TASK_WIDTH = 70;
 const TOP_UNITS = 10;
+const TOP_ACTIVITIES = 6;
 
 // A "work unit" = one main (non-sub) session rolled up with the subagents it
 // spawned (sub.parent === main.sid), per design.md Q3. Keyed by main sid so a
@@ -557,12 +673,14 @@ function subagentDistribution(cur) {
   };
 }
 
-function detail(cur, tasks, all) {
+// curRows = this window's deduped turns (the rows `cur` was summarized from).
+function detail(cur, tasks, all, curRows) {
   const topSubagents = cur.sessions.filter(s => s.isSub).slice(0, TOP_SUBAGENTS).map(s => ({
     sid: s.sid, parent: s.parent, project: s.project, task: tasks.get(sessionKey(s)) || null,
     model: s.model, turns: s.msgs, peakCtx: s.ctxMax, cost: s.cost,
   }));
-  return { topSubagents, units: workUnits(cur, all), distribution: subagentDistribution(cur) };
+  return { topSubagents, units: workUnits(cur, all), distribution: subagentDistribution(cur),
+    activity: activity(curRows) };
 }
 
 const DETAIL_SECTIONS = [
@@ -596,6 +714,19 @@ const DETAIL_SECTIONS = [
     `  peak ctx  median ${k(d.distribution.peakCtx.median).padStart(5)}  ` +
       `p90 ${k(d.distribution.peakCtx.p90).padStart(5)}  max ${k(d.distribution.peakCtx.max).padStart(5)}`,
   ] : ['SUBAGENT DISTRIBUTION  none in this window'],
+  // Cost by activity, top TOP_ACTIVITIES by cost (full list in --json). Turns
+  // are fractional after the per-call split; shown rounded.
+  // Columns: 2+16+2+6+2+7+2+7+2+6 = 52 chars.
+  d => {
+    const top = d.activity.filter(a => a.turns > 0).slice(0, TOP_ACTIVITIES);
+    return top.length ? [
+      `COST BY ACTIVITY (this window, top ${TOP_ACTIVITIES}; a turn's cost split evenly over its tool calls)`,
+      `  ${'category'.padEnd(16)}  ${'turns'.padStart(6)}  ${'avg ctx'.padStart(7)}  ${'cost'.padStart(7)}  ` +
+        `${'share'.padStart(6)}`,
+      ...top.map(a => `  ${a.category.padEnd(16)}  ${String(Math.round(a.turns)).padStart(6)}  ` +
+        `${k(a.avgCtx).padStart(7)}  ${money(a.cost).padStart(7)}  ${pct(a.share).padStart(6)}`),
+    ] : ['COST BY ACTIVITY  none in this window'];
+  },
 ];
 
 function renderDetail(d) {
@@ -621,7 +752,8 @@ async function main() {
   const now = Date.now();
   const curFrom = now - DAYS * DAY;
   const prevFrom = now - 2 * DAYS * DAY;
-  const cur = summarize(rows.filter(r => r.ts >= curFrom));
+  const curRows = rows.filter(r => r.ts >= curFrom);
+  const cur = summarize(curRows);
   const prev = summarize(rows.filter(r => r.ts >= prevFrom && r.ts < curFrom));
   const all = summarize(rows);
   // Windowed the same as SPEND (cur), not all-time — otherwise UNPRICED prints
@@ -637,7 +769,7 @@ async function main() {
   const secFl = securityFlags(cfg);
 
   const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: SCOPE_PROJECT };
-  const det = DETAIL ? detail(cur, tasks, all) : null;
+  const det = DETAIL ? detail(cur, tasks, all, curRows) : null;
 
   if (JSON_OUT) {
     const trim = s => ({ ...s, sessions: s.sessions.slice(0, TOP) });
@@ -718,4 +850,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { projectFolder };
+module.exports = { projectFolder, commandKey, activityCategory };
