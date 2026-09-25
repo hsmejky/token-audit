@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { audit, auditCwd, auditRaw, tmpClaudeDir, tmpDir, turn } = require('./harness');
+const { audit, auditText, auditCwd, auditRaw, tmpClaudeDir, tmpDir, turn } = require('./harness');
 // Printed project names are identity-redacted (Slice 29): a tmp cwd under the real home
 // shows as its redactPaths() form, so compare against that.
 const { projectFolder, redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
@@ -37,6 +37,26 @@ test('projectFolder maps underscore, dot, and space to dash (not just \\ / :)', 
   const input = WIN ? 'C:\\Users\\jdoe\\my_proj.v2 test' : '/Users/jdoe/my_proj.v2 test';
   const expected = WIN ? 'C--Users-jdoe-my-proj-v2-test' : '-Users-jdoe-my-proj-v2-test';
   assert.equal(projectFolder(input), expected);
+});
+
+// Slice 20 review: real project folder names can run well past the header's
+// and TOP SESSIONS's own budget (~38 / ~47 chars) before hitting the 120-char
+// line cap — both must fitMiddle() the project name rather than overrun it.
+test('CONFIG-adjacent header and TOP SESSIONS line both stay <=120 chars for a long project path', () => {
+  const longPath = WIN ? 'C:\\Users\\jdoe\\' + 'p'.repeat(160) : '/Users/jdoe/' + 'p'.repeat(160);
+  const mapped = path.resolve(longPath).replace(/[^a-zA-Z0-9]/g, '-');
+  const dir = tmpClaudeDir({ [`projects/${mapped}/s1.jsonl`]: turn({ id: 'a1' }) });
+
+  const out = auditText(dir, '--project', longPath, '--days', '36500');
+  const lines = out.split('\n');
+  const header = lines.find(l => l.startsWith('TOKEN AUDIT'));
+  assert.ok(header, `expected a TOKEN AUDIT header line, got:\n${out}`);
+  assert.ok([...header].length <= 120, `header exceeds 120 chars (${[...header].length}): ${header}`);
+
+  const sessionLine = lines.find(l => l.includes('msgs=') && l.includes('avgCtx='));
+  assert.ok(sessionLine, `expected a TOP SESSIONS line, got:\n${out}`);
+  assert.ok([...sessionLine].length <= 120,
+    `TOP SESSIONS line exceeds 120 chars (${[...sessionLine].length}): ${sessionLine}`);
 });
 
 test('projectFolder resolves "." the same as an explicit absolute cwd path', () => {

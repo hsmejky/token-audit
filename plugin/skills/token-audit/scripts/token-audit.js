@@ -1384,7 +1384,17 @@ function wrapWords(text, width) {
 }
 // Prints one FLAGS/SECURITY row; wraps f.text (already redacted/fit upstream) instead
 // of letting it overrun 120 chars.
+// POLLING/BOILERPLATE text is a literal shell command, pre-fit to FLAG_TEXT_WIDTH by
+// fitMiddle()/fitPrefix() when built (see flags()) — it's guaranteed to already fit on
+// one line. Running it through wrapWords() anyway would risk splitting the command
+// across lines (breaking copy-paste) if that guarantee is ever violated, so these two
+// print unmodified whenever they're within budget; wrapWords() only kicks in as a
+// safety net if one somehow arrives too long, same as any other flag.
 function printFlagLine(f) {
+  if ((f.id === 'POLLING' || f.id === 'BOILERPLATE') && [...f.text].length <= FLAG_TEXT_WIDTH) {
+    console.log(`  ${f.id.padEnd(14)} ${f.text}`);
+    return;
+  }
   const lines = wrapWords(f.text, FLAG_TEXT_WIDTH);
   console.log(`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`);
   for (let i = 1; i < lines.length; i++) console.log(`${' '.repeat(17)}${lines[i]}`);
@@ -1528,9 +1538,17 @@ function renderDetail(d) {
 // redactPaths(), in text and --json alike (Slice 29). Grouping and keys ran on the
 // raw values; only the copies that get printed are rewritten.
 const shown = new Map();
+// Slice 20 review: an MCP server / plugin / modelSettings-key name can be
+// attacker- or author-controlled text (e.g. a stray key in a cloned repo's
+// .mcp.json or settings.json), not this machine's own data. A raw control
+// char (newline, etc.) in it must never reach console.log — it could inject
+// a fake extra line into the printed report (e.g. forging a bogus SECURITY
+// block). Collapse to a single space here, once, for every show()n string;
+// callers that also need a length cap still run the result through fit()/
+// fitMiddle() at print time.
 const show = v => {
   if (typeof v !== 'string') return v;
-  if (!shown.has(v)) shown.set(v, redactPaths(v));
+  if (!shown.has(v)) shown.set(v, redactPaths(v).replace(/[\x00-\x1f\x7f]+/g, ' '));
   return shown.get(v);
 };
 const showSessions = sum => ({ ...sum,
@@ -1588,8 +1606,16 @@ async function main() {
     return;
   }
 
-  console.log(`TOKEN AUDIT   scope ${scope.project || 'all projects'}   ` +
-    `window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`);
+  // Budget the project name against whatever's left of the 120-char line after the
+  // fixed prefix/suffix (window range width varies with DAYS's digit count), rather
+  // than a static guess that could itself run the line past 120 (Slice 20 review).
+  {
+    const prefix = 'TOKEN AUDIT   scope ';
+    const suffix = `   window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`;
+    const budget = Math.max(10, 120 - [...prefix].length - [...suffix].length);
+    const shownProject = scope.project ? fitMiddle(scope.project, budget) : 'all projects';
+    console.log(prefix + shownProject + suffix);
+  }
   console.log('');
   console.log(`SPEND        ${money(cur.cost)}   prev window ${money(prev.cost)}` +
     (prev.cost ? `  ${cur.cost >= prev.cost ? '+' : ''}${(100 * (cur.cost / prev.cost - 1)).toFixed(0)}%` : ''));
@@ -1618,9 +1644,13 @@ async function main() {
   console.log(`TOP ${TOP} SESSIONS (this window)`);
   for (const s of cur.sessions.slice(0, TOP)) {
     const sp = span(s) > 0 ? (span(s) / DAY).toFixed(1) + 'd' : '<1d';
-    console.log(`  ${s.sid.slice(0, 8)}  ${money(s.cost).padStart(7)}  ${pct(s.cost / cur.cost).padStart(6)}  ` +
+    // Same dynamic-budget approach as the header above: fit the project name into
+    // whatever's left of 120 chars after the rest of the line, not a static guess.
+    const prefix = `  ${s.sid.slice(0, 8)}  ${money(s.cost).padStart(7)}  ${pct(s.cost / cur.cost).padStart(6)}  ` +
       `msgs=${String(s.msgs).padStart(4)}  avgCtx=${k(s.ctx / s.msgs).padStart(5)}  ` +
-      `maxCtx=${k(s.ctxMax).padStart(5)}  span=${sp.padStart(5)}  ${s.isSub ? 'sub ' : ''}${s.project}`);
+      `maxCtx=${k(s.ctxMax).padStart(5)}  span=${sp.padStart(5)}  ${s.isSub ? 'sub ' : ''}`;
+    const budget = Math.max(10, 120 - [...prefix].length);
+    console.log(prefix + fitMiddle(s.project, budget));
   }
   console.log('');
 
@@ -1638,7 +1668,7 @@ async function main() {
   if (cfg.modelEffort.length) {
     console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}`);
     console.log('  effortLevel:' + (cfg.effortLevel ? ` default=${cfg.effortLevel}` : ''));
-    for (const m of cfg.modelEffort) console.log(`    ${m.model}=${m.effortLevel}`);
+    for (const m of cfg.modelEffort) console.log(`    ${fit(m.model, 60)}=${m.effortLevel}`);
   } else {
     console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}   ` +
       `effortLevel=${cfg.effortLevel ?? 'unset'}`);
@@ -1646,13 +1676,13 @@ async function main() {
   console.log(`  plugins=${cfg.pluginCount}   agent defs=${cfg.agentDefs}   skill defs=${cfg.skillDefs}   ` +
     `fixed prefix ≈${(cfg.prefixTokens / 1e3).toFixed(1)}k tok/request`);
   for (const p of cfg.plugins.filter(p => p.prefixTokens >= 200))
-    console.log(`    ${p.name.padEnd(40)} ${String(p.agents).padStart(3)} agents ` +
+    console.log(`    ${fit(p.name, 40).padEnd(40)} ${String(p.agents).padStart(3)} agents ` +
       `${String(p.skills).padStart(3)} skills  ≈${(p.prefixTokens / 1e3).toFixed(1)}k tok`);
   if (cfg.mcpServers.length) {
     console.log(`  mcp servers=${cfg.mcpServers.length}   ` +
       `est. prefix ≈${(cfg.mcpPrefixTokens / 1e3).toFixed(1)}k tok/request`);
     for (const s of cfg.mcpServers)
-      console.log(`    ${s.name.padEnd(30)} ${s.scope}`);
+      console.log(`    ${fit(s.name, 30).padEnd(30)} ${s.scope}`);
   }
   console.log('');
 
@@ -1674,4 +1704,6 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes };
+module.exports = {
+  projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, printFlagLine,
+};

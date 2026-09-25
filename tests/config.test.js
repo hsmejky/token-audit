@@ -25,11 +25,13 @@ test('modelSettings.<model>.effortLevel for 3 models: CONFIG prints each model\'
   ]);
 
   const out = auditText(dir);
-  assert.ok(out.includes('effortLevel:'), `expected a CONFIG effortLevel: line, got:\n${out}`);
-  assert.ok(out.includes('claude-opus-5=high'), `expected opus-5 level, got:\n${out}`);
-  assert.ok(out.includes('claude-opus-5-5=high'), `expected opus-5-5 level, got:\n${out}`);
-  assert.ok(out.includes('claude-fable-5-1=medium'), `expected fable-5-1 level, got:\n${out}`);
-  for (const line of out.split('\n')) {
+  const lines = out.split('\n');
+  const idx = lines.indexOf('  effortLevel:');
+  assert.ok(idx !== -1, `expected an exact "  effortLevel:" line (no root default), got:\n${out}`);
+  assert.equal(lines[idx + 1], '    claude-fable-5-1=medium');
+  assert.equal(lines[idx + 2], '    claude-opus-5=high');
+  assert.equal(lines[idx + 3], '    claude-opus-5-5=high');
+  for (const line of lines) {
     assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
   }
 });
@@ -89,13 +91,41 @@ test('root effortLevel + modelSettings entries: CONFIG prints default= alongside
   ]);
 
   const out = auditText(dir);
-  assert.ok(out.includes('default=low'), `expected default=low, got:\n${out}`);
-  assert.ok(out.includes('claude-opus-5=high'), `expected opus-5 level, got:\n${out}`);
-  assert.ok(out.includes('claude-opus-5-5=high'), `expected opus-5-5 level, got:\n${out}`);
-  assert.ok(out.includes('claude-fable-5-1=medium'), `expected fable-5-1 level, got:\n${out}`);
-  for (const line of out.split('\n')) {
+  const lines = out.split('\n');
+  const idx = lines.indexOf('  effortLevel: default=low');
+  assert.ok(idx !== -1, `expected an exact "  effortLevel: default=low" line, got:\n${out}`);
+  assert.equal(lines[idx + 1], '    claude-fable-5-1=medium');
+  assert.equal(lines[idx + 2], '    claude-opus-5=high');
+  assert.equal(lines[idx + 3], '    claude-opus-5-5=high');
+  for (const line of lines) {
     assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
   }
+});
+
+// Slice 20 review: a hostile/oversized modelSettings key (attacker-controlled
+// settings.json, or just a weird real model id) must not blow the 120-char
+// budget, and a newline in the key must not inject a fake extra CONFIG line.
+test('CONFIG: an oversized or control-char modelSettings key is fit and sanitized, never breaks the layout', () => {
+  const longKey = 'claude-' + 'x'.repeat(150);
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': {
+      modelSettings: {
+        [longKey]: { effortLevel: 'high' },
+        'claude-evil\nSECURITY (confidentiality, not cost)\n  none': { effortLevel: 'low' },
+      },
+    },
+  });
+
+  const out = auditText(dir);
+  const lines = out.split('\n');
+  for (const line of lines) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
+  // Real SECURITY header appears exactly once — a malicious key must not be able
+  // to forge a second one via an embedded newline.
+  assert.equal(lines.filter(l => l.startsWith('SECURITY (confidentiality, not cost)')).length, 1);
+  assert.ok(!out.includes('\n\n\n'), 'no unexpected blank-line injection from a control-char key');
 });
 
 // CONFIG must read settings.json from --claude-dir, never the real ~/.claude
