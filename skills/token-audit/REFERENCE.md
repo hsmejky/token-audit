@@ -648,13 +648,15 @@ Under `--all` (no single scoped project), only `user`-scope servers are listed �
 **Location decided at implementation time**: checked a real `~/.claude.json` —
 `mcpServers` lives there, at the top level and per-project, never in `settings.json`.
 Where the script reads that file from tracks how the Claude dir itself was resolved
-(Slice 23): under the default (`~/.claude`) or an explicit `--claude-dir DIR`, it reads
-the sibling `<claude-dir>.json` (`DIR.json`, matching real Claude Code's default
-`~/.claude` + `~/.claude.json` layout, and the convention fixtures already use — tests
-fixture `DIR.json` the same way they already fixture `settings.json` inside `DIR`).
-Under `CLAUDE_CONFIG_DIR`, it reads `<claude-dir>/.claude.json` (inside the dir) instead
-— that matches real Claude Code, which moves `.claude.json` inside the relocated dir
-rather than leaving it beside it.
+(Slice 23): under the default (`~/.claude`), it reads the sibling `<claude-dir>.json`
+(`DIR.json`, matching real Claude Code's default `~/.claude` + `~/.claude.json` layout,
+and the convention fixtures already use — tests fixture `DIR.json` the same way they
+already fixture `settings.json` inside `DIR`). Under `CLAUDE_CONFIG_DIR`, it reads
+`<claude-dir>/.claude.json` (inside the dir) instead — that matches real Claude Code,
+which moves `.claude.json` inside the relocated dir rather than leaving it beside it.
+Under an explicit `--claude-dir DIR`, it prefers `DIR/.claude.json` when that file
+exists (DIR may itself be a dir set up via `CLAUDE_CONFIG_DIR`, `.claude.json` living
+inside it) and only falls back to the sibling `DIR.json` when it doesn't.
 
 **Weight estimate**: MCP tool *definitions* (name, JSON-schema, description per tool)
 are fetched live over the MCP protocol when a session connects — they are not in any

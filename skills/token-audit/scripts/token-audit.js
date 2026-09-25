@@ -634,9 +634,16 @@ const MCP_SERVER_TOKENS = 800;
 // `~/.claude` by default, but MOVES it INSIDE the dir when CLAUDE_CONFIG_DIR
 // relocates ~/.claude (verified against a real CLAUDE_CONFIG_DIR install).
 // --claude-dir is this script's own test/scoping override, not a real Claude
-// Code flag, so it keeps the sibling convention its fixtures already use
-// (tests/harness.js tmpUserConfig) rather than the CLAUDE_CONFIG_DIR rule.
-const USER_CONFIG_PATH = claudeDirSource === 'env' ? path.join(CLAUDE, '.claude.json') : CLAUDE + '.json';
+// Code flag — but a dir pointed at by --claude-dir can itself be one set up
+// via CLAUDE_CONFIG_DIR (its .claude.json living inside it), so under the
+// flag we prefer the inside file when it actually exists and only fall back
+// to the sibling convention its fixtures otherwise use (tests/harness.js
+// tmpUserConfig) when it doesn't.
+const INSIDE_CONFIG_PATH = path.join(CLAUDE, '.claude.json');
+const USER_CONFIG_PATH =
+  claudeDirSource === 'env' || (claudeDirSource === 'flag' && fs.existsSync(INSIDE_CONFIG_PATH))
+    ? INSIDE_CONFIG_PATH
+    : CLAUDE + '.json';
 
 function mcpConfig(scopeDir) {
   const servers = [];

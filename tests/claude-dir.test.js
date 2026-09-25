@@ -65,11 +65,33 @@ test('CLAUDE_CONFIG_DIR set: MCP user-config is read from inside the dir, not be
   fs.writeFileSync(envDir + '.json', JSON.stringify({ mcpServers: { sibling: {} } }));
   fs.writeFileSync(path.join(envDir, '.claude.json'), JSON.stringify({ mcpServers: { inside: {} } }));
 
-  const out = auditEnv({ CLAUDE_CONFIG_DIR: envDir },
-    ['--all', '--days', '36500', '--json']);
-  const r = JSON.parse(out);
-  assert.deepEqual(r.config.mcpServers, [{ scope: 'user', name: 'inside' }],
-    `expected only the inside-the-dir server, got: ${out}`);
+  try {
+    const out = auditEnv({ CLAUDE_CONFIG_DIR: envDir },
+      ['--all', '--days', '36500', '--json']);
+    const r = JSON.parse(out);
+    assert.deepEqual(r.config.mcpServers, [{ scope: 'user', name: 'inside' }],
+      `expected only the inside-the-dir server, got: ${out}`);
+  } finally {
+    fs.rmSync(envDir + '.json');
+  }
+});
 
-  fs.rmSync(envDir + '.json');
+// --claude-dir is this script's own scoping override (not a real Claude Code
+// flag), but real installs that relocate ~/.claude via CLAUDE_CONFIG_DIR keep
+// .claude.json INSIDE that dir — so pointing --claude-dir at such a dir must
+// also read the inside file, not assume the sibling convention its fixtures
+// otherwise use (tests/harness.js tmpUserConfig).
+test('--claude-dir flag: MCP user-config is read from inside the dir when present there', () => {
+  const flagDir = tmpClaudeDir({ 'projects/p/s1.jsonl': turn({ id: 'flag-1' }) });
+  fs.writeFileSync(flagDir + '.json', JSON.stringify({ mcpServers: { sibling: {} } }));
+  fs.writeFileSync(path.join(flagDir, '.claude.json'), JSON.stringify({ mcpServers: { inside: {} } }));
+
+  try {
+    const out = auditEnv({}, ['--claude-dir', flagDir, '--all', '--days', '36500', '--json']);
+    const r = JSON.parse(out);
+    assert.deepEqual(r.config.mcpServers, [{ scope: 'user', name: 'inside' }],
+      `expected only the inside-the-dir server, got: ${out}`);
+  } finally {
+    fs.rmSync(flagDir + '.json');
+  }
 });
