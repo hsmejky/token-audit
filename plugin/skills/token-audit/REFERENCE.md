@@ -790,6 +790,23 @@ of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (dem
   `edit` 15.2% — `other` stays comfortably under 1%; the pipe fix moved a further slice
   of turns from `read` into `script run` (piped script re-runs), on top of the `other` →
   `script run`/`reply`/`harness` split above.
+  **Before/after on the exact same population** (re-review finding: the numbers above came
+  from two different points in time, not a controlled comparison). Ran the pre-`CMD_PIPE`-fix
+  script (commit `5561717`, immediately before the `CMD_PIPE` fix) against the *same*
+  `--all --days 3650` local history, seconds apart from the post-fix run: `other` 0.28% →
+  0.48%, `read` 34.2% → 29.3%, `script run` 11.3% → 16.0% (all other categories unchanged to
+  the cent — `git` $1417.86 → $1417.88, `screenshot/image` $64.65 both). So the `other`
+  0.28% → 0.48% move is **not** data growth (same live history, measured moments apart) —
+  it's turns that used to read as plain `read` under the old single-CMD marker (piped calls
+  after a wrapper word like `timeout`/`xargs`, now fixed above) that neither `READERS` nor
+  `SCRIPT_INTERP` matches once they correctly carry `CMD_PIPE`, so they fall to `other`
+  instead of `script run`; still comfortably under the ~1% target. `script run`'s 16.0%
+  above design/slice15-proposal.md:252's ~11.3% hand-estimate target for "all" the same way:
+  that estimate was computed before the `CMD_PIPE` fix existed (11.3% is what this same
+  before-fix run reproduces almost exactly), on the assumption that a piped-into-filter
+  script run (`python x.py | tail`) still counted as `read`. Post-fix it correctly counts as
+  `script run` — the user decision behind the `CMD_PIPE` fix itself — so 16.0% is expected,
+  not a regression.
 
 ### Cost by activity — command key
 
