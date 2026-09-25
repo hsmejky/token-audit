@@ -222,9 +222,20 @@ active, and counting those inflates `PLUGIN_BLOAT`.
 | `--top N` | 8 | sessions listed |
 | `--json` | off | full structured dump incl. per-week and per-plugin detail |
 | `--claude-dir DIR` | `~/.claude` | read transcripts + settings from DIR instead (tests use fixture dirs) |
+| `--project PATH` | cwd | scope to one project: PATH is mapped to its `projects/` folder name the same way Claude Code names it — path separators and the Windows drive colon each become `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). No path.resolve — the string is mapped literally, so a POSIX-style value stays correct even when the script itself runs on Windows. |
+| `--all` | off | scope to every project instead of just one (pre-Slice-6 behaviour) |
+
+**Default scope is the current working directory's project**, mapped the same way. `--project`
+overrides it; `--all` scans every project under `<claude-dir>/projects`. Only one project's
+directory is walked in project scope, which naturally includes that project's own subagent
+transcripts (`projects/<project>/<session>/subagents/agent-*.jsonl` all live under the same
+top-level project folder). The active scope is printed in the banner (`scope <folder>` or
+`scope all projects`) and in `--json` as `scope: { mode, project }`.
 
 Exit code 1 with a message when `<claude-dir>/projects` is missing or holds no priced
-messages.
+messages, when `--project` names a folder that doesn't exist under `<claude-dir>/projects`,
+or when `--project` is passed with no value (guards against `--project --json` silently
+taking `--json` as the path).
 
 A "message" / "msg" is one API response (one turn), deduplicated by `message.id`: the
 several transcript lines of one response count once, priced with the final (largest)

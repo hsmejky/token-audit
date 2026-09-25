@@ -19,10 +19,50 @@ const flagVal = (name, def) => Number(flagStr(name, def));
 const DAYS = flagVal('--days', 14);
 const TOP = flagVal('--top', 8);
 const JSON_OUT = argv.includes('--json');
+const ALL = argv.includes('--all');
+
+// `--project <path> --json` (or any other flag right after --project) must
+// not take that following flag as the path value — flagStr()/flagVal() would
+// happily do that. undefined = --project not passed; null = passed with no
+// (or a flag-shaped) value, which is an error; otherwise the path string.
+function projectArg() {
+  const i = argv.indexOf('--project');
+  if (i < 0) return undefined;
+  const v = argv[i + 1];
+  return (v === undefined || v.startsWith('--')) ? null : v;
+}
+const PROJECT_ARG = projectArg();
+if (PROJECT_ARG === null) {
+  console.error('--project requires a value (a project path)');
+  process.exit(1);
+}
 
 const HOME = process.env.USERPROFILE || process.env.HOME;
 const CLAUDE = path.resolve(flagStr('--claude-dir', path.join(HOME, '.claude')));
 const ROOT = path.join(CLAUDE, 'projects');
+
+// ------------------------------------------------------------------- scope
+// Claude Code names each project's transcript folder after the absolute
+// working directory it was launched from, with path separators (and the
+// Windows drive colon) each replaced by `-`:
+//   C:\Users\jdoe\demo-proj  ->  C--Users-jdoe-demo-proj  (colon AND the
+//                                 backslash after it each become their own
+//                                 `-`, hence the doubled dash)
+//   /Users/jdoe/demo-proj    ->  -Users-jdoe-demo-proj
+// Pure string replace, no path.resolve: resolving a POSIX-style --project
+// value through Node's path module on a Windows host (or vice versa) would
+// silently reinterpret it against the *current* OS's rules and produce the
+// wrong folder name, rather than the literal mapping Claude Code applies to
+// wherever the path came from.
+function projectFolder(p) {
+  return String(p).replace(/[\\/:]/g, '-');
+}
+
+// Default scope = cwd's project. --project <path> overrides it. --all scans
+// every project (pre-Slice-6 behaviour). SCOPE_PROJECT is the folder name to
+// filter to, or null when scanning everything.
+const SCOPE_PROJECT = ALL ? null : projectFolder(PROJECT_ARG !== undefined ? PROJECT_ARG : process.cwd());
+const SCOPE_ROOT = SCOPE_PROJECT ? path.join(ROOT, SCOPE_PROJECT) : ROOT;
 
 // ---------------------------------------------------------------- pricing
 // $/MTok: [input, cacheWrite5m, cacheWrite1h, cacheRead, output]
@@ -90,7 +130,7 @@ async function collect() {
   const rows = [];
   const byId = new Map();
   const unpriced = [];
-  for (const f of walk(ROOT)) {
+  for (const f of walk(SCOPE_ROOT)) {
     const dir = path.dirname(f);
     const isSub = path.basename(dir) === 'subagents';
     // main:     projects/<project>/<session>.jsonl              → dir = <project>
@@ -370,9 +410,14 @@ const k = n => (n / 1e3).toFixed(0) + 'k';
 const pct = n => (100 * n).toFixed(1) + '%';
 const date = ms => new Date(ms).toISOString().slice(0, 10);
 
-(async () => {
+async function main() {
   if (!fs.existsSync(ROOT)) {
     console.error('no transcripts at ' + ROOT);
+    process.exit(1);
+  }
+  if (SCOPE_PROJECT && !fs.existsSync(SCOPE_ROOT)) {
+    console.error(`no project '${SCOPE_PROJECT}' under ${ROOT}` +
+      (PROJECT_ARG !== undefined ? ` (--project ${PROJECT_ARG})` : ` (cwd ${process.cwd()})`));
     process.exit(1);
   }
   const { rows, unpriced: unprizedRows } = await collect();
@@ -399,15 +444,18 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
   const fl = flags(cur, prev, cfg, span);
   const secFl = securityFlags(cfg);
 
+  const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: SCOPE_PROJECT };
+
   if (JSON_OUT) {
     const trim = s => ({ ...s, sessions: s.sessions.slice(0, TOP) });
-    console.log(JSON.stringify({ windowDays: DAYS, cur: trim(cur), prev: trim(prev),
+    console.log(JSON.stringify({ windowDays: DAYS, scope, cur: trim(cur), prev: trim(prev),
       all: { cost: all.cost, msgs: all.msgs, sessions: all.sessions.length },
       weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced }, null, 2));
     return;
   }
 
-  console.log(`TOKEN AUDIT   window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`);
+  console.log(`TOKEN AUDIT   scope ${SCOPE_PROJECT ? SCOPE_PROJECT : 'all projects'}   ` +
+    `window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`);
   console.log('');
   console.log(`SPEND        ${money(cur.cost)}   prev window ${money(prev.cost)}` +
     (prev.cost ? `  ${cur.cost >= prev.cost ? '+' : ''}${(100 * (cur.cost / prev.cost - 1)).toFixed(0)}%` : ''));
@@ -468,4 +516,7 @@ const date = ms => new Date(ms).toISOString().slice(0, 10);
   } else {
     console.log('  none');
   }
-})();
+}
+
+if (require.main === module) main();
+module.exports = { projectFolder };

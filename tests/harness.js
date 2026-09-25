@@ -16,10 +16,23 @@ const fixture = name => path.join(__dirname, 'fixtures', name);
 
 // Window wide enough that every fixture row lands in `cur`, unless the
 // caller passes its own --days (e.g. to test window filtering).
+//
+// Scope: since Slice 6, default scope (no --project/--all) is the *current
+// working directory's* project — but these fixtures live under arbitrary
+// project folder names ("p", "C--proj-a", ...) that have nothing to do with
+// the test process's real cwd. Callers here almost never care about scoping,
+// so audit()/auditText() default to `--all` (the old, unscoped behaviour)
+// unless the caller explicitly passes --project or --all itself. Tests that
+// exercise scoping directly pass their own --project/--all, or use
+// auditCwd()/auditRaw() below for cases that need exact control.
+function defaultScope(args) {
+  return (args.includes('--project') || args.includes('--all')) ? [] : ['--all'];
+}
+
 function audit(claudeDir, ...args) {
   const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
   const out = execFileSync(process.execPath,
-    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, '--json', ...args],
+    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, ...defaultScope(args), '--json', ...args],
     { encoding: 'utf8' });
   return JSON.parse(out);
 }
@@ -29,8 +42,37 @@ function audit(claudeDir, ...args) {
 function auditText(claudeDir, ...args) {
   const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
   return execFileSync(process.execPath,
-    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, ...args],
+    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, ...defaultScope(args), ...args],
     { encoding: 'utf8' });
+}
+
+// Like audit(), but spawns the script with a chosen process cwd and adds no
+// implicit scope flags — for testing the true default (no --project/--all)
+// scope, which maps process.cwd() to a project folder.
+function auditCwd(claudeDir, cwd, ...args) {
+  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
+  const out = execFileSync(process.execPath,
+    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, '--json', ...args],
+    { encoding: 'utf8', cwd });
+  return JSON.parse(out);
+}
+
+// Full control over argv order (no --claude-dir even), for edge cases like
+// flag-parsing bugs where argument position matters. Returns stdout on
+// success; throws (with .status/.stderr) on a non-zero exit.
+function auditRaw(claudeDir, args) {
+  return execFileSync(process.execPath,
+    [SCRIPT, '--claude-dir', claudeDir, ...args],
+    { encoding: 'utf8' });
+}
+
+// Creates a real, empty directory for tests that need an actual filesystem
+// path to spawn the script with as cwd (see auditCwd). Auto-cleaned on exit,
+// same as tmpClaudeDir.
+function tmpDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'token-audit-cwd-'));
+  tmpDirs.push(dir);
+  return dir;
 }
 
 // files: { 'projects/p/s.jsonl': [lineObj, ...], 'settings.json': obj }
@@ -64,4 +106,4 @@ function turn({ id, model = 'claude-opus-5-5', ts = '2026-09-01T10:00:00.000Z',
 const turns = (n, prefix, opts = {}) =>
   Array.from({ length: n }, (_, i) => turn({ ...opts, id: `${prefix}-${i}` })).flat();
 
-module.exports = { audit, auditText, fixture, tmpClaudeDir, turn, turns };
+module.exports = { audit, auditText, auditCwd, auditRaw, fixture, tmpClaudeDir, tmpDir, turn, turns };
