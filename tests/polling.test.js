@@ -470,8 +470,8 @@ test('POLLING: value layer — home-folder name comes from the home path (no use
   assert.equal(out, 'echo <user>');
 });
 
-test('POLLING: value layer — a name part inside a longer word is left alone (January)', () => {
-  assert.equal(redactPaths('echo January', PETR), 'echo January');
+test('POLLING: value layer — a name part inside a longer word is left alone (Petrol)', () => {
+  assert.equal(redactPaths('echo Petrol', PETR), 'echo Petrol');
 });
 
 test('POLLING: value layer — parts shorter than 3 chars and generic account names are not redacted', () => {

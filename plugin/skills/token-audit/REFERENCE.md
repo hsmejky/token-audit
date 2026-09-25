@@ -367,7 +367,7 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   (`os.userInfo()`), the last segment of `os.homedir()` and git `user.name`, each whole and
   split on whitespace/`.`/`_`/`-` (home `C:\Users\Petr Svarc` → `Petr`, `Svarc`). A term
   counts only if it is ≥ 3 chars and not a generic account name (`user`, `admin`, `root`,
-  `runner`, …), and matches only as a whole word (`Petr` doesn't touch `January`), so short
+  `runner`, …), and matches only as a whole word (`Petr` doesn't touch `Petrol`), so short
   or common names don't over-redact. Accents are folded on both sides (NFD, combining marks
   dropped), so `Svarc` also redacts `Švarc` in NFC or NFD form and an accented git name
   redacts its plain spelling; letters without a decomposition (`ł`, `ø`) are not folded.
@@ -803,7 +803,7 @@ of second project spend, screenshots ≈ 2.6%. Measured with the finished script
   category, not just the image's own tokens. A second, narrower measure — the tokens a
   screenshot actually carries forward in context (image tokens × remaining turns in that
   session, at the session's cache-read price) — comes to ≈ 1.4% (the original hand estimate,
-  2.6%, was computed on non-deduped turns; 2.6 / 1.8, the dedupe factor, ≈ 1.4%, i.e. the
+  2.6%, was computed on non-deduped turns; 2.6 / 1.9, the dedupe factor, ≈ 1.4%, i.e. the
   gap there was the pre-Slice-2 dedupe bug, not a real difference). The conclusion from
   design.md Q6 stands either way: screenshots are a non-lever (≈ 1.4% actually carried in
   context); the table's 4.9% is turn cost that the verification step would spend regardless

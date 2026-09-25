@@ -943,7 +943,7 @@ const ABS_PATH = new RegExp(/(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?/.source 
 // Terms: the login name, the home folder's last segment and git `user.name`, each
 // whole and split into parts on whitespace/`.`/`_`/`-`. A term is used only when
 // ≥ ID_MIN_LEN chars and not a generic account name (ID_GENERIC), and matches only
-// as a whole word (not inside `January`), so short or common names don't over-redact.
+// as a whole word (not inside `Petrol`), so short or common names don't over-redact.
 // Accents are folded on both sides (NFD, combining marks dropped): `Svarc` also
 // redacts `Švarc` in NFC or NFD form, and an accented git name redacts its plain spelling.
 const ID_MIN_LEN = 3;
