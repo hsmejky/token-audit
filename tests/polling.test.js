@@ -125,6 +125,31 @@ test('POLLING: waits, status checks, log tails and other repeated commands do fi
   }
 });
 
+// Slice 15 HITL busy-polls, real data: `echo waiting-N`/`echo idle-check-N`, `tasklist`,
+// `Get-Process` — added to POLLERS so a repeated busy-poll counts as wait/poll instead of
+// falling to `other`/`read`. Kept in their own lower-priority rule (below git) — see
+// "POLLING: git wins over a bare busy-poll" below for why.
+test('POLLING: new Slice 15 busy-poll commands (echo waiting/idle, tasklist, Get-Process) fire on their own', () => {
+  for (const cmd of [
+    i => `echo waiting-${i}`,
+    i => `echo idle-check-${i}`,
+    () => String.raw`tasklist //FI "IMAGENAME eq python.exe"`,
+    () => 'Get-Process python -ErrorAction SilentlyContinue',
+  ]) {
+    const r = audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(25, 't', cmd) }));
+    assert.equal(pollingFlags(r).length, 1, `${cmd(1)} → ${JSON.stringify(r.flags)}`);
+  }
+});
+
+// Review finding (Slice 15): `script run` (a bare `python foo.py` re-run while iterating) is
+// deliberately excluded from POLL_CATEGORIES (§4 slice15-proposal.md) — it is work, not a
+// wait. 10 is POLL_MIN_CALLS itself (the boundary), so this also confirms the category
+// exclusion, not just the threshold, is what keeps it from firing.
+test('POLLING: `python x.py` repeated 10x (script run) does not fire — script run is not a poll category', () => {
+  const r = audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(10, 't', () => 'python x.py') }));
+  assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
+});
+
 test('POLLING: only shell commands count — 25 Read calls of one file do not fire', () => {
   const rows = Array.from({ length: 25 }, (_, i) => ({
     type: 'assistant', timestamp: '2026-09-01T10:00:00.000Z',

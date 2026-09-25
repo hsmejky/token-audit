@@ -283,11 +283,18 @@ const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)
   String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)?(?: ${PY_OPT})* -m|py(?: ${PY_OPT})* -m|uv run|poetry run|` +
   String.raw`npx(?: -y| --yes)?|bunx|(?:pnpm|yarn) (?:dlx|exec)|npm exec`;
 // Word lists the rules share (regex alternations).
-// Slice 15 HITL: added the two "burn a turn on purpose to wait" patterns found on
-// real data (`echo waiting-N` / `echo idle-check-N`, `tasklist` / `Get-Process`
-// busy-polls) so they count as wait/poll instead of falling to `other`.
-const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)|` +
-  String.raw`echo (?:waiting|idle)\S*|tasklist|Get-Process`;
+const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`;
+// Slice 15 HITL: the two "burn a turn on purpose to wait" patterns found on real data
+// (`echo waiting-N` / `echo idle-check-N`, `tasklist` / `Get-Process` busy-polls), so
+// they count as wait/poll instead of falling to `other`. Kept out of POLLERS/the main
+// wait/poll rule above and checked in their own lower-priority rule (below git) — a
+// real compound like `git status; Get-Process` is a status check with a process check
+// tacked on, not a wait, and git (like test/lint/build) is real work that must win;
+// review finding: with these two patterns inside the high-priority wait/poll rule,
+// that compound fell to wait/poll instead of git. `sleep`/`gh pr checks`/`gh run
+// watch|view`/check-runs/actions-runs stay in the high-priority rule — those are the
+// command's whole point, not a side check bolted onto real work.
+const BUSY_POLLERS = String.raw`echo (?:waiting|idle)\S*|tasklist|Get-Process`;
 // Harness tools that are neither agent spawns nor real work: skills, tool search,
 // interactive UI, task/queue management, plan mode, worktrees, scheduling. Slice 15
 // HITL: these used to fall to `other`, which hid most of `other`'s real composition.
@@ -300,7 +307,12 @@ const HARNESS_TOOLS = String.raw`Skill|ToolSearch|AskUserQuestion|TaskStop|TaskC
 // checked first in ACTIVITY_RULES and so win. Catches the "rerun the same script while
 // iterating" turns that used to collapse into `other` (and, at low enough POLLING N,
 // looked like false-positive polling).
-const SCRIPT_INTERP = String.raw`python\S*|py|node|deno|bun|tsx|ts-node|sh|bash|pwsh|powershell`;
+// `python[^\s CMD]*`, not `python\S*`: an unbounded `\S*` crosses CMD markers into the
+// next command, so 40k chained `${CMD}python` segments with no whitespace between them
+// force one giant \S* match that then backtracks one char at a time hunting for
+// `(?: |$)` — O(n^2), ~21s on real data. Bounding the class at CMD stops each attempt
+// at the very next command boundary, same fix as SCRIPT_FILE above.
+const SCRIPT_INTERP = String.raw`python[^\s${CMD}]*|py|node|deno|bun|tsx|ts-node|sh|bash|pwsh|powershell`;
 // Bare-file alternative's target, bounded like SHOT_TARGET above: `[^\s${CMD}]*`, not
 // `\S+` — a `\S+` anchored at every CMD (e.g. every `(` of 50k nested parens, none of
 // them whitespace) backtracks per anchor across the rest of the string, O(n^2)/worse;
@@ -333,6 +345,7 @@ const ACTIVITY_RULES = [
   [rx`api\.github\.com|${CMD}gh `, 'github'],
   [rx`${CMD}(?:${RUNNERS}|${CHECKERS})\b`, 'test/lint/build'],
   [rx`${CMD}git\b`, 'git'],
+  [rx`${CMD}(?:${BUSY_POLLERS})\b`, 'wait/poll'],
   [rx`${CMD}(?:${SCRIPT_INTERP})(?: |$)|${CMD}${SCRIPT_FILE}`, 'script run'],
   [rx`^(?:Edit|Write|MultiEdit|NotebookEdit) |${CMD}(?:sed -i|cat >|tee )`, 'edit'],
   [rx`^(?:Read|Grep|Glob) |${CMD}(?:${READERS})\b`, 'read'],
@@ -1989,4 +2002,10 @@ module.exports = {
   rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags, appendFlagsMore,
   familyLine, renderDetail,
   SUMMARY_MAX_LINES, DETAIL_MAX_LINES,
+  // Test-only: lets tests (activity.test.js) probe the `script run` rule's own regex in
+  // isolation, without going through the whole ACTIVITY_RULES priority chain — the
+  // `screenshot/image` rule (checked first) has its own, separate, still-unbounded
+  // `python\S*` inside SHOT_EXEC (pre-Slice-15, out of scope here) that would otherwise
+  // dominate the timing of any input built to stress SCRIPT_INTERP's own fix.
+  SCRIPT_INTERP,
 };

@@ -202,6 +202,14 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [sh('curl -s https://api.github.com/repos/o/r/commits/abc1234/check-runs'), 'wait/poll'],
     [sh('for i in $(seq 1 40); do gh pr checks 12; sleep 30; done'), 'wait/poll'],
     [sh('for f in a b; do git add $f; done'), 'git'],
+    // Review finding (Slice 15): a compound of a real git command plus a Slice 15 busy-poll
+    // addition (`Get-Process`/`tasklist`) used to fall to wait/poll (BUSY_POLLERS lived inside
+    // the high-priority wait/poll rule, above git) — git is the real work here, not a wait.
+    [sh('git status; Get-Process'), 'git'],
+    [sh('git status && tasklist'), 'git'],
+    // ...but standalone (no git alongside), the busy-poll still wins over test/lint/build etc.
+    [sh('Get-Process'), 'wait/poll'],
+    [sh('tasklist'), 'wait/poll'],
     [['Monitor', { command: 'x' }], 'wait/poll'],
     [['Read', { file_path: 'C:/x/src/a.ts' }], 'read'],
     [['Grep', { pattern: 'x' }], 'read'],
@@ -293,6 +301,25 @@ test('activityCategory: `node ` script run classifies a long trailing arg in wel
   const cat = activityCategory('Bash', { command });
   assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
   assert.equal(cat, 'script run');
+});
+
+// Review finding (Slice 15): SCRIPT_INTERP's `python\S*` alternative was unbounded — it
+// could cross a CMD (‣) marker into the next command, so many adjacent `‣python` runs with
+// no whitespace between them forced one giant \S* match that then backtracked one char at a
+// time hunting for `(?: |$)`, O(n^2) (measured ~21s on 40k reps before the fix). Fixed to
+// `python[^\s‣]*`, bounded at CMD same as SCRIPT_FILE. Tested against the `script run` rule's
+// own regex (`SCRIPT_INTERP`, exported test-only) rather than through `activityCategory()`:
+// the `screenshot/image` rule runs first and has its own separate, still-unbounded `python\S*`
+// inside SHOT_EXEC (pre-Slice-15, explicitly out of scope for this fix) that would dominate
+// the timing of any input shaped to stress this one instead.
+test('SCRIPT_INTERP: `python[^\\s CMD]*` stays linear on many adjacent `‣python` runs (was O(n^2) unbounded)', () => {
+  const { SCRIPT_INTERP } = require('../plugin/skills/token-audit/scripts/token-audit.js');
+  const CMD = '‣'; // ‣ — see markCommands()/categorize() in the script
+  const re = new RegExp(`${CMD}(?:${SCRIPT_INTERP})(?: |$)`, 'i');
+  const s = (CMD + 'python').repeat(40000) + '\t'; // trailing tab: never a match, forces full backtrack per start
+  const t0 = Date.now();
+  re.test(s);
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
 });
 
 test('activityCategory: many `-X` interpreter options before -m do not blow up (linear, not quadratic)', () => {

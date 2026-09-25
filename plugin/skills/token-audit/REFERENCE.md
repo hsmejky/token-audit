@@ -182,7 +182,7 @@ many subagents cross either threshold and their combined share of window spend.
 
 **Slice 15 HITL re-tune** (`LONG_AGENT_TURNS` = 150 unchanged, `LONG_AGENT_CTX` raised
 300k → 400k; real, deduped, all-history data — full table in `design/slice15-proposal.md`
-§2): subagent turn distribution (762 subagents, all history) p50 34, p75 73, p90 134,
+§2): subagent turn distribution (761 subagents, all history) p50 34, p75 73, p90 134,
 p95 174, p99 287, max 456; peak-ctx distribution p50 146k, p75 239k, p90 352k, p95 440k,
 p99 572k, max 830k. 150 turns sits at p90–p92 (demo-proj alone: p85), right before the
 turn histogram's count halves at 175 (25-turn buckets from 25–175 each carry about the
@@ -670,13 +670,14 @@ and `timeout 600 python -m pytest | tail` is a test run. Priority order and what
 | 2 | harness (Slice 15) | `Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TodoWrite`, `ListAgents`, `EnterPlanMode`, `ExitPlanMode`, `EnterWorktree`, `ExitWorktree`, `CronCreate`, `CronDelete`, `ScheduleWakeup` |
 | 3 | web | `WebFetch`, `WebSearch` |
 | 4 | screenshot/image | `Read` of a .png/.jpg/.gif/.webp/.bmp; any tool named `*screenshot*` (MCP); a `screenshot*.mjs/js/ts/py/sh` script *run* (at a command start, directly or via `node`/`python`/`bun`/`deno`/`tsx`/`bash`/`sh`/`pwsh`); `.screenshot(` in such an interpreter's command |
-| 5 | wait/poll | `Monitor`, `TaskOutput`, `BashOutput`; `sleep`, `Start-Sleep`, `gh pr checks`, `gh run watch/view`; `echo waiting-*`/`echo idle-*`, `tasklist`, `Get-Process` (Slice 15); any `check-runs` / `actions/runs` URL |
+| 5 | wait/poll | `Monitor`, `TaskOutput`, `BashOutput`; `sleep`, `Start-Sleep`, `gh pr checks`, `gh run watch/view`; any `check-runs` / `actions/runs` URL |
 | 6 | github | `api.github.com`, `gh …` |
 | 7 | test/lint/build | `pnpm/npm/yarn/bun [--opts] [run/exec] test/lint/build/typecheck/…` (e.g. `pnpm --filter x test`), `vitest`, `jest`, `pytest`, `unittest`, `ruff`, `mypy`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make`, `cargo test/build/check/clippy/nextest`, `go test/build/vet` |
 | 8 | git | `git …` |
-| 9 | script run (Slice 15) | a bare interpreter run (`python\S*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start — below test/lint/build, git and screenshot/image, all of which win first (`python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot) |
-| 10 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
-| 11 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
+| 9 | wait/poll — busy-poll (Slice 15) | `echo waiting-*`/`echo idle-*`, `tasklist`, `Get-Process`, checked below git and test/lint/build — real work wins a compound like `git status; Get-Process` (review finding: these used to live in row 5's high-priority rule, so that compound fell to wait/poll instead of git) |
+| 10 | script run (Slice 15) | a bare interpreter run (`python[^\s‣]*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start — below test/lint/build, git and screenshot/image, all of which win first (`python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot) |
+| 11 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
+| 12 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
 | – | other | no rule matched at all |
 | – | reply (Slice 15) | the turn made no tool call (final answer, plan, question to the user) |
 
@@ -719,17 +720,24 @@ Decisions not fixed by design.md (judgment calls):
   `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% demo-proj / 2.4% token-audit (now
   `script run`), harness tools (`Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, …)
   ≈ 1.6% all / 1.4% demo-proj / 5.4% token-audit (now `harness`), wait-shaped commands
-  (`echo waiting-*`, `tasklist`, `true`) ≈ 0.2% (folded into `wait/poll`'s `POLLERS`, above),
-  misc shell (`mkdir`, `cp`, `rm`, `for`, `export …`) ≈ 0.2–0.6%, genuinely unmatched ≈ 0.1%.
-  So `other` was never one thing — it was mostly replies, script re-runs and harness
-  bookkeeping wearing a single "uncategorized" label. `script run` sits below
-  test/lint/build, git and screenshot/image in `ACTIVITY_RULES` (checked above them, they
-  win); its file-extension alternative is written `[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`, not
-  `\S+\.(?:m?js|py|sh|ps1)\b` — the latter, anchored at every `CMD` boundary (e.g. every
+  (`echo waiting-*`, `tasklist`, `true`) ≈ 0.2% (folded into `wait/poll`'s busy-poll row,
+  table row 9 above), misc shell (`mkdir`, `cp`, `rm`, `for`, `export …`) ≈ 0.2–0.6%,
+  genuinely unmatched ≈ 0.1%. So `other` was never one thing — it was mostly replies, script
+  re-runs and harness bookkeeping wearing a single "uncategorized" label. `script run` sits
+  below test/lint/build, git and screenshot/image in `ACTIVITY_RULES` (checked above them,
+  they win); its file-extension alternative is written `[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`,
+  not `\S+\.(?:m?js|py|sh|ps1)\b` — the latter, anchored at every `CMD` boundary (e.g. every
   `(` of 50k nested parens, none of them whitespace), backtracks per anchor across the rest
   of the string, O(n²) or worse (Slice 30's exact bug class); excluding `CMD` from the
   class too stops each attempt at the very next command boundary, same fix as `SHOT_TARGET`
-  above.
+  above. Its bare-interpreter alternative had the same flaw for `python`: `python\S*` is
+  unbounded, so many adjacent `‣python` command starts with no whitespace between them (e.g.
+  40k reps) forced one giant greedy match that then backtracked a char at a time hunting for
+  the trailing `(?: |$)` — O(n²), ≈21s measured. Fixed to `python[^\s${CMD}]*`, same bound as
+  the file-extension alternative above (review finding, re-tune pass). A sibling, still-open
+  instance of the identical flaw lives in `SHOT_EXEC` (the `screenshot/image` row above,
+  which is checked *before* `script run` and so masks this one on the same adversarial
+  input) — pre-existing (before Slice 15), out of scope for this fix.
 
 ### Activity table vs Q9 hand estimates (Slice 15)
 
@@ -762,6 +770,8 @@ of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (dem
   "~1%" target on every cut, on both projects. The rest of the old `other` moved to
   `reply` (≈7–10%), `script run` (≈2–14% depending on project), `harness` (≈1–5%) and a
   small amount into `wait/poll`'s two new `POLLERS` patterns.
+
+### Cost by activity — command key
 
 `commandKey(command)` (exported) turns a `Bash` / `PowerShell` command into a key so the same
 command against a different PR number, commit, path or cwd groups together. `POLLING`
@@ -824,9 +834,10 @@ distribution's job is to say whether a leaderboard entry is typical or an outlie
 example: "agent A ran 288 turns — is that normal?"), which only works if it is computed over the
 full population, not the 10 rows the reader is already looking at (those would show a distribution
 dominated by the leaderboard itself, converging to roughly the top-10's own median as list size
-shrinks). This mirrors the summary's SESSIONS median/p90, which is likewise computed over all
-sessions, not just the top ones. Not yet reconciled against design.md's own text — see "Open
-questions" in design.md.
+shrinks). This mirrors the summary's SESSIONS median/p90 (Slice 15: main sessions only,
+`cur.mainSessions`, see `LONG_SESSION` above), which is likewise computed over its full
+population — main sessions, not subagents — rather than just the top ones. Not yet reconciled
+against design.md's own text — see "Open questions" in design.md.
 
 ### Subagent task text — source
 
@@ -958,6 +969,11 @@ typical MCP tool schema), clearly presented as an estimate, not a measurement.
 | `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |
 | `--all` | off | scope to every project instead of just one (pre-Slice-6 behaviour) |
 | `--no-detail` | off | drop the DETAIL block (text) and the `detail` key (`--json`): summary only |
+
+**`--json`'s `cur.medianMsgs`/`cur.p90Msgs`** (and the same fields on `prev`) are computed over
+**main sessions only** (`cur.mainSessions`, `!isSub`) — the same population the text summary's
+`SESSIONS` line reports (Slice 15; see `LONG_SESSION` above). `cur.sessions`/`prev.sessions`
+still list every session, main and subagent alike; only the median/p90 stat excludes subagents.
 
 **`--claude-dir` precedence (Slice 23)**: an explicit `--claude-dir DIR` flag wins if given;
 else the `CLAUDE_CONFIG_DIR` env var if set (real Claude Code's own relocation variable);
