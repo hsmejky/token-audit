@@ -222,7 +222,7 @@ active, and counting those inflates `PLUGIN_BLOAT`.
 | `--top N` | 8 | sessions listed |
 | `--json` | off | full structured dump incl. per-week and per-plugin detail |
 | `--claude-dir DIR` | `~/.claude` | read transcripts + settings from DIR instead (tests use fixture dirs) |
-| `--project PATH` | cwd | scope to one project: PATH is mapped to its `projects/` folder name the same way Claude Code names it — path separators and the Windows drive colon each become `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). No path.resolve — the string is mapped literally, so a POSIX-style value stays correct even when the script itself runs on Windows. |
+| `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |
 | `--all` | off | scope to every project instead of just one (pre-Slice-6 behaviour) |
 
 **Default scope is the current working directory's project**, mapped the same way. `--project`

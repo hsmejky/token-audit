@@ -29,7 +29,7 @@ function projectArg() {
   const i = argv.indexOf('--project');
   if (i < 0) return undefined;
   const v = argv[i + 1];
-  return (v === undefined || v.startsWith('--')) ? null : v;
+  return (v === undefined || v === '' || v.startsWith('--')) ? null : v;
 }
 const PROJECT_ARG = projectArg();
 if (PROJECT_ARG === null) {
@@ -42,20 +42,32 @@ const CLAUDE = path.resolve(flagStr('--claude-dir', path.join(HOME, '.claude')))
 const ROOT = path.join(CLAUDE, 'projects');
 
 // ------------------------------------------------------------------- scope
-// Claude Code names each project's transcript folder after the absolute
-// working directory it was launched from, with path separators (and the
-// Windows drive colon) each replaced by `-`:
+// Claude Code names each project's transcript folder after the absolute,
+// resolved working directory it was launched from, with every character
+// that isn't a-z/A-Z/0-9 replaced by `-` (this is Claude Code's own rule,
+// from its binary: `p.replace(/[^a-zA-Z0-9]/g, '-')`):
 //   C:\Users\jdoe\demo-proj  ->  C--Users-jdoe-demo-proj  (colon AND the
 //                                 backslash after it each become their own
 //                                 `-`, hence the doubled dash)
 //   /Users/jdoe/demo-proj    ->  -Users-jdoe-demo-proj
-// Pure string replace, no path.resolve: resolving a POSIX-style --project
-// value through Node's path module on a Windows host (or vice versa) would
-// silently reinterpret it against the *current* OS's rules and produce the
-// wrong folder name, rather than the literal mapping Claude Code applies to
-// wherever the path came from.
-function projectFolder(p) {
-  return String(p).replace(/[\\/:]/g, '-');
+// path.resolve() first so relative values (`.`, `..`, `sub/dir`) and `--project
+// .` behave like the cwd they refer to, rather than being mapped as literal
+// text (which previously left `.` and `..` scoping to the wrong thing, or to
+// everything).
+// Names over 200 chars: Claude Code truncates to 200 chars and appends
+// `-<base36 hash>`. We don't reimplement that hash — instead we take the
+// same 200-char prefix and look for exactly one existing projects/ folder
+// starting with `<prefix>-`. Zero or multiple matches fall through to the
+// (non-existent) prefix itself, which surfaces as the normal "unknown
+// project" error.
+function projectFolder(p, root = ROOT) {
+  const mapped = path.resolve(String(p)).replace(/[^a-zA-Z0-9]/g, '-');
+  if (mapped.length <= 200) return mapped;
+  const prefix = mapped.slice(0, 200);
+  let entries;
+  try { entries = fs.readdirSync(root); } catch { entries = []; }
+  const matches = entries.filter(e => e.startsWith(prefix + '-'));
+  return matches.length === 1 ? matches[0] : prefix;
 }
 
 // Default scope = cwd's project. --project <path> overrides it. --all scans
