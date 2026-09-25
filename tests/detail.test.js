@@ -282,19 +282,27 @@ test('WORK UNITS: --json includes units at top level of detail; --no-detail omit
 test('SUBAGENT DISTRIBUTION: known turn counts -> exact median / p90 / max (turns and peak ctx)', () => {
   const files = {};
   // 5 subagents under one parent, turns and peak-ctx deliberately in the
-  // *same* ascending order (10..50 turns, 1000k..5000k peak ctx) so both
-  // stats can be checked against one sorted array: [10,20,30,40,50],
-  // len 5 -> floor(q*5): median (q .5) -> idx 2 -> 30; p90 (q .9) -> idx 4 -> 50; max -> idx 4 -> 50.
-  for (const [i, turnsN] of [10, 20, 30, 40, 50].entries()) {
+  // *same* ascending order but mixing 1/2/3-digit values (7, 15, 23, 100,
+  // 200 / 7000, 15000, 23000, 100000, 200000). A plain `.sort()` (no numeric
+  // comparator) would lexicographically reorder these to [100,15,200,23,7]
+  // (string "100" < "15" < "200" < "23" < "7"), giving wrong quantiles — so
+  // this fixture catches a missing/removed comparator, unlike an all-same-
+  // digit-count fixture (e.g. 10..50) where lexicographic and numeric sort
+  // happen to agree.
+  // len 5 -> floor(q*5): median (q .5) -> idx 2 -> 23 / 23000;
+  // p90 (q .9) -> idx 4 -> 200 / 200000; max -> idx 4 -> 200 / 200000.
+  const TURNS = [7, 15, 23, 100, 200];
+  const CTX = [7000, 15000, 23000, 100000, 200000];
+  for (const [i, turnsN] of TURNS.entries()) {
     const base = `projects/p/parent/subagents/agent-${i}`;
     files[base + '.jsonl'] = turns(turnsN, `s${i}`,
-      { usage: { input_tokens: 0, cache_read_input_tokens: 1000 * (i + 1), output_tokens: 0 } });
+      { usage: { input_tokens: 0, cache_read_input_tokens: CTX[i], output_tokens: 0 } });
     files[base + '.meta.json'] = { description: `agent ${i}` };
   }
   const { distribution } = audit(tmpClaudeDir(files)).detail;
   assert.equal(distribution.count, 5);
-  assert.deepEqual(distribution.turns, { median: 30, p90: 50, max: 50 });
-  assert.deepEqual(distribution.peakCtx, { median: 3000, p90: 5000, max: 5000 });
+  assert.deepEqual(distribution.turns, { median: 23, p90: 200, max: 200 });
+  assert.deepEqual(distribution.peakCtx, { median: 23000, p90: 200000, max: 200000 });
 });
 
 test('SUBAGENT DISTRIBUTION: population is every subagent in the window, not just the top 10 by cost', () => {
@@ -307,6 +315,14 @@ test('SUBAGENT DISTRIBUTION: population is every subagent in the window, not jus
   const { detail } = audit(tmpClaudeDir(files));
   assert.equal(detail.topSubagents.length, 10, 'leaderboard stays capped at 10');
   assert.equal(detail.distribution.count, 12, 'distribution counts every subagent, not just the top 10');
+  // Cost scales 1:1 with turn count here (every turn costs the same), so the
+  // top-10-by-cost leaderboard is exactly turns [3..12] and excludes [1, 2].
+  // Population (turns 1..12, len 12): median idx floor(.5*12)=6 -> 7.
+  // Top-10-only (turns 3..12, len 10): median idx floor(.5*10)=5 -> 8.
+  // If distribution were ever computed over the top-10 slice instead of the
+  // full population, this would see 8, not 7, and fail.
+  assert.equal(detail.distribution.turns.median, 7,
+    'median must come from all 12 subagents (7), not the top-10-by-cost slice (which would give 8)');
 });
 
 test('SUBAGENT DISTRIBUTION: no subagents in window -> count 0, text shows an explicit empty line', () => {
@@ -320,23 +336,33 @@ test('SUBAGENT DISTRIBUTION: no subagents in window -> count 0, text shows an ex
 });
 
 test('SUBAGENT DISTRIBUTION: text report shows turns and peak-ctx lines, <= 120 chars, --json matches', () => {
-  const dir = tmpClaudeDir({
-    'projects/p/main-sess.jsonl': turns(1, 'main'),
-    'projects/p/main-sess/subagents/agent-a.jsonl': turns(7, 'a',
-      { usage: { input_tokens: 0, cache_read_input_tokens: 250000, output_tokens: 0 } }),
-    'projects/p/main-sess/subagents/agent-a.meta.json': { description: 'agent a' },
-  });
+  // 11 subagents (need > 10 for p90's index to differ from max's — quantile()
+  // clamps p90 to n-1 once floor(.9n) >= n-1, which only stops happening at
+  // n > 10) with turns 1..11 and peak ctx 10k..110k in the same ascending
+  // order, so median/p90/max land on three distinct values in both stats
+  // (6/10/11 and 60k/100k/110k). A single-subagent fixture (median = p90 =
+  // max) would not catch the text renderer swapping which stat prints under
+  // which label; this one does.
+  const files = { 'projects/p/main-sess.jsonl': turns(1, 'main') };
+  for (let i = 1; i <= 11; i++) {
+    const base = `projects/p/main-sess/subagents/agent-${String(i).padStart(2, '0')}`;
+    files[base + '.jsonl'] = turns(i, `s${i}`,
+      { usage: { input_tokens: 0, cache_read_input_tokens: 10000 * i, output_tokens: 0 } });
+    files[base + '.meta.json'] = { description: `agent ${i}` };
+  }
+  const dir = tmpClaudeDir(files);
   const detail = detailLines(auditText(dir));
   const header = detail.find(l => l.includes('SUBAGENT DISTRIBUTION'));
-  assert.ok(header && header.includes('1 in this window'), `expected count in header, got: ${header}`);
+  assert.ok(header && header.includes('11 in this window'), `expected count in header, got: ${header}`);
   const turnsLine = detail.find(l => l.trim().startsWith('turns'));
   const ctxLine = detail.find(l => l.trim().startsWith('peak ctx'));
-  assert.match(turnsLine, /median\s+7\s+p90\s+7\s+max\s+7/);
-  assert.match(ctxLine, /median\s+250k\s+p90\s+250k\s+max\s+250k/);
+  assert.match(turnsLine, /median\s+6\s+p90\s+10\s+max\s+11/);
+  assert.match(ctxLine, /median\s+60k\s+p90\s+100k\s+max\s+110k/);
   for (const l of detail) assert.ok([...l].length <= 120, `line too long (${[...l].length}): ${l}`);
   const { distribution } = audit(dir).detail;
   assert.deepEqual(distribution, {
-    count: 1, turns: { median: 7, p90: 7, max: 7 }, peakCtx: { median: 250000, p90: 250000, max: 250000 },
+    count: 11, turns: { median: 6, p90: 10, max: 11 },
+    peakCtx: { median: 60000, p90: 100000, max: 110000 },
   });
 });
 

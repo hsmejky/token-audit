@@ -279,7 +279,7 @@ function summarize(rows) {
   }
   const msgs = rows.length;
   const msgCounts = list.map(s => s.msgs).sort((a, b) => a - b);
-  const pick = q => msgCounts.length ? msgCounts[Math.min(msgCounts.length - 1, Math.floor(q * msgCounts.length))] : 0;
+  const pick = q => quantile(msgCounts, q); // shared with subagentDistribution() below
 
   return {
     cost, msgs, byFamily, byChain, sessions: list,
@@ -520,8 +520,8 @@ function workUnits(cur, all) {
   }).sort((a, b) => b.cost - a.cost).slice(0, TOP_UNITS);
 }
 
-// Same floor(q*n) quantile as SESSIONS' median/p90 (see `pick` above), so
-// both read the same way. q=1 clamps to the last (= max) element.
+// Shared quantile helper: SESSIONS' median/p90 (`pick` above) calls this too,
+// so both read the same way. q=1 clamps to the last (= max) element.
 function quantile(sortedAsc, q) {
   return sortedAsc.length ? sortedAsc[Math.min(sortedAsc.length - 1, Math.floor(q * sortedAsc.length))] : 0;
 }
