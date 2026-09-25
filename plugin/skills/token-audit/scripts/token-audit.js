@@ -1972,8 +1972,9 @@ async function main() {
     console.log(JSON.stringify({ windowDays: DAYS, scope, cur: trim(cur), prev: trim(prev),
       // Matches the ALL-TIME summary line: `cost` is all-time spend incl. subagents
       // (all.cost); `msgs`/`sessions` count main sessions only (all.mainSessions), not
-      // all.msgs/all.sessions (raw msgs/sessions internally used by cur/prev/detail
-      // include subagents and are intentionally not exposed here).
+      // all.sessions (raw sessions, internally used by cur/prev/detail, includes
+      // subagents and is intentionally not exposed here). all.msgs isn't used
+      // internally at all — kept only for this trimmed json field.
       all: { cost: all.cost, msgs: allMainMsgs, sessions: all.mainSessions.length },
       weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced,
       ...(det ? { detail: det } : {}) }, null, 2));

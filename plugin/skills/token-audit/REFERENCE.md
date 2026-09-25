@@ -611,10 +611,10 @@ real data and on the fixture that fires every section at once (`tests/summary-bu
   "N sessions" next to `ALL-TIME` still means N *main* sessions, matching `SESSIONS`’
   count/median/p90 — a subagent never counts as one of the sessions the figure is
   "over". `--json`’s `all: { cost, msgs, sessions }` follows the same split (cost
-  all-inclusive, msgs/sessions main-only); `all.cost`/`all.msgs`/`all.sessions` (the raw
-  `summarize()` fields, not this trimmed `all` json object) still use every session
-  including subagents internally (`workUnits()`, `LONG_AGENT` spans) — only the exposed
-  ALL-TIME figure is this deliberate mix.
+  all-inclusive, msgs/sessions main-only); of the raw `summarize()` fields (not this
+  trimmed `all` json object), `all.cost` and `all.sessions` still use every session
+  including subagents internally (`workUnits()`, `LONG_AGENT` spans) — `all.msgs` isn’t
+  used internally at all. Only the exposed ALL-TIME figure is this deliberate mix.
 - **FLAGS** — as many as fit (`fitFlags()`; typically 4-5) + one `… +N more: IDs` line for the
   rest (see "Summary cap and ranking"); **SECURITY** in full.
 

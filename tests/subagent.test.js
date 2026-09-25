@@ -47,6 +47,48 @@ test('--json `all` (ALL-TIME): sessions/msgs are main-only, cost includes subage
     'ALL-TIME cost must include subagent spend, so SPEND <= ALL-TIME always holds');
 });
 
+// re-review finding (Slice 15): the previous test above used the harness default
+// --days 36500, so every fixture row landed in BOTH `cur` and `all` — it couldn't
+// tell "all.cost happens to include subagents" apart from "all.cost is scoped to
+// all-time history, wider than the --days window". This test uses a tight --days
+// window with a session OUTSIDE it (own subagent too), so `cur` excludes that old
+// session entirely while `all` still must include its cost — the actual scenario
+// the SPEND <= ALL-TIME invariant exists to cover.
+test('--json `all`: includes cost from sessions outside the --days window', () => {
+  const dir = tmpClaudeDir({
+    // Outside a 7-day window as of "today" (2026-09-25): excluded from cur/prev,
+    // included in all-time.
+    'projects/p/old-main.jsonl': turn({ id: 'old-1', ts: '2026-09-01T10:00:00.000Z' }),
+    'projects/p/old-main/subagents/agent-old.jsonl': turns(3, 'old-sub', { ts: '2026-09-01T10:00:00.000Z' }),
+    // Inside the window: counted in both cur and all.
+    'projects/p/new-main.jsonl': turn({ id: 'new-1', ts: '2026-09-24T10:00:00.000Z' }),
+  });
+  const r = audit(dir, '--days', '7');
+  assert.equal(r.cur.sessions.some(s => s.sid === 'old-main' || s.sid === 'agent-old'), false,
+    'old session and its subagent must be outside the cur window');
+  assert.equal(r.all.sessions, 2, 'ALL-TIME sessions counts both main sessions, old and new');
+  assert.ok(r.all.cost > r.cur.cost,
+    `ALL-TIME cost (${r.all.cost}) must exceed the windowed SPEND (${r.cur.cost}) ` +
+    'since it includes the old session + its subagent, which the window excludes');
+  assert.ok(r.cur.cost <= r.all.cost, 'SPEND <= ALL-TIME must hold even with rows outside the window');
+});
+
+// re-review finding (Slice 15): pin the actual printed ALL-TIME line shape, not just
+// the --json fields behind it — a formatting slip (wrong label, dropped "sessions"/
+// "messages" word, money() not applied) would pass every --json-only test above.
+test('ALL-TIME summary line: "ALL-TIME     $X.XX over N sessions, M messages"', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/main-1.jsonl': turn({ id: 'm1' }),
+    'projects/p/main-1/subagents/agent-a1.jsonl': turns(2, 'sub-a'),
+  });
+  const out = auditText(dir);
+  const line = out.split('\n').find(l => l.startsWith('ALL-TIME'));
+  assert.ok(line, `no ALL-TIME line found in:\n${out}`);
+  // money() varies decimals by magnitude (n<1 -> 3dp, n<10 -> 2dp, ...) — match any.
+  assert.match(line, /^ALL-TIME\s+\$\d+\.\d+ over \d+ sessions, \d+ messages$/, line);
+  assert.match(line, / over 1 sessions, 1 messages$/, 'sessions/messages must be main-only');
+});
+
 // Real on-disk layout: a subagent id (e.g. from a `fork` agent whose name
 // happens to collide across runs) can appear under two different parent
 // session directories. Identity for a subagent session is (parent, sid) —
