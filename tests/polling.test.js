@@ -364,3 +364,86 @@ test('POLLING: assignment, key:value and flag=value pairs are not over-redacted'
     assert.ok(!/<path>|<email>/.test(f.groups[0].key), `${cmd} -> ${f.groups[0].key}`);
   }
 });
+
+// Re-review round 3. Generic (pattern) layer — tested with an empty identity so the
+// value layer below can't mask a pattern gap, whoever runs the tests.
+const NO_ID = {};
+const genericLeaks = [
+  ['forward-slash drive path with escaped space', String.raw`node C:/Users/Petr\ Svarc/x.js`, /Svarc/],
+  ['WSL /mnt/c path with escaped space', String.raw`ls /mnt/c/Users/Petr\ Svarc/x`, /Svarc/],
+  ['PATH=$PATH:/home/... with escaped space', String.raw`PATH=$PATH:/home/Petr\ Svarc/bin`, /Svarc/],
+  ['scp host:/home/... with escaped space', String.raw`scp host:/home/Petr\ Svarc/x`, /Svarc/],
+  ['doubled-backslash Windows path', 'cat C:\\\\Users\\\\jdoe\\\\x', /jdoe/],
+  ['upper-case Windows root', String.raw`type C:\USERS\Petr Svarc\x`, /Svarc/],
+  ['upper-case git-bash root', 'cat /C/USERS/Petr Svarc/x', /Svarc/],
+  ['upper-case /HOME root', 'cat /HOME/jdoe/x', /jdoe/],
+];
+for (const [what, cmd, leak] of genericLeaks) {
+  test(`POLLING: redactPaths generic layer — ${what} does not leak the name`, () => {
+    const out = redactPaths(cmd, NO_ID);
+    assert.ok(!leak.test(out), out);
+    assert.match(out, /<path>/, out);
+  });
+}
+
+test('POLLING: redactPaths generic layer keeps http(s) URLs, a=b, key:value, -o=json', () => {
+  for (const cmd of ['curl -s https://api.github.com/repos/o/r/pulls/1', 'echo a=b', 'echo key:value', 'echo -o=json']) {
+    assert.equal(redactPaths(cmd, NO_ID), cmd);
+  }
+});
+
+// Value layer: the current user's own name parts are redacted to <user> wherever
+// they appear, in any spelling or case. Identity is injected here.
+const PETR = { username: 'psvarc', home: String.raw`C:\Users\Petr Svarc`, name: 'Petr Svarc' };
+test('POLLING: value layer — Claude project folder form (C--Users-Petr-Svarc-…) loses both name parts', () => {
+  const out = redactPaths('ls C--Users-Petr-Svarc-token-audit', PETR);
+  assert.ok(!/Petr|Svarc/.test(out), out);
+  assert.match(out, /<user>/);
+});
+
+test('POLLING: value layer — a name part outside any path shape, any case, is redacted', () => {
+  const out = redactPaths('grep -i SVARC notes.txt', PETR);
+  assert.ok(!/svarc/i.test(out), out);
+  assert.equal(out, 'grep -i <user> notes.txt');
+});
+
+test('POLLING: value layer — the login name is redacted', () => {
+  const out = redactPaths('echo psvarc-notes', PETR);
+  assert.ok(!/psvarc/.test(out), out);
+  // a dotted login name is split into parts too
+  assert.equal(redactPaths('echo svarc', { username: 'petr.svarc' }), 'echo <user>');
+});
+
+test('POLLING: value layer — home-folder name comes from the home path (no username/name given)', () => {
+  const out = redactPaths('echo Svarc', { home: '/home/Petr Svarc' });
+  assert.equal(out, 'echo <user>');
+});
+
+test('POLLING: value layer — a name part inside a longer word is left alone (January)', () => {
+  assert.equal(redactPaths('echo January', PETR), 'echo January');
+});
+
+test('POLLING: value layer — parts shorter than 3 chars and generic account names are not redacted', () => {
+  // each part alone stays; the whole name "al bo" (5 chars) is a term of its own
+  assert.equal(redactPaths('echo al alpha bo', { username: 'al', home: '/home/Al Bo', name: 'Al Bo' }),
+    'echo al alpha bo');
+  assert.equal(redactPaths('echo user admin', { username: 'user', home: '/home/admin' }), 'echo user admin');
+});
+
+test('POLLING: value layer is fast on a 200k-char run of a name-part prefix', () => {
+  const id = { username: 'aaa' };
+  for (const s of ['a'.repeat(200000), 'aab'.repeat(70000)]) {
+    const t0 = Date.now();
+    redactPaths(s, id);
+    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+  }
+});
+
+test('POLLING: generic layer is fast on 200k-char runs of Users-path prefixes', () => {
+  for (const s of [':/home/\\ '.repeat(25000), 'C:\\\\Users\\\\'.repeat(20000),
+    ' C:/Users/'.repeat(20000), ':'.repeat(200000), ' /mnt/c/'.repeat(25000)]) {
+    const t0 = Date.now();
+    redactPaths(s, NO_ID);
+    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+  }
+});

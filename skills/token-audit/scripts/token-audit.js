@@ -646,35 +646,86 @@ const POLL_CATEGORIES = new Set(['wait/poll', 'github', 'read', ACTIVITY_OTHER])
 // stays readable (its `//` follows `:` with nothing between). `~`/`~user`
 // need only one separator (the `~` itself signals a path). `file://` is
 // redacted despite the `//`, since it names a local file, not a web
-// resource. `C:\Users\<name>` is a special case: the name segment may
-// contain a space (Explorer displays "First Last"), which the generic rule
-// can't allow without swallowing trailing prose. Emails (`user@host.tld`)
-// are redacted separately — a path trigger char never precedes them.
+// resource. A Users/home path (`C:\Users\<name>`, `/c/Users/<name>`, …) gets
+// its own rules below, because its name segment may contain a space (Explorer
+// displays "First Last") and ABS_PATH stops at whitespace. Emails
+// (`user@host.tld`) are redacted separately — a path trigger char never precedes them.
 // (?<![\w.+-]) anchors the match to the start of a [\w.+-] run: without it, `\b`
 // re-attempts the whole alternation at every non-word char inside a long unbroken
 // run (`a.a.a.a…`), which is O(n^2) on a pathological 200k-char input.
 const EMAIL = /(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g;
 const FILE_URL = /\bfile:\/\/\/?[^\s'"`<>|;&()]*/gi;
-// WIN_USERS_PATH: `C:\Users\<name>` / `c:\users\<name>` (root word case-insensitive
-// via [Uu]/[Hh]). The name segment accepts a literal or backslash-escaped space
+// WIN_USERS_PATH: `C:\Users\<name>`, any case (`c:\users`, `C:\USERS`, `\Home\`),
+// single or doubled (JSON/string-escaped) backslashes (`C:\\Users\\jdoe\\x`).
+// The name segment accepts a literal or backslash-escaped space
 // (`Petr Svarc` / `Petr\ Svarc`) but excludes shell metacharacters, so
 // `C:\Users\jdoe | tee …` stops before the pipe instead of swallowing it.
 const WIN_USERS_PATH =
-  /[A-Za-z]:\\(?:[Uu]sers|[Hh]ome)\\(?:\\ |[^\\|;&()<>'"`])+(?:\\[^\s\\'"`<>|;&()]*)*/g;
-// FWD_USERS_PATH: the git-bash / macOS form of the same path (`/c/Users/<name>`,
-// `/home/<name>`), including inside a quoted string (`"see /c/Users/Petr Svarc/x"`)
-// — the name segment stops at the next `/` or a quote, so the closing quote survives.
+  /[A-Za-z]:\\\\?(?:users|home)\\\\?(?:\\ |[^\\|;&()<>'"`])+(?:\\\\?[^\s\\'"`<>|;&()]*)*/gi;
+// FWD_USERS_PATH: the forward-slash forms of the same path, any case —
+// `/c/Users/<name>` (git-bash), `/mnt/c/Users/<name>` (WSL), `/home/<name>`,
+// `/Users/<name>` (macOS) — after the same triggers as ABS_PATH, incl. `:` not
+// followed by `//` (`PATH=$PATH:/home/…`, `scp host:/home/…`, and `C:/Users/<name>`,
+// which becomes `C:<path>`), and
+// inside a quoted string (`"see /c/Users/Petr Svarc/x"`) — the name segment stops
+// at the next `/` or a quote, so the closing quote survives.
 const FWD_USERS_PATH =
-  /(^|[\s=(`'"<>@])\/(?:[A-Za-z]\/)?(?:[Uu]sers|[Hh]ome)\/(?:\\ |[^\/|;&()<>'"`])+(?:\/[^\s`'"|;&()<>]*)*/g;
+  /(^|[\s=(`'"<>@]|:(?!\/\/))\/(?:mnt\/)?(?:[A-Za-z]\/)?(?:users|home)\/(?:\\ |[^\/|;&()<>'"`])+(?:\/[^\s`'"|;&()<>]*)*/gi;
 const TILDE_PATH = /(^|[\s=(`'"<>@:])~[\w.-]*(?:[\\/][^\s`'"|;&()<>]*)?/g;
 const ABS_PATH = /(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()<>]+[\\/][^\s`'"|;&()<>]*/g;
-const redactPaths = key => key
-  .replace(EMAIL, '<email>')
-  .replace(FILE_URL, '<path>')
-  .replace(WIN_USERS_PATH, '<path>')
-  .replace(FWD_USERS_PATH, '$1<path>')
-  .replace(TILDE_PATH, '$1<path>')
-  .replace(ABS_PATH, '$1<path>');
+// Value layer: whatever the patterns above miss, the current user's own name is
+// redacted to <user> wherever it appears — in any path spelling (`C:\Users\x`,
+// `C:/Users/x`, `/c/Users/x`, `/mnt/c/Users/x`, `C:\\Users\\x`, `x\ y`), the Claude
+// project-folder form (`C--Users-Petr-Svarc-proj`) or plain text, any case.
+// Terms: the login name, the home folder's last segment and git `user.name`, each
+// whole and split into parts on whitespace/`.`/`_`/`-`. A term is used only when
+// ≥ ID_MIN_LEN chars and not a generic account name (ID_GENERIC), and matches only
+// as a whole word (not inside `January`), so short or common names don't over-redact.
+const ID_MIN_LEN = 3;
+const ID_GENERIC = new Set(['user', 'users', 'home', 'root', 'admin', 'administrator',
+  'public', 'default', 'guest', 'owner', 'runner', 'ubuntu']);
+const ID_EDGE = '[\\p{L}\\p{N}]';
+function identityPattern({ username = '', home = '', name = '' } = {}) {
+  const base = String(home).split(/[\\/]+/).filter(Boolean).pop() || '';
+  const terms = new Set();
+  for (const s of [username, base, name]) {
+    for (const t of [s, ...String(s).split(/[\s._-]+/)]) {
+      const w = String(t).trim().toLowerCase();
+      if (w.length >= ID_MIN_LEN && !ID_GENERIC.has(w)) terms.add(w);
+    }
+  }
+  if (!terms.size) return null;
+  const alt = [...terms].sort((a, b) => b.length - a.length)
+    .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return new RegExp(`(?<!${ID_EDGE})(?:${alt})(?!${ID_EDGE})`, 'giu');
+}
+// The machine's identity, read once on first use (git only if a key is redacted).
+let machineIdentity = null;
+function currentIdentity() {
+  if (machineIdentity) return machineIdentity;
+  const os = require('os');
+  let username = '', name = '';
+  try { username = os.userInfo().username; } catch { /* no passwd entry */ }
+  try {
+    name = require('child_process').execFileSync('git', ['config', 'user.name'],
+      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+  } catch { /* no git or no user.name */ }
+  return (machineIdentity = { username, home: os.homedir(), name });
+}
+const idPatterns = new WeakMap();
+// identity = { username, home, name } — injectable for tests; defaults to this machine.
+function redactPaths(key, identity = currentIdentity()) {
+  if (!idPatterns.has(identity)) idPatterns.set(identity, identityPattern(identity));
+  const id = idPatterns.get(identity);
+  const out = key
+    .replace(EMAIL, '<email>')
+    .replace(FILE_URL, '<path>')
+    .replace(WIN_USERS_PATH, '<path>')
+    .replace(FWD_USERS_PATH, '$1<path>')
+    .replace(TILDE_PATH, '$1<path>')
+    .replace(ABS_PATH, '$1<path>');
+  return id ? out.replace(id, '<user>') : out;
+}
 // Polling runs in this window: Bash/PowerShell calls of a POLL_CATEGORIES
 // category, grouped per session (sessionKey) by commandKey; a group of
 // >= POLL_MIN_CALLS calls is a run. cost = 1/n of each n-call turn (as in
