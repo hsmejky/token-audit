@@ -520,12 +520,35 @@ function workUnits(cur, all) {
   }).sort((a, b) => b.cost - a.cost).slice(0, TOP_UNITS);
 }
 
+// Same floor(q*n) quantile as SESSIONS' median/p90 (see `pick` above), so
+// both read the same way. q=1 clamps to the last (= max) element.
+function quantile(sortedAsc, q) {
+  return sortedAsc.length ? sortedAsc[Math.min(sortedAsc.length - 1, Math.floor(q * sortedAsc.length))] : 0;
+}
+
+// Distribution of subagent turns and peak context, per design.md Q3. Spec
+// does not say which population feeds it; decided (REFERENCE.md "Subagent
+// distribution — population"): every subagent in the current window scope
+// (`cur`), not just the TOP_SUBAGENTS-by-cost list above — the top-10 is a
+// leaderboard, this is the population it was drawn from, so a reader can
+// tell whether e.g. "288 turns" is typical or an outlier.
+function subagentDistribution(cur) {
+  const subs = cur.sessions.filter(s => s.isSub);
+  const turnsAsc = subs.map(s => s.msgs).sort((a, b) => a - b);
+  const ctxAsc = subs.map(s => s.ctxMax).sort((a, b) => a - b);
+  return {
+    count: subs.length,
+    turns: { median: quantile(turnsAsc, 0.5), p90: quantile(turnsAsc, 0.9), max: quantile(turnsAsc, 1) },
+    peakCtx: { median: quantile(ctxAsc, 0.5), p90: quantile(ctxAsc, 0.9), max: quantile(ctxAsc, 1) },
+  };
+}
+
 function detail(cur, tasks, all) {
   const topSubagents = cur.sessions.filter(s => s.isSub).slice(0, TOP_SUBAGENTS).map(s => ({
     sid: s.sid, parent: s.parent, project: s.project, task: tasks.get(sessionKey(s)) || null,
     model: s.model, turns: s.msgs, peakCtx: s.ctxMax, cost: s.cost,
   }));
-  return { topSubagents, units: workUnits(cur, all) };
+  return { topSubagents, units: workUnits(cur, all), distribution: subagentDistribution(cur) };
 }
 
 const DETAIL_SECTIONS = [
@@ -549,6 +572,16 @@ const DETAIL_SECTIONS = [
       `${fit(shortModel(a.model), 10).padEnd(10)}  ${String(a.parent).slice(0, 8).padEnd(8)}  ` +
       fit(a.task || a.sid, TASK_WIDTH)),
   ] : ['TOP SUBAGENTS  none in this window'],
+  // Subagent turn / peak-ctx distribution — population stats over every
+  // subagent in this window (see subagentDistribution()), not just the
+  // TOP_SUBAGENTS list above.
+  d => d.distribution.count ? [
+    `SUBAGENT DISTRIBUTION (${d.distribution.count} in this window)`,
+    `  turns     median ${String(d.distribution.turns.median).padStart(5)}  ` +
+      `p90 ${String(d.distribution.turns.p90).padStart(5)}  max ${String(d.distribution.turns.max).padStart(5)}`,
+    `  peak ctx  median ${k(d.distribution.peakCtx.median).padStart(5)}  ` +
+      `p90 ${k(d.distribution.peakCtx.p90).padStart(5)}  max ${k(d.distribution.peakCtx.max).padStart(5)}`,
+  ] : ['SUBAGENT DISTRIBUTION  none in this window'],
 ];
 
 function renderDetail(d) {

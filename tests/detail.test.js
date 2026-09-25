@@ -276,3 +276,80 @@ test('WORK UNITS: --json includes units at top level of detail; --no-detail omit
   const compact = audit(dir, '--no-detail');
   assert.equal(compact.detail, undefined);
 });
+
+// --------------------------------------------------- subagent distribution
+
+test('SUBAGENT DISTRIBUTION: known turn counts -> exact median / p90 / max (turns and peak ctx)', () => {
+  const files = {};
+  // 5 subagents under one parent, turns and peak-ctx deliberately in the
+  // *same* ascending order (10..50 turns, 1000k..5000k peak ctx) so both
+  // stats can be checked against one sorted array: [10,20,30,40,50],
+  // len 5 -> floor(q*5): median (q .5) -> idx 2 -> 30; p90 (q .9) -> idx 4 -> 50; max -> idx 4 -> 50.
+  for (const [i, turnsN] of [10, 20, 30, 40, 50].entries()) {
+    const base = `projects/p/parent/subagents/agent-${i}`;
+    files[base + '.jsonl'] = turns(turnsN, `s${i}`,
+      { usage: { input_tokens: 0, cache_read_input_tokens: 1000 * (i + 1), output_tokens: 0 } });
+    files[base + '.meta.json'] = { description: `agent ${i}` };
+  }
+  const { distribution } = audit(tmpClaudeDir(files)).detail;
+  assert.equal(distribution.count, 5);
+  assert.deepEqual(distribution.turns, { median: 30, p90: 50, max: 50 });
+  assert.deepEqual(distribution.peakCtx, { median: 3000, p90: 5000, max: 5000 });
+});
+
+test('SUBAGENT DISTRIBUTION: population is every subagent in the window, not just the top 10 by cost', () => {
+  const files = { 'projects/p/main-sess.jsonl': turns(1, 'main') };
+  for (let i = 1; i <= 12; i++) {
+    const base = `projects/p/main-sess/subagents/agent-${String(i).padStart(2, '0')}`;
+    files[base + '.jsonl'] = turns(i, `s${i}`);
+    files[base + '.meta.json'] = { description: `task ${i}` };
+  }
+  const { detail } = audit(tmpClaudeDir(files));
+  assert.equal(detail.topSubagents.length, 10, 'leaderboard stays capped at 10');
+  assert.equal(detail.distribution.count, 12, 'distribution counts every subagent, not just the top 10');
+});
+
+test('SUBAGENT DISTRIBUTION: no subagents in window -> count 0, text shows an explicit empty line', () => {
+  const dir = tmpClaudeDir({ 'projects/p/solo.jsonl': turns(3, 'solo') });
+  assert.deepEqual(audit(dir).detail.distribution, {
+    count: 0, turns: { median: 0, p90: 0, max: 0 }, peakCtx: { median: 0, p90: 0, max: 0 },
+  });
+  const detail = detailLines(auditText(dir));
+  assert.ok(detail.some(l => l.includes('SUBAGENT DISTRIBUTION') && l.includes('none in this window')),
+    `expected an empty-state DISTRIBUTION line, got:\n${detail.join('\n')}`);
+});
+
+test('SUBAGENT DISTRIBUTION: text report shows turns and peak-ctx lines, <= 120 chars, --json matches', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/main-sess.jsonl': turns(1, 'main'),
+    'projects/p/main-sess/subagents/agent-a.jsonl': turns(7, 'a',
+      { usage: { input_tokens: 0, cache_read_input_tokens: 250000, output_tokens: 0 } }),
+    'projects/p/main-sess/subagents/agent-a.meta.json': { description: 'agent a' },
+  });
+  const detail = detailLines(auditText(dir));
+  const header = detail.find(l => l.includes('SUBAGENT DISTRIBUTION'));
+  assert.ok(header && header.includes('1 in this window'), `expected count in header, got: ${header}`);
+  const turnsLine = detail.find(l => l.trim().startsWith('turns'));
+  const ctxLine = detail.find(l => l.trim().startsWith('peak ctx'));
+  assert.match(turnsLine, /median\s+7\s+p90\s+7\s+max\s+7/);
+  assert.match(ctxLine, /median\s+250k\s+p90\s+250k\s+max\s+250k/);
+  for (const l of detail) assert.ok([...l].length <= 120, `line too long (${[...l].length}): ${l}`);
+  const { distribution } = audit(dir).detail;
+  assert.deepEqual(distribution, {
+    count: 1, turns: { median: 7, p90: 7, max: 7 }, peakCtx: { median: 250000, p90: 250000, max: 250000 },
+  });
+});
+
+test('DETAIL block stays <= 30 lines with full sections: 10 work units, 10 subagents, distribution',
+  () => {
+    const files = {};
+    for (let i = 1; i <= 10; i++) {
+      const proj = `projects/p${i}`;
+      files[`${proj}/main-${i}.jsonl`] = turns(5, `m${i}`);
+      const base = `${proj}/main-${i}/subagents/agent-${i}`;
+      files[base + '.jsonl'] = turns(i, `s${i}`, { model: i % 2 ? 'claude-opus-5-5' : 'claude-sonnet-4-6' });
+      files[base + '.meta.json'] = { description: `task ${i}` };
+    }
+    const detail = detailLines(auditText(tmpClaudeDir(files)));
+    assert.ok(detail.length <= 30, `DETAIL block has ${detail.length} lines, want <= 30:\n${detail.join('\n')}`);
+  });

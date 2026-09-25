@@ -220,6 +220,29 @@ between sections (the whole block has a line budget: ≤ 30, later ≤ 40 lines)
   `detail.topSubagents[]` = `{ sid, parent, project, task, model, turns, peakCtx, cost }`.
   Main sessions are not listed here; `task` is `null` when no source had text (row shows the
   agent id instead).
+- **SUBAGENT DISTRIBUTION** (this window): turns and peak ctx, each as median / p90 / max, over
+  every subagent in the window scope (not just the TOP 10 SUBAGENTS list above — see "population"
+  below). Header carries the subagent count; empty scope prints a single "none in this window"
+  line instead of the two stat lines. `--json`: `detail.distribution` =
+  `{ count, turns: { median, p90, max }, peakCtx: { median, p90, max } }`. Same
+  `sorted[floor(q*n)]` quantile as the summary's SESSIONS median/p90, so both read the same way;
+  `q=1` for max.
+
+### Subagent distribution — population
+
+**Decided**: the distribution runs over **every subagent session in the current window scope**
+(`cur.sessions` filtered to `isSub`), not just the TOP 10 SUBAGENTS-by-cost list printed just
+above it.
+
+**Reason**: design.md Q3 specifies the stat ("median, p90, max" for turns and peak ctx) but not
+its population. The top-10 list is a leaderboard of the most expensive subagents; the
+distribution's job is to say whether a leaderboard entry is typical or an outlier (design.md's own
+example: "agent A ran 288 turns — is that normal?"), which only works if it is computed over the
+full population, not the 10 rows the reader is already looking at (those would show a distribution
+dominated by the leaderboard itself, converging to roughly the top-10's own median as list size
+shrinks). This mirrors the summary's SESSIONS median/p90, which is likewise computed over all
+sessions, not just TOP SESSIONS. Not yet reconciled against design.md's own text — see "Open
+questions" in design.md.
 
 ### Subagent task text — source
 
