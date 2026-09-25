@@ -9,7 +9,8 @@
       "name": "token-audit",
       "source": "./plugin",
       "description": "Periodic checkup of Claude Code token spend and habits.",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "license": "MIT"
     }
   ]
 }

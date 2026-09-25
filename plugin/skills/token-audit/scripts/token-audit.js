@@ -145,7 +145,7 @@ function rateFor(model) {
 
 // --------------------------------------------------------------- activity
 // Bash / PowerShell command → normalized key, so the same command run against
-// a different PR number, commit, path or cwd groups together (design.md Q9).
+// a different PR number, commit, path or cwd groups together (the design phase Q9).
 // The key is the unit POLLING counts per session and BOILERPLATE takes a
 // prefix of: top-level segments (shellSegments(), quote- and subshell-aware)
 // joined by canonical separators (` && `, ` || `, ` | `, ` ; `), so
@@ -249,7 +249,7 @@ function hashHeredocBodies(s, keep) {
   return out.join('\n');
 }
 
-// Tool call → activity category (design.md Q9). ONE table, first match wins,
+// Tool call → activity category (the design phase Q9). ONE table, first match wins,
 // so order is priority: a compound `pnpm test && git commit` is test, a
 // `curl …/check-runs` is wait/poll before it is GitHub. Adding a category =
 // one line. Each rule's regex runs over the call's subject: `<Tool> <key>`,
@@ -762,7 +762,7 @@ function eachPluginDir(fn) {
 // or transcript, so this script (which only reads static files, never
 // connects to a live server) cannot measure them the way PLUGIN_BLOAT
 // measures agent/skill frontmatter. Counting `mcp__<server>__*` names seen in
-// transcripts was the alternative (design.md/plan.md Slice 14) but undercounts
+// transcripts was the alternative (the design phase/the plan Slice 14) but undercounts
 // (a server usually exposes more tools than were ever called) and reads zero
 // for a configured-but-unused server — exactly the "paying for it, not using
 // it" case this line exists to surface. So: a flat per-server estimate,
@@ -771,7 +771,7 @@ function eachPluginDir(fn) {
 const MCP_SERVER_TOKENS = 800;
 
 // Configured MCP servers for the scoped project, from the three places Claude
-// Code stores them (design.md Q9 / plan.md Slice 14):
+// Code stores them (the design phase Q9 / the plan Slice 14):
 //   - user scope:    the user-config file (USER_CONFIG_PATH below) ->
 //                     top-level `mcpServers` (NOT settings.json — checked
 //                     against a real `~/.claude.json` at implementation time;
@@ -878,7 +878,7 @@ function config() {
 
 // ------------------------------------------------------------------- flags
 const DAY = 86400e3;
-// LONG_AGENT thresholds (design.md Q5) — Slice 15 HITL decision, re-tuned on real,
+// LONG_AGENT thresholds (the design phase Q5) — Slice 15 HITL decision, re-tuned on real,
 // deduped, all-history data (see REFERENCE.md "LONG_AGENT" for the percentiles).
 const LONG_AGENT_TURNS = 150; // "over N turns" -> strictly greater than N
 const LONG_AGENT_CTX = 400e3; // "peak context > 400k" -> strictly greater than
@@ -886,7 +886,7 @@ const LONG_AGENT_CTX = 400e3; // "peak context > 400k" -> strictly greater than
 // subagent is LONG_AGENT's job instead (the two flags used to double-count the
 // same sessions). See REFERENCE.md "LONG_SESSION".
 const LONG_SESSION_TURNS = 200; // ">= N turns" on a main (non-subagent) session fires
-// POLLING threshold (design.md Q9) — Slice 15 HITL decision, re-tuned on real data.
+// POLLING threshold (the design phase Q9) — Slice 15 HITL decision, re-tuned on real data.
 const POLL_MIN_CALLS = 10; // same command key >= N calls in one session
 // Categories whose repeat is a wait. A repeated test run, commit or edit is
 // the work itself, not polling (Slice 11 real-data check: those were most of
@@ -1266,7 +1266,7 @@ function polling(rows) {
     .map(g => ({ ...g, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.count - a.count);
 }
-// BOILERPLATE threshold (design.md Q9) — provisional, Slice 15 re-tunes it.
+// BOILERPLATE threshold (the design phase Q9) — provisional, Slice 15 re-tunes it.
 const BOILER_MIN_SESSIONS = 5; // same setup prefix in >= N distinct sessions
 // Setup prefixes of a command key: each top-level segment of its leading run of
 // variable assignments (`NAME=…`, `export NAME=…`, PowerShell `$env:NAME=…`), when a
@@ -1359,7 +1359,7 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
       long.reduce((a, s) => a + s.cost, 0));
   }
   // Subagents over LONG_AGENT_TURNS turns or with a peak context over
-  // LONG_AGENT_CTX — the main lever design.md Q5 identifies. Share is of
+  // LONG_AGENT_CTX — the main lever the design phase Q5 identifies. Share is of
   // this window's total spend (cur.cost), same meaning as LONG_SESSION's share.
   const longAgents = cur.sessions.filter(s =>
     s.isSub && (s.msgs > LONG_AGENT_TURNS || s.ctxMax > LONG_AGENT_CTX));
@@ -1547,7 +1547,7 @@ function flagLines(f) {
 // DETAIL_MAX_LINES, same fitFlags() guard) and always in --json.
 const SUMMARY_MAX_LINES = 24;
 const DETAIL_MAX_LINES = 40;
-// Slice 28 (design.md Q5, HITL Q-B): rank by extra cost where design.md defines
+// Slice 28 (the design phase Q5, HITL Q-B): rank by extra cost where the design phase defines
 // one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE
 // (cost of those turns) share tier 0, by $ — then a fixed priority for flags
 // whose $ is only the flagged spend, $ as tie-break inside a tier: LONG_AGENT
@@ -1636,7 +1636,7 @@ function trendLine(wks) {
   return `TREND        ${first.week} ${money(first.costPerMsg)}/msg → ${last.week} ${money(last.costPerMsg)}/msg ` +
     `${delta}   span ${span} wk (${wks.length} with data)   full table in --json`;
 }
-// Slice 28 (design.md Q3, HITL D): CONFIG, UNPRICED and the SPEND family split
+// Slice 28 (the design phase Q3, HITL D): CONFIG, UNPRICED and the SPEND family split
 // print one line each (≤ 120 chars); a list that doesn't fit ends in one
 // "+N more" marker, and --json carries every entry. fit()/textOf() run here, at
 // print time, on the already show()n (redacted/sanitized) values (Slice 20/29).
@@ -1693,7 +1693,7 @@ const TOP_UNITS = 10;
 const TOP_ACTIVITIES = 6;
 
 // A "work unit" = one main (non-sub) session rolled up with the subagents it
-// spawned (sub.parent === main.sid), per design.md Q3. Keyed by main sid so a
+// spawned (sub.parent === main.sid), per the design phase Q3. Keyed by main sid so a
 // main session with no subagent rows still forms its own unit (sub 0%); a
 // subagent whose parent main session has no priced turns in this window (rare
 // — e.g. the main thread was entirely outside the window) still rolls up
@@ -1742,7 +1742,7 @@ function quantile(sortedAsc, q) {
   return sortedAsc.length ? sortedAsc[Math.min(sortedAsc.length - 1, Math.floor(q * sortedAsc.length))] : 0;
 }
 
-// Distribution of subagent turns and peak context, per design.md Q3. Spec
+// Distribution of subagent turns and peak context, per the design phase Q3. Spec
 // does not say which population feeds it; decided (REFERENCE.md "Subagent
 // distribution — population"): every subagent in the current window scope
 // (`cur`), not just the TOP_SUBAGENTS-by-cost list above — the top-10 is a
@@ -2021,7 +2021,7 @@ async function main() {
     // so SPEND ≤ ALL-TIME always holds); sessions/messages stay main-only, matching
     // SESSIONS above (all.mainSessions) — see the comment where allMainMsgs is built.
     `ALL-TIME     ${money(all.cost)} over ${all.mainSessions.length} sessions, ${allMainMsgs} messages`,
-    // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
+    // Slice 28 (the design phase Q3, HITL decision): TOP SESSIONS dropped from the summary —
     // it overlapped WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
     // overrun sources on real --all data. Still in --json as cur.sessions (trimmed to
     // --top, unchanged). WEEKS (a full per-week table, unbounded with history length)
@@ -2042,7 +2042,7 @@ async function main() {
   // suffix differs (see `flagsMoreLine` below).
   const detSeparator = det ? [''] : [];
 
-  // Slice 28 (design.md Q3/Q5, HITL Q-B/Q-C): flags in rankFlags() order fill
+  // Slice 28 (the design phase Q3/Q5, HITL Q-B/Q-C): flags in rankFlags() order fill
   // whatever room is left (fitFlags(), same hard guard DETAIL's "FLAGS
   // (continued)" uses); the rest continue there within its own line budget.
   // --json's `flags` always carries every flag (unranked).
