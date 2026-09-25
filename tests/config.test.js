@@ -1,6 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, auditText, tmpClaudeDir, turn } = require('./harness');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { audit, auditText, auditEnv, tmpClaudeDir, turn } = require('./harness');
+
+// Home "Petr Svarc" -> identity name parts "Petr"/"Svarc", same pattern as
+// tests/identity.test.js's petrHome(). Used to prove showAny() redacts *before*
+// JSON.stringify(), not after (an escape sequence like `\n`/`\t` must never glue
+// a letter onto a name/login and defeat redactPaths()'s ID_EDGE boundary).
+function petrHome() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ta-cfg29-'));
+  const home = path.join(tmp, 'Petr Svarc');
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'gitconfig'), '');
+  const env = { HOME: home, USERPROFILE: home, GIT_CONFIG_GLOBAL: path.join(tmp, 'gitconfig'),
+    GIT_CONFIG_NOSYSTEM: '1' };
+  return { home, env };
+}
 
 // Real shape (~/.claude/settings.json): modelSettings.<model>.effortLevel, one
 // entry per model. CONFIG must read these from --claude-dir, not root-only
@@ -270,6 +287,9 @@ test('CONFIG: hostile-long model + cleanupPeriodDays + effortLevel together stil
   for (const line of lines) {
     assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
   }
+  // 4th review, finding 6 (nit): the 120-char check above passes vacuously if the
+  // `model=` line never got printed at all -- assert it actually exists.
+  assert.ok(lines.some(l => l.startsWith('  model=')), `expected a "  model=" line, got:\n${out}`);
 });
 
 // Slice 20 3rd review, finding 2: fit()/fitMiddle() only run at print time (text
@@ -291,7 +311,10 @@ test('CONFIG --json: an oversized settings.model is not truncated (fit is print-
 // A non-string config value (a forged settings.json where an object/array sits
 // where a string is expected) must not collapse into the useless "[object Object]"
 // via a naive String() coercion -- it should come through as readable structure.
-test('CONFIG --json: an object value for settings.model is not stringified to "[object Object]"', () => {
+// 4th review, finding 1 (dispatcher decision): --json keeps the value's live
+// type, so config.model stays the actual object (redacted per-key/value), not a
+// pre-stringified string -- String()'ing an object was the old (wrong) contract.
+test('CONFIG --json: an object value for settings.model keeps its live type, not "[object Object]"', () => {
   const dir = tmpClaudeDir({
     'projects/p/s1.jsonl': turn({ id: 'm1' }),
     'settings.json': { model: { evil: 'nested' } },
@@ -299,24 +322,34 @@ test('CONFIG --json: an object value for settings.model is not stringified to "[
 
   const r = audit(dir);
   assert.notEqual(r.config.model, '[object Object]');
-  assert.ok(String(r.config.model).includes('evil'),
-    `expected nested structure visible, got: ${JSON.stringify(r.config.model)}`);
+  assert.deepEqual(r.config.model, { evil: 'nested' },
+    `expected live nested structure, got: ${JSON.stringify(r.config.model)}`);
 });
 
 // Slice 20 3rd review, finding 6 (pre-existing): PLUGIN_BLOAT's "worst: ..." plugin
 // name list had no per-name fit, and wrapWords() didn't hard-break a single word
 // longer than the wrap width -- an extreme plugin name (no separators) could still
 // push a FLAGS line past 120 chars.
+// 4th review, finding 2: this fixture only ever defined 1 agent, so PLUGIN_BLOAT
+// (threshold: cfg.agentDefs > 20 || cfg.prefixTokens > 5000 -- see flags() in
+// token-audit.js) never actually fired; the test passed vacuously (any output,
+// PLUGIN_BLOAT line or not, satisfies "every line <= 120 chars"). frontmatterWeight()
+// only reads the first 4000 bytes of each file, so a single agent's name+description
+// can't reach the 20000-char (5000-token) prefixTokens threshold either -- 21 agents
+// (agentDefs > 20) is the only way to trigger the flag here. Assert the PLUGIN_BLOAT
+// line actually exists, is truncated (contains the ellipsis), and still fits 120 chars.
 test('FLAGS PLUGIN_BLOAT: an extremely long single-word plugin name does not overrun 120 chars', () => {
   // Kept well under Windows' ~260-char path limit (this fixture's own tmp-dir
   // prefix + /.claude-plugin/plugin.json already eats a good chunk of it) while
   // still exceeding both the plugin-name fit width (40) and FLAG_TEXT_WIDTH (103).
   const longName = 'p'.repeat(140);
+  const agentFiles = Object.fromEntries(Array.from({ length: 21 }, (_, i) =>
+    [`plugins/cache/petr-market/${longName}/agents/a${i}.md`, `---\nname: a${i}\n---\nbody`]));
   const dir = tmpClaudeDir({
     'projects/p/s1.jsonl': turn({ id: 'm1' }),
     'settings.json': { enabledPlugins: { [`${longName}@petr-market`]: true } },
     [`plugins/cache/petr-market/${longName}/.claude-plugin/plugin.json`]: {},
-    [`plugins/cache/petr-market/${longName}/agents/a1.md`]: '---\nname: a1\n---\nbody '.repeat(400),
+    ...agentFiles,
   });
 
   const out = auditText(dir);
@@ -324,6 +357,52 @@ test('FLAGS PLUGIN_BLOAT: an extremely long single-word plugin name does not ove
   for (const line of lines) {
     assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
   }
+  const idx = lines.findIndex(l => l.trimStart().startsWith('PLUGIN_BLOAT'));
+  assert.ok(idx !== -1, `expected PLUGIN_BLOAT to fire (21 agent defs), got:\n${out}`);
+  // A long flag text word-wraps onto continuation lines indented 17 spaces
+  // (see printFlagLine()/wrapWords()) -- collect them back into the full text.
+  let end = idx + 1;
+  while (end < lines.length && lines[end].startsWith(' '.repeat(17))) end++;
+  const block = lines.slice(idx, end).join(' ');
+  assert.ok(block.includes('…'), `expected the long plugin name truncated with '…': ${block}`);
+  for (let i = idx; i < end; i++)
+    assert.ok([...lines[i]].length <= 120, `PLUGIN_BLOAT line exceeds 120 chars: ${lines[i]}`);
+});
+
+// 4th review, finding 1: showAny() used to JSON.stringify(v) *before* show(),
+// so an object value with control chars (\n, \t) next to a name/login got its
+// control char turned into a literal backslash+letter escape sequence first
+// (e.g. \n -> the two chars `\` `n`) -- that trailing letter then sits right
+// before the name and blocks redactPaths()'s ID_EDGE boundary check, so the
+// name survives un-redacted. Decision: showAny() walks the object/array
+// recursively and calls show() on every string leaf (keys and values) --
+// redaction/control-char-stripping happens first, on real control chars --
+// and JSON.stringify() (for text output only) runs after, on the already-safe
+// result.
+test('CONFIG --json: a control char inside a nested object value does not glue a letter onto a redacted name', () => {
+  const { home, env } = petrHome();
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { model: { a: 'x\nSvarc', b: 'Petr\tSvarc' } },
+  });
+  const args = ['--claude-dir', dir, '--days', '36500', '--all', '--json'];
+  const out = auditEnv(env, args);
+  const r = JSON.parse(out);
+  assert.equal(typeof r.config.model, 'object', 'config.model should keep its live (object) type in --json');
+  assert.equal(r.config.model.a, 'x <user>', `name leaked past a control char: ${JSON.stringify(r.config.model)}`);
+  assert.equal(r.config.model.b, '<user> <user>', `name leaked past a control char: ${JSON.stringify(r.config.model)}`);
+});
+
+test('CONFIG text: a control char inside a nested object value does not glue a letter onto a redacted name', () => {
+  const { home, env } = petrHome();
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { model: { a: 'x\nSvarc', b: 'Petr\tSvarc' } },
+  });
+  const args = ['--claude-dir', dir, '--days', '36500', '--all'];
+  const out = auditEnv(env, args);
+  assert.ok(!/Svarc/.test(out), `name leaked in text output:\n${out}`);
+  assert.ok(!/\bPetr\b/.test(out), `name leaked in text output:\n${out}`);
 });
 
 // CONFIG must read settings.json from --claude-dir, never the real ~/.claude

@@ -1374,8 +1374,15 @@ const FLAG_TEXT_WIDTH = 120 - 17;
 // fitMiddle/fitPrefix, both bounded to FLAG_TEXT_WIDTH). A static message (e.g.
 // NO_RETENTION) can still run long; rather than truncate advice text with `…`, wrap it
 // onto continuation lines indented to FLAG_TEXT_WIDTH's own margin, so every line stays
-// ≤ 120 chars and no words are lost. Greedy word wrap; never splits a word.
+// ≤ 120 chars and no words are lost. Greedy word wrap; only hard-breaks a single
+// word (below) when it alone is longer than width.
 function wrapWords(text, width) {
+  // 4th review, finding 4: width < 1 makes the hard-break loop below a no-op
+  // forever (chars.slice(0, width) is '' and chars.slice(width) is unchanged) —
+  // an infinite loop for any non-empty word, RangeError (stack overflow) for text
+  // callers building up wrapWords() output. Every real caller passes a fixed
+  // positive width (FLAG_TEXT_WIDTH), so this is a defensive floor, not a live bug.
+  width = Math.max(1, width);
   const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
   const lines = [];
   let cur = '';
@@ -1569,7 +1576,7 @@ const shown = new Map();
 // and could still forge layout or reorder printed text. \p{Cc} covers C0+C1,
 // \p{Cf} covers the format/bidi class; \u2028/\u2029 (line/paragraph separator)
 // aren't in either category but are still line breaks to a terminal.
-// Slice 20 3rd review: \p{Cf} is broad \u2014 it also matches ZWNJ/ZWJ/SHY (U+200C,
+// Slice 20 3rd review: \p{Cf} is broad \- it also matches ZWNJ/ZWJ/SHY (U+200C,
 // U+200D, U+00AD), which show up legitimately in Persian/Arabic names and emoji
 // ZWJ sequences. Collapsing them to a space is a display-only tradeoff (this
 // regex only runs inside show(), on the printed copy); grouping/keys are computed
@@ -1581,20 +1588,41 @@ const show = v => {
   return shown.get(v);
 };
 // Slice 20 3rd review, finding 2: fit()/fitMiddle() must run only at print time
-// (text report) \u2014 showConfig() feeds --json too, and truncating a value there
+// (text report) \- showConfig() feeds --json too, and truncating a value there
 // silently drops data from the JSON contract (REFERENCE.md:375, "the full prefix
 // is in --json"). This is the JSON-safe counterpart to show() for a config value
 // that isn't necessarily a string: strings/numbers/booleans/null pass through
-// show()/unchanged so --json keeps their real type; an object or array (a forged
-// settings.json value where a string was expected) is neither truncated nor
-// blindly coerced with String() into the useless "[object Object]" \u2014 it's
-// JSON-stringified and then run through show() so the forged structure stays
-// visible, redacted and control-char-safe instead of silently vanishing.
+// show()/unchanged so --json keeps their real type.
+// Slice 20 4th review, finding 1: an object/array (a forged settings.json value
+// where a string was expected) used to be JSON.stringify()'d *before* show() ran
+// \- turning a real control char (\n, \t, ...) into a literal backslash+letter
+// escape sequence first. That trailing letter then sits right next to a name/
+// login in the stringified text and blocks redactPaths()'s ID_EDGE boundary
+// check, so the name survives un-redacted (e.g. `"x\nSvarc"` -> the `n` before
+// `Svarc` defeats the boundary). Fix (dispatcher decision): --json keeps the
+// live type \- walk the object/array recursively and run show() on every string
+// leaf (keys and values, since a forged key is just as untrusted as a value);
+// numbers/booleans/null pass through unchanged. Serializing to text (via
+// JSON.stringify(), for the text report only) happens after this, on the
+// already-redacted/sanitized result \- see textOf() below.
 const showAny = v => {
   if (v == null || typeof v === 'number' || typeof v === 'boolean') return v;
   if (typeof v === 'string') return show(v);
-  try { return show(JSON.stringify(v)); } catch { return show(String(v)); }
+  if (Array.isArray(v)) return v.map(showAny);
+  if (typeof v === 'object') {
+    const out = {};
+    for (const [k, val] of Object.entries(v)) out[show(k)] = showAny(val);
+    return out;
+  }
+  try { return show(String(v)); } catch { return v; }
 };
+// Text report only: turns an already-redacted showAny() result back into a
+// string right before fit() truncates it for display \- fit() itself does a
+// naive String(x) internally, which would print an object as the useless
+// "[object Object]" (the same bug finding 1 fixed for --json). --json never
+// calls this: it prints the live object via the top-level JSON.stringify() of
+// the whole payload, keeping the real type per the dispatcher decision above.
+const textOf = v => (v == null || typeof v !== 'object') ? v : JSON.stringify(v);
 // Slice 20 re-review: settings.json is as untrusted as an MCP server / plugin
 // name (config(), :767/:773-774) — effortLevel and cleanupPeriodDays were
 // printed raw, letting a forged value inject a fake extra line (e.g. a bogus
@@ -1725,13 +1753,18 @@ async function main() {
   // Slice 20 3rd review, finding 2: cfg.* is the same object printed as --json,
   // so it now carries the full (unfit) sanitized value (see showConfig/showAny
   // above) — fit()/fitMiddle() run here, at print time, never in the JSON path.
+  // Slice 20 4th review, finding 1: cfg.model/cleanupPeriodDays/effortLevel can
+  // now be a live object/array (showAny() keeps --json's real type) — run each
+  // through textOf() first so fit() gets a string, not fit()'s own naive
+  // String(x) turning it into "[object Object]".
   if (cfg.modelEffort.length) {
     // model(60) + cleanupPeriodDays(30) + their fixed labels is 119 chars worst
     // case, always within the 120 budget even with both maxed out.
-    console.log(`  model=${fit(cfg.model, 60)}   cleanupPeriodDays=${fit(cfg.cleanupPeriodDays ?? 'unset', 30)}`);
-    console.log('  effortLevel:' + (cfg.effortLevel ? ` default=${fit(cfg.effortLevel, 30)}` : ''));
+    console.log(`  model=${fit(textOf(cfg.model), 60)}   ` +
+      `cleanupPeriodDays=${fit(textOf(cfg.cleanupPeriodDays) ?? 'unset', 30)}`);
+    console.log('  effortLevel:' + (cfg.effortLevel ? ` default=${fit(textOf(cfg.effortLevel), 30)}` : ''));
     for (const m of cfg.modelEffort)
-      console.log(`    ${fit(m.model, 60)}=${fit(m.effortLevel, 30)}`);
+      console.log(`    ${fit(textOf(m.model), 60)}=${fit(textOf(m.effortLevel), 30)}`);
   } else {
     // Slice 20 3rd review, finding 1: all three fields inline on one line — a static
     // 60/30/30 budget for model/cleanupPeriodDays/effortLevel can total 164 chars once
@@ -1739,11 +1772,11 @@ async function main() {
     // first (they're meant to be short: a number or a closed vocabulary), then give
     // model whatever's left of the 120-char line — same dynamic-budget approach as the
     // banner/session-row project name, instead of a static guess for all three at once.
-    const cleanup = fit(cfg.cleanupPeriodDays ?? 'unset', 30);
-    const effort = fit(cfg.effortLevel ?? 'unset', 30);
+    const cleanup = fit(textOf(cfg.cleanupPeriodDays) ?? 'unset', 30);
+    const effort = fit(textOf(cfg.effortLevel) ?? 'unset', 30);
     const suffix = `   cleanupPeriodDays=${cleanup}   effortLevel=${effort}`;
     const budget = Math.max(10, 120 - '  model='.length - suffix.length);
-    console.log(`  model=${fit(cfg.model, budget)}` + suffix);
+    console.log(`  model=${fit(textOf(cfg.model), budget)}` + suffix);
   }
   console.log(`  plugins=${cfg.pluginCount}   agent defs=${cfg.agentDefs}   skill defs=${cfg.skillDefs}   ` +
     `fixed prefix ≈${(cfg.prefixTokens / 1e3).toFixed(1)}k tok/request`);

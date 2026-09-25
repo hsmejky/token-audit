@@ -680,6 +680,23 @@ Prefix weight is estimated from each definition's `name` + `description` frontma
 entries for marketplaces/plugins that were browsed or previously installed but are not
 active, and counting those inflates `PLUGIN_BLOAT`.
 
+### CONFIG value types in `--json` (Slice 20, 4th review)
+
+`config.model`, `config.cleanupPeriodDays`, `config.effortLevel` and each
+`config.modelEffort[].effortLevel` keep their **live JSON type** in `--json` — a
+string stays a string, a number stays a number, and a forged non-string value
+(an object/array where `settings.json` was expected to hold a string) comes
+through as that same object/array, not a stringified placeholder. Every string
+anywhere in that structure (both keys and values, recursively) is redacted
+(`redactPaths()`) and control-char-stripped (`show()`'s `CONTROL_CHARS`) before
+it is ever serialized — never after — so an escape sequence produced by
+serializing first (e.g. `\n` becoming the two literal characters `\` and `n`)
+can't glue a letter onto a name/login and defeat `redactPaths()`'s identity
+boundary check. Values are never truncated in `--json`: `fit()`/`fitMiddle()`
+run only when building the text report, on a `JSON.stringify()` of the
+already-redacted structure at that point — see `showAny()`/`textOf()` in
+token-audit.js.
+
 ### CONFIG `effortLevel` line — wraps once per-model settings exist (Slice 20)
 
 With no `modelSettings` (or one root-only value), `effortLevel=` stays inline on the
