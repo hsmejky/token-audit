@@ -792,22 +792,29 @@ function polling(rows) {
 }
 // BOILERPLATE threshold (design.md Q9) — provisional, Slice 15 re-tunes it.
 const BOILER_MIN_SESSIONS = 5; // same setup prefix in >= N distinct sessions
-// Setup prefix of a command key: its first top-level segment, when that
-// segment is a variable assignment (`NAME=…` / `export NAME=…`) and at least
-// one more segment follows — the setup a command needs before it can run
-// (`TOKEN=$(… | git credential fill …) && curl …`, `export PYTHONIOENCODING=…
-// && python …`). A value that is only a path (`S=<path>`, `S=/c/…/scratchpad`,
-// `F="$HOME/x"`) is a shorthand for a location, not a missing tool → null.
+// Setup prefixes of a command key: each top-level segment of its leading run of
+// variable assignments (`NAME=…`, `export NAME=…`, PowerShell `$env:NAME=…`), when a
+// non-assignment segment follows the run — the setup a command needs before it can
+// run (`TOKEN=$(… | git credential fill …) && curl …`, `export PYTHONIOENCODING=…
+// && python …`). Each assignment is its own prefix, so `export X=… && TOKEN=$(…) &&
+// curl` groups its fetch with a bare `TOKEN=$(…) && curl`. A value that is only a path
+// (`S=<path>`, `S=/c/…/scratchpad`, `F="$HOME/x"`) is a shorthand for a location, not a
+// missing tool → skipped (the run goes on past it).
 // Real-data numbers and the definitions that were tried: REFERENCE.md "BOILERPLATE".
-const SETUP_ASSIGN = /^((?:export )?[A-Za-z_]\w*=)(.*)$/s;
-const VAR_ROOTED_PATH = /^(?:<path>|\$\{?\w+\}?)(?:[\\/]|$)/;
+const SETUP_ASSIGN = /^((?:export |\$env:)?[A-Za-z_]\w* ?= ?)(.*)$/s;
+const VAR_ROOTED_PATH = /^(?:<path>|\$\{?\w+\}?)(?:[\/]|$)/;
 const unquote = v => v.replace(/^(["'])(.*)\1$/s, '$2');
-function setupPrefix(key) {
+function setupPrefixes(key) {
   const segs = shellSegments(key);
-  const m = segs.length > 1 && SETUP_ASSIGN.exec(segs[0].text);
-  if (!m) return null;
-  const value = unquote(m[2]);
-  return value && !isPathText(value) && !VAR_ROOTED_PATH.test(value) ? segs[0].text : null;
+  const out = [];
+  let i = 0;
+  for (; i < segs.length; i++) {
+    const m = SETUP_ASSIGN.exec(segs[i].text);
+    if (!m) break;
+    const value = unquote(m[2]);
+    if (value && !isPathText(value) && !VAR_ROOTED_PATH.test(value)) out.push(segs[i].text);
+  }
+  return i < segs.length ? [...new Set(out)] : [];
 }
 // Printed form of a setup prefix: a literal value (not `$(…)` / `$VAR` / `${VAR}`) may
 // be a pasted secret, so it prints as `NAME=<value>`; any other value goes through
@@ -816,33 +823,42 @@ function showPrefix(prefix) {
   const m = SETUP_ASSIGN.exec(prefix);
   return m && !/^\$[({\w]/.test(unquote(m[2])) ? `${m[1]}<value>` : redactPaths(prefix);
 }
-// Boilerplate prefixes in this window: Bash/PowerShell calls grouped by
-// setupPrefix() (raw, unredacted) over all sessions (sessionKey); a prefix seen
-// in >= BOILER_MIN_SESSIONS sessions is a hit. turns = distinct turns with the
-// prefix; cost = k/n of a turn with k of its n calls carrying it (as in
-// activity()); share = of window spend; most expensive first. `groups[].prefix`
-// is path-redacted. See REFERENCE.md "BOILERPLATE".
+// Boilerplate prefixes in this window: Bash/PowerShell calls grouped by each of
+// their setupPrefixes() (raw, unredacted) over all sessions (sessionKey); a prefix
+// seen in >= BOILER_MIN_SESSIONS sessions is a hit. Per group: turns = distinct turns
+// with the prefix; cost = k/n of a turn with k of its n calls carrying it (as in
+// activity()); share = of window spend. Top-level cost/share count a call once even
+// when it carries two hit prefixes. `groups[].prefix` = showPrefix(); most
+// expensive first. See REFERENCE.md "BOILERPLATE".
 function boilerplate(rows) {
   const groups = new Map();
+  const calls = []; // [prefixes, cost part] per call with a setup prefix
   let total = 0;
   for (const r of rows) {
     total += r.cost;
     for (const c of r.calls) {
-      const p = SHELL_TOOLS.has(c.tool) ? setupPrefix(c.key) : null;
-      if (!p) continue;
-      const g = groups.get(p) || { prefix: p, sessions: new Set(), turns: new Set(), cost: 0 };
-      g.sessions.add(sessionKey(r));
-      g.turns.add(r);
-      g.cost += r.cost / r.calls.length;
-      groups.set(p, g);
+      const ps = SHELL_TOOLS.has(c.tool) ? setupPrefixes(c.key) : [];
+      if (!ps.length) continue;
+      const part = r.cost / r.calls.length;
+      calls.push([ps, part]);
+      for (const p of ps) {
+        const g = groups.get(p) || { prefix: p, sessions: new Set(), turns: new Set(), cost: 0 };
+        g.sessions.add(sessionKey(r));
+        g.turns.add(r);
+        g.cost += part;
+        groups.set(p, g);
+      }
     }
   }
-  return [...groups.values()].filter(g => g.sessions.size >= BOILER_MIN_SESSIONS)
+  const hits = [...groups.values()].filter(g => g.sessions.size >= BOILER_MIN_SESSIONS);
+  const hit = new Set(hits.map(g => g.prefix));
+  const cost = calls.reduce((a, [ps, part]) => a + (ps.some(p => hit.has(p)) ? part : 0), 0);
+  return { cost, share: total ? cost / total : 0, groups: hits
     .map(g => ({ prefix: showPrefix(g.prefix), sessions: g.sessions.size, turns: g.turns.size,
       cost: g.cost, share: total ? g.cost / total : 0 }))
-    .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions);
+    .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions || (a.prefix < b.prefix ? -1 : 1)) };
 }
-function flags(cur, prev, cfg, span, polls = [], boilers = []) {
+function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
   const out = [];
   const add = (id, text) => out.push({ id, text });
 
@@ -874,9 +890,9 @@ function flags(cur, prev, cfg, span, polls = [], boilers = []) {
     out.push({ id: 'POLLING', text: head + fitMiddle(polls[0].key, FLAG_TEXT_WIDTH - head.length),
       groups: polls });
   }
+  const boilers = boiler.groups;
   if (boilers.length) {
-    const cost = boilers.reduce((a, g) => a + g.cost, 0);
-    const share = boilers.reduce((a, g) => a + g.share, 0);
+    const { cost, share } = boiler;
     const b = boilers[0];
     const head = `${boilers.length} prefix(es) in ≥${BOILER_MIN_SESSIONS} sessions = ${money(cost)}, ` +
       `${(100 * share).toFixed(0)}% of spend; top ${b.sessions} sess/${b.turns} turns `;
@@ -1197,4 +1213,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefix };
+module.exports = { projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes };

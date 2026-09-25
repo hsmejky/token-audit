@@ -244,14 +244,20 @@ most expensive first.
 - Any other multi-step setup → a script in the repo (`scripts/…`) the agent calls by name,
   and a line in CLAUDE.md saying it exists.
 
-**Prefix definition** (plan.md left it open): the **setup prefix** of a command key
-(`commandKey()`) is its first top-level segment (`shellSegments(key)[0].text`, `$(…)` intact)
-when (a) that segment is a variable assignment — `NAME=…` or `export NAME=…` (an assignment
-with a command after it in the same segment was already stripped as an env prefix), (b) at
-least one more segment follows (a prefix *of* something), and (c) the value is not just a
-path — `<path>`, an absolute/relative path, or a `$VAR`-rooted one (`"$HOME/x"`), quotes
-stripped. Grouped over all sessions (`sessionKey`, so a subagent is its own session) by the
-exact raw prefix; Bash/PowerShell calls only, all activity categories.
+**Prefix definition** (plan.md left it open): the **setup prefixes** of a command key
+(`commandKey()`) are the segments of its leading run of variable assignments
+(`shellSegments(key)`, `$(…)` intact) — `NAME=…`, `export NAME=…` or PowerShell
+`$env:NAME=…` (spaces around `=` allowed; an assignment with a command after it in the
+same segment was already stripped as an env prefix) — when (a) a non-assignment segment
+follows the run (a prefix *of* something), and (b) the value is not just a path — `<path>`,
+an absolute/relative path, or a `$VAR`-rooted one (`"$HOME/x"`), quotes stripped; a path
+assignment is skipped but the run goes on past it. **Each assignment of the run is its own
+prefix** (not the run as one): `export PYTHONIOENCODING=… && TOKEN=$(… git credential fill
+…) && curl` and `SCRATCH=<path> && TOKEN=$(…) && curl` then group their credential fetch
+with the bare `TOKEN=$(…) && curl`; as one run-prefix they would be three groups, each
+below N. Grouped over all sessions (`sessionKey`, so a subagent is its own session) by the
+exact raw prefix; Bash/PowerShell calls only, all activity categories. A call carrying two
+hit prefixes counts in both groups, but once in the flag's total cost/share.
 
 **Real-data validation** (2026-09-25, `--all --days 3650`, 895 transcripts), hits at N = 5:
 - first segment of every key: 324 prefixes — nearly all noise (`git status --short` 287
@@ -267,6 +273,20 @@ exact raw prefix; Bash/PowerShell calls only, all activity categories.
   `git credential fill` token fetch (8 sessions / 38 turns and 6 / 15; a third spelling with
   `grep "^password="` is in 3 sessions). Hand-count check: design.md estimated ~110 `pulls`
   calls with a fresh credential fill in demo-proj; 53 turns carry the two spellings here.
+
+**Leading-run + `$env:` rule** (2026-09-25, same data, vs. first-segment-only above):
+7 hits (was 3), $188 = 1 % of spend (was $138). `export PYTHONIOENCODING=<value>` 71
+sessions / 1210 turns (was 68 / 1171); the credential fetch 8 / 39 and 7 / 18 (was 8 / 38
+and 6 / 15); new: `$env:PYTHONIOENCODING=<value>` (6 / 23, real), `SHA=$(git rev-parse
+HEAD)` (13 / 22), `start=$(date +%s)` (5 / 14) and `n=<value>` (5 / 114, a loop counter —
+noise; Slice 15). The credential fetch is in 54 sessions / 232 calls overall, but in ~15
+spellings (quotes, `
+
+`, `2>/dev/null`, `sed` vs `grep | cut`, `TOKEN` vs `T`), most
+in 2–4 sessions each, plus some fetches after a non-assignment segment (`S=<path> && cat …
+&& TOKEN=$(…)`); the leading run fixes only the few behind an export / path variable. So the
+design's ~110 is right for the fetch overall; the flag reports the two spellings that cross
+N (57 turns). Merging spellings is the "no fuzzing" call below — Slice 15.
 
 **Judgment calls:**
 - **Exact prefix, no fuzzing**: the credential fetch in three spellings is three groups (quote
