@@ -18,8 +18,7 @@ function assertNoPersonalEmail(rel) {
 
 for (const rel of JSON_MANIFESTS) {
   test(`${rel}: no personal email (only GitHub noreply allowed)`, () => {
-    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    JSON.parse(text);
+    JSON.parse(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
     assertNoPersonalEmail(rel);
   });
 }

@@ -64,10 +64,10 @@ const ROOT = path.join(CLAUDE, 'projects');
 // resolved working directory it was launched from, with every character
 // that isn't a-z/A-Z/0-9 replaced by `-` (this is Claude Code's own rule,
 // from its binary: `p.replace(/[^a-zA-Z0-9]/g, '-')`):
-//   C:\Users\jdoe\demo-proj  ->  C--Users-jdoe-demo-proj  (colon AND the
+//   C:\Users\user\project  ->  C--Users-user-project  (colon AND the
 //                                 backslash after it each become their own
 //                                 `-`, hence the doubled dash)
-//   /Users/jdoe/demo-proj    ->  -Users-jdoe-demo-proj
+//   /Users/user/project    ->  -Users-user-project
 // path.resolve() first so relative values (`.`, `..`, `sub/dir`) and `--project
 // .` behave like the cwd they refer to, rather than being mapped as literal
 // text (which previously left `.` and `..` scoping to the wrong thing, or to

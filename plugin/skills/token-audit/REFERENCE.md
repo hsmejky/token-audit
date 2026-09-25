@@ -158,10 +158,10 @@ already caught by `MULTIDAY`). Two changes from the original design:
 - **`LONG_SESSION_TURNS` = 200** (was 250, and implicitly counted the wrong population).
   200 sits at the histogram's gap between the ordinary cluster (up to ~215) and the true
   multi-day monsters, ≈ p95 of main threads overall and ≈ p99 of the last-14-days window.
-  250 would fire on zero main-thread sessions in the last 14 days and zero in demo-proj —
+  250 would fire on zero main-thread sessions in the last 14 days and zero in second project —
   effectively dead; 150 (~p90) still catches some ordinary long interactive sessions, not
   just orchestrators. Real-data check on this rule: all-history 6 sessions = 54% of spend;
-  demo-proj 1 session (its worst orchestrator, 215 turns) = 5% of spend; token-audit 0
+  second project 1 session (its worst orchestrator, 215 turns) = 5% of spend; token-audit 0
   (its one-slice-per-agent discipline never reaches 200 on a main thread).
 
 **Do:** one session = one workflow phase. `/grill-me` → save md → `/clear` →
@@ -184,16 +184,16 @@ many subagents cross either threshold and their combined share of window spend.
 300k → 400k; real, deduped, all-history data — full table in `design/slice15-proposal.md`
 §2): subagent turn distribution (761 subagents, all history) p50 34, p75 73, p90 134,
 p95 174, p99 287, max 456; peak-ctx distribution p50 146k, p75 239k, p90 352k, p95 440k,
-p99 572k, max 830k. 150 turns sits at p90–p92 (demo-proj alone: p85), right before the
+p99 572k, max 830k. 150 turns sits at p90–p92 (second project alone: p85), right before the
 turn histogram's count halves at 175 (25-turn buckets from 25–175 each carry about the
 same total $, so the lever is real all the way up — 150 is a tuning choice, not a "nothing
 past here" cliff), and matches the `maxTurns` playbook advice below, so the flag and the
 playbook agree on one number. 300k (the original design.md guess) is only ≈ p85 of peak
 ctx and added 65 subagents that stay under 150 turns — "normal Opus agent that read a
-lot", not a long run; on demo-proj it fired on 1 in 4 subagents, which felt noisy in
-practice. 400k ≈ p93 overall (between demo-proj's own p90 352k and p95 495k), so the ctx
+lot", not a long run; on second project it fired on 1 in 4 subagents, which felt noisy in
+practice. 400k ≈ p93 overall (between second project's own p90 352k and p95 495k), so the ctx
 arm now catches outliers instead of the upper quarter. Real-data check: all-history 83
-subagents = 17% of spend; demo-proj 17 subagents = 34% of spend (its worst offenders: a
+subagents = 17% of spend; second project 17 subagents = 34% of spend (its worst offenders: a
 287-turn/638k agent, a 226-turn/538k agent, a 189-turn/558k agent); token-audit 0 — its
 disciplined one-slice-per-agent runs (max 95 turns / 182k peak) never fire, so the flag
 stays clean on the project that already follows the playbook below.
@@ -243,14 +243,14 @@ with any poll-category shell call, n = 819 — full table in `design/slice15-pro
 per-session max repeat of one key was p50 1, p75 2, p90 3, p95 6, p99 20, max 104 — almost
 every session repeats nothing, the tail is thin. 20 (the original guess) sat at exactly p99,
 catching only near-certain waits (12 runs all-history, 0.8% of spend) and never fired on
-demo-proj at all, so its own known GitHub-polling case stayed invisible to the flag. 10 ≈ p97:
-40 runs all-history = $207 = 1.5% of spend, 6 runs in the last 14 days, 1 in demo-proj. The
+second project at all, so its own known GitHub-polling case stayed invisible to the flag. 10 ≈ p97:
+40 runs all-history = $207 = 1.5% of spend, 6 runs in the last 14 days, 1 in second project. The
 10–19 band is mostly genuine waits (`until grep -q "passed|failed" … ; sleep N ; done` loops,
 log tails, progress `grep -c`); the main false-positive risk at that band was re-running the
 same script while iterating (`python <path>` × 10–17), fixed by moving script runs to their
 own `script run` activity category (below) and leaving it out of `POLL_CATEGORIES` — a
-`python foo.py` re-run is work, not a wait. Note: the demo-proj GitHub-polling case (89
-`check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of demo-proj spend) still
+`python foo.py` re-run is work, not a wait. Note: the second project GitHub-polling case (89
+`check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of second project spend) still
 does not trip `POLLING` even at N = 10 — it is spread over 33 sessions (max 8 calls/session)
 behind ~87 distinct per-call keys (a fresh PR/commit id each time), so no single key repeats
 enough in one session. A cross-session version of this detector is out of scope for a
@@ -404,13 +404,13 @@ lets in more idioms (`T=$(mktemp -d)`, loop counters) without finding more real 
 tightening to 8 (~p99) drops nothing but the two biggest hits. The false positives N = 5 lets
 through (`SHA=$(git rev-parse HEAD)`, `n=<value>` loop counters, `start=$(date +%s)` timing)
 are cheap and rank low in the flag's own $-sorted output, so they cost nothing in practice.
-Real-data check: all-history 7 prefixes = $188 = 1% of spend; demo-proj 4 prefixes = $9.38 =
+Real-data check: all-history 7 prefixes = $188 = 1% of spend; second project 4 prefixes = $9.38 =
 1% of spend; token-audit 0.
 
 **Do:** replace the setup with the tool or setting it stands in for:
 - `TOKEN=$(printf 'protocol=https\nhost=github.com\n' | git credential fill | …)` + `curl
   api.github.com` + a JSON body file → install and authenticate `gh` (`gh auth login`), then
-  `gh pr view` / `gh pr checks` / `gh api`. Demo-proj case: this is what the fix was.
+  `gh pr view` / `gh pr checks` / `gh api`. Second project case: this is what the fix was.
 - An env var exported before every command (`export PYTHONIOENCODING=utf-8 && python …`) →
   set it once in `settings.json` `env` (or `PYTHONUTF8=1` system-wide).
 - Any other multi-step setup → a script in the repo (`scripts/…`) the agent calls by name,
@@ -444,7 +444,7 @@ hit prefixes counts in both groups, but once in the flag's total cost/share.
   `export PYTHONIOENCODING=utf-N` (68 sessions, 1171 turns, $134) and two spellings of the
   `git credential fill` token fetch (8 sessions / 38 turns and 6 / 15; a third spelling with
   `grep "^password="` is in 3 sessions). Hand-count check: design.md estimated ~110 `pulls`
-  calls with a fresh credential fill in demo-proj; 53 turns carry the two spellings here.
+  calls with a fresh credential fill in second project; 53 turns carry the two spellings here.
 
 **Leading-run + `$env:` rule** (2026-09-25, same data, vs. first-segment-only above):
 7 hits (was 3), $188 = 1 % of spend (was $138). `export PYTHONIOENCODING=<value>` 71
@@ -553,7 +553,7 @@ regardless of measured cost impact.
 ## Measured non-levers
 
 Do not recommend these — they were measured and are noise. Tool output and screenshots
-were re-confirmed on the `demo-proj` project; output tokens (≈ 12 %) and `effortLevel`
+were re-confirmed on the second project; output tokens (≈ 12 %) and `effortLevel`
 were only measured on the first project this script checked:
 
 | candidate | actual share of spend |
@@ -570,7 +570,7 @@ with the confidentiality rules anyway.
 **Subagents are a non-lever only when their measured share is small and they run on
 Sonnet — report the number, never assert it (design.md Q6).** The claim held for the
 first project this script measured (below: 20.4 % of spend, pre-dedupe) but not for the
-`demo-proj` project that motivated this rewrite (85 % of spend, mostly Opus — 82 % is
+second project that motivated this rewrite (85 % of spend, mostly Opus — 82 % is
 that project's share of *input tokens*, not spend; see design.md's evidence table) or
 for this machine's own all-history data today (below:
 35.1 % of spend, 82.7 % of that on Opus). When the measured share is large and/or Opus-
@@ -605,7 +605,7 @@ not duplicated here.
 > **Supersedes the pre-Slice-2 baseline.** The first full measurement (2026-08-04 →
 > 2026-09-15, 283 sessions, 63 910 transcript lines) counted every transcript line as a
 > message; one API response is written as several lines (thinking / text / tool_use)
-> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.8×.
+> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.9×.
 > All-time recount on this machine when the dedupe fix landed, Slice 2, 2026-09-25:
 > 118 574 lines → 63 083 turns, $24.1k → $12.9k deduped; the rise to $13 546 above is
 > newer history, not a method change.
@@ -749,7 +749,7 @@ Decisions not fixed by design.md (judgment calls):
   to. Originally folded into `other`, which kept totals whole (turns and cost still sum to
   the window's totals with `reply`) but hid `other`'s real composition — measured on
   2026-09-25, all-history real data, reply-type turns were ≈ 7% of total spend on their
-  own (9.6% on demo-proj, 9.7% on token-audit), by far the largest single piece of what
+  own (9.6% on second project, 9.7% on token-audit), by far the largest single piece of what
   `other` used to mean. Split into its own category so `other` reports only genuinely
   uncategorized tool calls.
 - **Split = per call, evenly.** A turn with n tool calls gives 1/n of its cost, 1/n of a turn
@@ -761,9 +761,9 @@ Decisions not fixed by design.md (judgment calls):
 - **`harness` and `script run` (Slice 15) pulled out of `other`.** Measured on 2026-09-25,
   all-history real data, `other`'s composition (share of total spend) was: reply-shaped
   turns ≈ 7% (now `reply`, above), shell runs of a script (`python …`, `node …`,
-  `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% demo-proj / 2.4% token-audit (now
+  `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% second project / 2.4% token-audit (now
   `script run`), harness tools (`Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, …)
-  ≈ 1.6% all / 1.4% demo-proj / 5.4% token-audit (now `harness`), wait-shaped commands
+  ≈ 1.6% all / 1.4% second project / 5.4% token-audit (now `harness`), wait-shaped commands
   (`echo waiting-*`, `tasklist`, `true`) ≈ 0.2% (folded into `wait/poll`'s busy-poll row,
   table row 9 above), misc shell (`mkdir`, `cp`, `rm`, `for`, `export …`) ≈ 0.2–0.6%,
   genuinely unmatched ≈ 0.1%. So `other` was never one thing — it was mostly replies, script
@@ -787,7 +787,7 @@ Decisions not fixed by design.md (judgment calls):
 ### Activity table vs Q9 hand estimates (Slice 15)
 
 design.md Q9 gave two hand estimates to verify once this feature existed: polling ≈ 1–2%
-of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (demo-proj,
+of second project spend, screenshots ≈ 2.6%. Measured with the finished script (second project,
 `--all --days 3650`, real data):
 
 - **Polling: `wait/poll` 1.35% + `github` 1.49% = 2.84%.** The hand estimate holds
@@ -795,10 +795,10 @@ of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (dem
   / `sleep` loops, i.e. the `wait/poll` category alone); it reads 2.8% if every GitHub API
   call counts, including `pulls` fetches and the `git credential fill` setup that isn't
   itself a wait. No bug — a definition gap, not a measurement gap. This case (89 `check-runs`
-  + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of demo-proj spend, spread across 33
+  + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of second project spend, spread across 33
   sessions with ≤ 8 calls/session and ~87 distinct keys) is also why `POLLING` itself never
   fires on it — see the "Cross-session GitHub polling" slice in plan.md.
-- **Screenshots: `screenshot/image` table row = 4.89% of demo-proj spend.** Higher than the
+- **Screenshots: `screenshot/image` table row = 4.89% of second project spend.** Higher than the
   2.6% hand estimate because the table charges the *whole turn* (full context) to the
   category, not just the image's own tokens. A second, narrower measure — the tokens a
   screenshot actually carries forward in context (image tokens × remaining turns in that
@@ -809,9 +809,9 @@ of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (dem
   context); the table's 4.9% is turn cost that the verification step would spend regardless
   of whether it looked at a screenshot.
 - **`other` (now `other` + `reply` + `script run` + `harness` together, so they can be
-  compared to the old single-bucket `other`): before Slice 15, all-history 20.4%, demo-proj
+  compared to the old single-bucket `other`): before Slice 15, all-history 20.4%, second project
   18.1%, token-audit 17.9%, last-14-days 16.7%. After Slice 15 (same real data, `other`
-  alone): all-history 0.28%, demo-proj 0.76%, token-audit 0.66% — comfortably under the
+  alone): all-history 0.28%, second project 0.76%, token-audit 0.66% — comfortably under the
   "~1%" target on every cut, on both projects. The rest of the old `other` moved to
   `reply` (≈7–10%), `script run` (≈2–14% depending on project), `harness` (≈1–5%) and a
   small amount into `wait/poll`'s two new `BUSY_POLLERS` patterns. Re-measured after the
@@ -1041,7 +1041,7 @@ typical MCP tool schema), clearly presented as an estimate, not a measurement.
 | `--top N` | 8 | sessions kept in `--json`'s `cur.sessions`/`prev.sessions`; TOP SESSIONS is no longer printed in the text summary (Slice 28) |
 | `--json` | off | full structured dump incl. per-week and per-plugin detail |
 | `--claude-dir DIR` | `~/.claude` | read transcripts + settings from DIR instead (tests use fixture dirs) |
-| `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |
+| `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\user\project` → `C--Users-user-project`; `/Users/user/project` → `-Users-user-project`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |
 | `--all` | off | scope to every project instead of just one (pre-Slice-6 behaviour) |
 | `--no-detail` | off | drop the DETAIL block (text) and the `detail` key (`--json`): summary only |
 

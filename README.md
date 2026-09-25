@@ -70,7 +70,7 @@ Then run:
 
 Node.js **18 or newer**. Verified by running the full test suite (`node --test tests/*.test.js`)
 on Node 18, 20, 22 and 24 — all green. No other dependencies; the script is plain Node
-(`fs`, `path`, `readline`, `crypto`).
+(`fs`, `path`, `readline`, `crypto`, `os`, `child_process`).
 
 ## Script flags
 
@@ -81,7 +81,7 @@ The skill runs `node <skill-dir>/scripts/token-audit.js` with these flags:
 | `--days N` | 14 | window; the previous N days form the comparison window |
 | `--top N` | 8 | sessions kept in `--json` output |
 | `--json` | off | full structured dump |
-| `--claude-dir DIR` | `~/.claude` | read transcripts + settings from DIR instead |
+| `--claude-dir DIR` | `$CLAUDE_CONFIG_DIR` or `~/.claude` | read transcripts + settings from DIR instead |
 | `--project PATH` | cwd | scope to one project |
 | `--all` | off | scope to every project instead of just one |
 | `--no-detail` | off | drop the DETAIL block: summary only |
@@ -97,10 +97,12 @@ The script only reads local files: transcripts under `~/.claude/projects/**/*.js
 anything. All output stays on your machine — the skill only prints a report; sharing it
 anywhere is your call, not the script's.
 
+To redact your name from reports, it also runs `git config user.name` locally (a
+subprocess call, not a network request) — see `token-audit.js`.
+
 Path and name redaction (project folders, subagent task text, etc.) is **best-effort**, not
 a guarantee. Review a report yourself before pasting it anywhere public.
 
 ## License
 
-Not finalized yet. Until a license is added, treat this repo as "all rights reserved" —
-ask before reusing code from it.
+MIT — see [LICENSE](LICENSE).
