@@ -7,6 +7,9 @@ test('lines sharing one message.id count as one turn, priced once', () => {
   assert.equal(r.all.msgs, 1);
   // opus: 200k input × $5 + 40k output × $25 (final streamed usage) = $2.00
   assert.equal(r.cur.cost.toFixed(6), '2.000000');
+  // costPerMsg must use the deduped msg count (1), not the raw line count (3):
+  // non-deduped would average the three lines' costs to ~1.33 instead of 2.00.
+  assert.equal(r.cur.costPerMsg.toFixed(6), '2.000000');
 });
 
 test('rows without message.id are each counted, not dropped', () => {
@@ -27,7 +30,6 @@ test('session stats and LONG_SESSION use deduped turns', () => {
   assert.deepEqual(msgs, { s10: 10, s20: 20, s150: 150 });
   assert.equal(r.cur.medianMsgs, 20);
   assert.equal(r.cur.p90Msgs, 150);
-  assert.equal(r.cur.costPerMsg.toFixed(6), '0.005000'); // 1000 input × $5/MTok
   assert.ok(!r.flags.some(f => f.id === 'LONG_SESSION'), 'raw 450 lines must not trip ≥250');
 });
 
