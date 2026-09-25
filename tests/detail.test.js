@@ -237,6 +237,27 @@ test('WORK UNITS: subagent orphans under parent id when the main session exists 
   assert.equal(u.cost, u.subCost, 'cost = subCost only, mainCost is 0');
 });
 
+test('WORK UNITS: orphan unit span ignores the main session\'s history outside the window', () => {
+  // Same orphan setup as above, but pinning `span`: workUnits() only visits
+  // `cur.sessions`, so a main session with zero rows in the window is never
+  // folded into first/last — even though `all.sessions` has its real 2020
+  // start. Only the in-window subagent rows count toward span here.
+  const now = Date.now();
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': turn({ id: 'old-main', ts: '2020-01-01T00:00:00.000Z' }),
+    [SUB + '.jsonl']: [
+      ...turn({ id: 'sub-0', ts: new Date(now - 2 * 60 * 60 * 1000).toISOString() }),
+      ...turn({ id: 'sub-1', ts: new Date(now).toISOString() }),
+    ],
+    [SUB + '.meta.json']: { description: 'orphan agent, span check' },
+  });
+  const { units } = audit(dir, '--days', '7').detail;
+  assert.equal(units.length, 1);
+  const [u] = units;
+  assert.equal(u.span, 2 * 60 * 60 * 1000,
+    "orphan unit span = subagent-only first->last; main session's 2020 history must not be pulled in");
+});
+
 test('WORK UNITS: --json units omit the internal first/last fields', () => {
   const dir = tmpClaudeDir({
     'projects/p/3ac91e04-uuid.jsonl': turns(4, 'main'),

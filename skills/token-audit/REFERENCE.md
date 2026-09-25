@@ -454,7 +454,10 @@ full). Sections, in order:
   unit, not clipped to the window — same convention as the per-session span in TOP SESSIONS),
   project. A main session with no subagents still forms its own unit (sub 0%). A subagent whose
   parent main session has no priced turns in this window still rolls up under its parent id as
-  an orphan unit (mainCost 0). `--json`: `detail.units[]` =
+  an orphan unit (mainCost 0). Span for such an orphan unit only counts the sessions that are
+  actually inside the window (the subagents) — the main session's full history outside the
+  window is not pulled in, unlike the normal "reach back past the window" span convention above.
+  `--json`: `detail.units[]` =
   `{ key, project, mainCost, subCost, agents, turns, peakCtx, span, cost, subShare }`.
 - **TOP 10 SUBAGENTS** (this window, by cost): cost, turns (deduped), peak ctx, model (the
   model string that cost the session most, `claude-` and date suffix stripped), parent session
