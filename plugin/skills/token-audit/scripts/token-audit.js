@@ -1546,15 +1546,35 @@ const shown = new Map();
 // block). Collapse to a single space here, once, for every show()n string;
 // callers that also need a length cap still run the result through fit()/
 // fitMiddle() at print time.
+// Slice 20 re-review: [\x00-\x1f\x7f] only covers C0 controls + DEL. C1 controls
+// (U+0080-U+009F, e.g. U+0085 NEL, U+009B CSI) and other Unicode format/bidi
+// characters (\p{Cf}, e.g. U+202E RIGHT-TO-LEFT OVERRIDE) sit outside that range
+// and could still forge layout or reorder printed text. \p{Cc} covers C0+C1,
+// \p{Cf} covers the format/bidi class; \u2028/\u2029 (line/paragraph separator)
+// aren't in either category but are still line breaks to a terminal.
+const CONTROL_CHARS = /[\p{Cc}\p{Cf}\u2028\u2029]+/gu;
 const show = v => {
   if (typeof v !== 'string') return v;
-  if (!shown.has(v)) shown.set(v, redactPaths(v).replace(/[\x00-\x1f\x7f]+/g, ' '));
+  if (!shown.has(v)) shown.set(v, redactPaths(v).replace(CONTROL_CHARS, ' '));
   return shown.get(v);
 };
+// Slice 20 re-review: settings.json is as untrusted as an MCP server / plugin
+// name (config(), :767/:773-774) — effortLevel and cleanupPeriodDays were
+// printed raw, letting a forged value inject a fake extra line (e.g. a bogus
+// SECURITY block) the same way an unsanitized key could. effortLevel is a
+// closed vocabulary, so a value outside it is already suspect; print it
+// sanitized rather than hide it. cleanupPeriodDays should be a plain number;
+// anything else prints sanitized too, instead of silently passing through.
+const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
+const showEffortLevel = v => v == null ? v : (EFFORT_LEVELS.has(v) ? v : fit(show(String(v)), 30));
+const showCleanupPeriodDays = v =>
+  (v == null || (typeof v === 'number' && Number.isFinite(v))) ? v : fit(show(String(v)), 30);
 const showSessions = sum => ({ ...sum,
   sessions: sum.sessions.map(s => ({ ...s, project: show(s.project), model: show(s.model) })) });
-const showConfig = c => ({ ...c, model: show(c.model),
-  modelEffort: c.modelEffort.map(m => ({ ...m, model: show(m.model) })),
+const showConfig = c => ({ ...c, model: fit(show(c.model), 60),
+  cleanupPeriodDays: showCleanupPeriodDays(c.cleanupPeriodDays),
+  effortLevel: showEffortLevel(c.effortLevel),
+  modelEffort: c.modelEffort.map(m => ({ ...m, model: show(m.model), effortLevel: showEffortLevel(m.effortLevel) })),
   plugins: c.plugins.map(p => ({ ...p, name: show(p.name) })),
   mcpServers: c.mcpServers.map(m => ({ ...m, name: show(m.name) })) });
 const showDetail = d => d && { ...d,

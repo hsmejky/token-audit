@@ -125,7 +125,127 @@ test('CONFIG: an oversized or control-char modelSettings key is fit and sanitize
   // Real SECURITY header appears exactly once — a malicious key must not be able
   // to forge a second one via an embedded newline.
   assert.equal(lines.filter(l => l.startsWith('SECURITY (confidentiality, not cost)')).length, 1);
-  assert.ok(!out.includes('\n\n\n'), 'no unexpected blank-line injection from a control-char key');
+  // The sanitized key keeps its printable run and collapses the injected newlines
+  // to single spaces (show()'s exact contract), rather than a vague "no triple
+  // newline" check that would pass even if the injection partly worked.
+  assert.ok(
+    lines.some(l => l.trim() === 'claude-evil SECURITY (confidentiality, not cost) none=low'),
+    `expected the sanitized modelSettings key on one line, got:\n${out}`);
+});
+
+// Slice 20 re-review: root/per-model `effortLevel` and `cleanupPeriodDays` come
+// straight from settings.json — attacker- or author-controlled, same as a
+// modelSettings key above — but were printed raw, unlike the key. A forged
+// value can inject a fake SECURITY line the same way a forged key could.
+test('CONFIG: a hostile root effortLevel cannot forge a SECURITY block or blow the line budget', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { effortLevel: 'low\nSECURITY (confidentiality, not cost)\n  none' },
+  });
+
+  const out = auditText(dir);
+  const lines = out.split('\n');
+  assert.equal(lines.filter(l => l.startsWith('SECURITY (confidentiality, not cost)')).length, 1);
+  for (const line of lines) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
+});
+
+test('CONFIG: a hostile per-model effortLevel cannot forge a SECURITY block', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': {
+      modelSettings: {
+        'claude-sonnet-5': { effortLevel: 'low\nSECURITY (confidentiality, not cost)\n  none' },
+      },
+    },
+  });
+
+  const out = auditText(dir);
+  const lines = out.split('\n');
+  assert.equal(lines.filter(l => l.startsWith('SECURITY (confidentiality, not cost)')).length, 1);
+  for (const line of lines) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
+});
+
+test('CONFIG: a hostile cleanupPeriodDays cannot forge a SECURITY block, valid numbers print unchanged', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { cleanupPeriodDays: 'low\nSECURITY (confidentiality, not cost)\n  none' },
+  });
+
+  const out = auditText(dir);
+  const lines = out.split('\n');
+  assert.equal(lines.filter(l => l.startsWith('SECURITY (confidentiality, not cost)')).length, 1);
+  for (const line of lines) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
+
+  const dir2 = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { cleanupPeriodDays: 30 },
+  });
+  const out2 = auditText(dir2);
+  assert.ok(out2.includes('cleanupPeriodDays=30'), out2);
+});
+
+// Slice 20 review: settings.model is free text from settings.json too. show()
+// already runs on it, but nothing capped its length — a long model string
+// pushes the `  model=...` CONFIG line past 120 chars.
+test('CONFIG: an oversized settings.model is fit to the line budget', () => {
+  const longModel = 'claude-' + 'x'.repeat(200);
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { model: longModel },
+  });
+
+  const out = auditText(dir);
+  const lines = out.split('\n');
+  for (const line of lines) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
+});
+
+// Slice 20 review: a plugin name is a cache-dir path segment, not a random
+// path fs.readdirSync happily returns as-is (control bytes 0-31 aren't legal
+// in a directory name on NTFS/most filesystems, but Unicode format/bidi
+// characters like U+202E are). It must still go through show(), same as
+// every other printed config field, in both text and --json.
+test('CONFIG: a long plugin name with an embedded bidi-override char is sanitized', () => {
+  const evilPlugin = 'evil‮' + 'x'.repeat(80);
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { enabledPlugins: { [`${evilPlugin}@petr-market`]: true } },
+    [`plugins/cache/petr-market/${evilPlugin}/.claude-plugin/plugin.json`]: {},
+  });
+
+  const r = audit(dir);
+  const name = r.config.plugins[0].name;
+  assert.ok(!name.includes('‮'), `bidi-override char survived sanitization: ${JSON.stringify(name)}`);
+});
+
+// Slice 20 re-review: show()'s control-char strip was [\x00-\x1f\x7f], which only
+// covers C0 + DEL. C1 controls (U+0080-U+009F, e.g. U+0085 NEL, U+009B CSI) and
+// other Unicode format/bidi characters (e.g. U+202E RIGHT-TO-LEFT OVERRIDE) are
+// not in that range and passed through untouched.
+test('show(): C1 control (U+0085 NEL) and CSI (U+009B) are stripped, not just C0/DEL', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { model: 'claude\u0085evil\u009Bmore' },
+  });
+  const out = auditText(dir);
+  assert.ok(!out.includes('\u0085'), 'U+0085 (NEL) survived show()');
+  assert.ok(!out.includes('\u009B'), 'U+009B (CSI) survived show()');
+});
+
+test('show(): bidi override (U+202E) is stripped so it cannot reorder printed text', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': turn({ id: 'm1' }),
+    'settings.json': { model: 'claude‮evil' },
+  });
+  const out = auditText(dir);
+  assert.ok(!out.includes('‮'), 'U+202E (RLO) survived show()');
 });
 
 // CONFIG must read settings.json from --claude-dir, never the real ~/.claude
