@@ -150,6 +150,11 @@ test('WORK UNITS: session with no subagents -> unit with sub 0%', () => {
 });
 
 test('WORK UNITS: peak ctx = max context across main + subs; span = full-history first..last', () => {
+  // sub-0 is timestamped *after* main-1 (not between main-0 and main-1) so the
+  // span assertion below only passes if the subagent's own last-seen timestamp
+  // is folded into the unit's span. If the code only looked at the main
+  // session's first/last (ignoring the subagent's), span would stop at
+  // main-1 (09-05) and this test would fail.
   const dir = tmpClaudeDir({
     'projects/p/3ac91e04-uuid.jsonl': [
       turn({ id: 'main-0', ts: '2026-09-01T09:00:00.000Z',
@@ -157,7 +162,7 @@ test('WORK UNITS: peak ctx = max context across main + subs; span = full-history
       turn({ id: 'main-1', ts: '2026-09-05T09:00:00.000Z',
              usage: { input_tokens: 0, cache_read_input_tokens: 5000, output_tokens: 0 } }),
     ].flat(),
-    [SUB + '.jsonl']: turn({ id: 'sub-0', ts: '2026-09-01T09:30:00.000Z',
+    [SUB + '.jsonl']: turn({ id: 'sub-0', ts: '2026-09-10T09:00:00.000Z',
       usage: { input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 0 } }),
     [SUB + '.meta.json']: { description: 'peak/span agent' },
   });
@@ -165,8 +170,29 @@ test('WORK UNITS: peak ctx = max context across main + subs; span = full-history
   assert.equal(units.length, 1);
   const [u] = units;
   assert.equal(u.peakCtx, 9000, 'peak ctx = largest single context hit by any session in the unit');
-  const expectedSpan = Date.parse('2026-09-05T09:00:00.000Z') - Date.parse('2026-09-01T09:00:00.000Z');
-  assert.equal(u.span, expectedSpan, 'span = full-history first-seen -> last-seen across the unit');
+  const expectedSpan = Date.parse('2026-09-10T09:00:00.000Z') - Date.parse('2026-09-01T09:00:00.000Z');
+  assert.equal(u.span, expectedSpan,
+    'span = full-history first-seen -> last-seen across the unit, including the subagent');
+});
+
+test('WORK UNITS: span covers full history back past a narrow --days window', () => {
+  // The main session's first turn is years before the window; only its
+  // second turn ("recent") falls inside a 7-day --days window. If `allByKey`
+  // (used to look up full-history first/last) were built from cur.sessions
+  // instead of all.sessions, the lookup would only see the windowed turn and
+  // span would collapse to ~0 instead of spanning back to 2020.
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': [
+      ...turn({ id: 'old', ts: '2020-01-01T00:00:00.000Z' }),
+      ...turn({ id: 'recent', ts: new Date().toISOString() }),
+    ],
+  });
+  const { units } = audit(dir, '--days', '7').detail;
+  assert.equal(units.length, 1);
+  const [u] = units;
+  const oneYear = 365 * 24 * 60 * 60 * 1000;
+  assert.ok(u.span > oneYear,
+    `span must reach back to the session's real first-seen turn (2020), not the 7-day window: got ${u.span}ms`);
 });
 
 test('WORK UNITS: subagent with no main-session rows forms an orphan unit keyed by parent id', () => {
@@ -180,7 +206,34 @@ test('WORK UNITS: subagent with no main-session rows forms an orphan unit keyed 
   assert.equal(u.key, '3ac91e04-uuid', 'orphan unit keyed by the parent id, no main session exists');
   assert.equal(u.mainCost, 0);
   assert.equal(u.agents, 1);
-  assert.ok(u.subCost > 0);
+  // opus-5-5 $4/MTok input, 1000 input tokens/turn, 3 sub turns, no cache/output.
+  const singleTurnCost = 1000 * 4 / 1e6;
+  assert.equal(u.subCost, 3 * singleTurnCost, 'subCost = exactly 3 sub turns, not inflated or zeroed');
+  assert.equal(u.cost, u.subCost, 'cost = subCost only, mainCost is 0');
+});
+
+test('WORK UNITS: subagent orphans under parent id when the main session exists but is ' +
+  'entirely outside the window', () => {
+  // Unlike the "no main file at all" case above, here the main session is real
+  // and in history (`all.sessions`), but every one of its turns predates the
+  // --days window, so it has zero rows in `cur` and never gets its own unit
+  // via the cur.sessions loop. Per REFERENCE.md, the subagent (whose turns
+  // are inside the window) must still roll up under the parent id, mainCost 0.
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': turn({ id: 'old-main', ts: '2020-01-01T00:00:00.000Z' }),
+    [SUB + '.jsonl']: turns(3, 'sub-only', { ts: new Date().toISOString(),
+      usage: { input_tokens: 1000, output_tokens: 0 } }),
+    [SUB + '.meta.json']: { description: 'orphan agent, main outside window' },
+  });
+  const { units } = audit(dir, '--days', '7').detail;
+  assert.equal(units.length, 1);
+  const [u] = units;
+  assert.equal(u.key, '3ac91e04-uuid',
+    'orphan unit keyed by the parent id, main session has no turns in this window');
+  assert.equal(u.mainCost, 0, 'main session exists in history but contributes no turns inside the window');
+  assert.equal(u.agents, 1);
+  const singleTurnCost = 1000 * 4 / 1e6;
+  assert.equal(u.subCost, 3 * singleTurnCost);
   assert.equal(u.cost, u.subCost, 'cost = subCost only, mainCost is 0');
 });
 
