@@ -53,7 +53,14 @@ const SHAPES = [
   ['mysql -pX', `mysql -p${tok('Zqxv')}`],
   ['sshpass -p X', `sshpass -p ${tok('Zqxv')} ssh host`],
   ['docker login -p X', `docker login -p ${tok('Zqxv')} registry.test`],
+  ['mysql -u before -p', `mysql -u root -p${tok('Zqxv')} db`],
+  ['mysql --user= before -p', `mysql --user=root -p${tok('Zqxv')}`],
+  ['docker login -u before -p', `docker login -u me -p ${tok('Zqxv')} registry.test`],
+  ['single-quoted --password $-literal', `tool --password '$${tok('Zqxv')}'`],
+  ['single-quoted header $-literal',
+    `curl -H 'Authorization: token $${tok('Zqxv')}' https://x.test/a`],
   ['gh secret set --body', `gh secret set MY_SECRET --body ${tok('Zqxv')}`],
+  ['gh secret set -b (short form)', `gh secret set MY_SECRET -b ${tok('Zqxv')}`],
   ['npm :_authToken space form', `npm config set //registry.npmjs.org/:_authToken ${tok('Zqxv')}`],
   ['secret-named assignment via $(echo …)', `TOKEN=$(echo ${tok('Zqxv')}) && curl x`],
   ['single-quoted literal starting with $', `PASSWORD='$${tok('ecretZqxv')}'`],
@@ -74,7 +81,7 @@ test('secret layer: normal keys stay readable (no over-redaction)', () => {
     'git push -u origin main', 'sort --key=N f', 'gh auth login --with-token < <path>',
     'curl -u "$GH_USER:$GH_PASS" https://x.test', 'deploy --token "$TOKEN"', 'export GH_TOKEN=${GH_TOKEN}',
     'curl -s https://api.github.com/repos/o/r/actions/runs?per_page=N', 'npm run task-list-summary-for-ci',
-    'mkdir -p a', 'ssh -p 22 host', String.raw`TOKEN=$(printf 'protocol=https\nhost=github.com\n' | ` +
+    'mkdir -p a', 'ssh -p 22 host', 'mysql -p db', String.raw`TOKEN=$(printf 'protocol=https\nhost=github.com\n' | ` +
     `git credential fill | sed -n 's/^password=//p')`]) {
     assert.equal(redactPaths(k, NO_ID), k);
   }

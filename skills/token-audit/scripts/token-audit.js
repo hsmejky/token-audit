@@ -756,42 +756,64 @@ const SECRET_CMD_LITERAL = new RegExp(SECRET_NAME_LA +
 const SECRET_JSON = new RegExp(
   `"(\\w{0,40}?(?:${SECRET_FLAG_WORD.source})\\w{0,40})"([ \\t]*:[ \\t]*)"([^"\\n]{0,512})"`, 'gi');
 // `mysql -pX` / `sshpass -p X` / `docker login -p X` — `-p` is scoped to these
-// specific commands, so `mkdir -p`, `ssh -p 22` stay readable.
-const SECRET_SHORT_P = /(?<![\w-])(mysql|sshpass|docker[ \t]+login)([ \t]+-p)([ \t]*)(['"]?)([^\s'"`]+)/gi;
-// `gh secret set NAME --body X`.
+// specific commands, so `mkdir -p`, `ssh -p 22` stay readable. A short, bounded
+// run of other flags/args may sit between the command and `-p` (so
+// `mysql -u root -pX db` still redacts); bounded to 6 tokens of <=64 chars, so
+// a 200k-char run stays linear. mysql's `-p` only takes an attached value
+// (`-pX`) — `mysql -p db` (space) is the prompt form, not a secret, so that
+// case is skipped in the replacer below, not the regex.
+const SHORT_P_GAP = /(?:[ \t]+[^\s'"`]{1,64}){0,6}/.source;
+const SHORT_P_TAIL = /([ \t]+-p)([ \t]*)(['"]?)([^\s'"`]+)/.source;
+const SECRET_SHORT_P = new RegExp(
+  `(?<![\\w-])(mysql|sshpass|docker[ \\t]+login)${SHORT_P_GAP}${SHORT_P_TAIL}`, 'gi');
+// `gh secret set NAME --body X` / `gh secret set NAME -b X` (short form).
 const SECRET_GH_BODY = new RegExp(
-  /((?<![\w-])gh[ \t]+secret[ \t]+set\b[^\n]{0,100}?--body(?:=|[ \t]+))/.source +
+  /((?<![\w-])gh[ \t]+secret[ \t]+set\b[^\n]{0,100}?(?:--body|-b)(?:=|[ \t]+))/.source +
   /(?:"([^"\n]{0,512})"|'([^'\n]{0,512})'|([^\s'"`<>|;&()]+))/.source, 'gi');
 // npm's `:_authToken TOKEN` (space form; the `=` form is already SECRET_ASSIGN).
 const SECRET_NPM_AUTHTOKEN = /(?<![\w-])(:_authToken)([ \t]+)([^\s'"`]+)/gi;
 // A value is a reference — `$VAR`, `${VAR}`, `$(…)`, unquoted or double-quoted —
-// and stays. A single-quoted value (`'$foo'`) is a shell literal: no expansion.
-const isRef = v => /^\$/.test(v) || /^"\$/.test(v);
+// and stays. A single-quoted value (`'$foo'`) is a shell literal: no expansion,
+// so a single-quoted `quote` always redacts, regardless of the value's text.
+const isRef = (v, quote) => (quote === "'" ? false : /^\$/.test(v) || /^"\$/.test(v));
 const firstDefined = (...vs) => vs.find(v => v !== undefined);
 function redactSecrets(s) {
   return s
     .replace(SECRET_URL_CRED, '$1:<secret>@')
     .replace(SECRET_SHAPE, '<secret>')
-    .replace(SECRET_HEADER, (m, name, sp, scheme = '', v) => (isRef(v) ? m : `${name}:${sp}${scheme}<secret>`))
-    .replace(SECRET_BEARER, (m, b, v) => (isRef(v) ? m : `${b}<secret>`))
+    .replace(SECRET_HEADER, (m, name, sp, scheme = '', v, off, str) => {
+      const quote = str[off + m.length] === "'" ? "'" : undefined;
+      return isRef(v, quote) ? m : `${name}:${sp}${scheme}<secret>`;
+    })
+    .replace(SECRET_BEARER, (m, b, v, off, str) => {
+      const quote = str[off + m.length] === "'" ? "'" : undefined;
+      return isRef(v, quote) ? m : `${b}<secret>`;
+    })
     .replace(SECRET_USERPASS, (m, f, sep, dqU, dqP, sqU, sqP, lq, bareU, bareP) => {
       const user = firstDefined(dqU, sqU, bareU), v = firstDefined(dqP, sqP, bareP);
-      const q = dqU !== undefined ? '"' : sqU !== undefined ? "'" : (lq || '');
-      return isRef(v) || isRef(q + user) ? m : `${f}${sep}${q}${user}:<secret>${q}`;
+      const quote = dqU !== undefined ? '"' : sqU !== undefined ? "'" : undefined;
+      const q = quote || lq || '';
+      return isRef(v, quote) || isRef(q + user, quote) ? m : `${f}${sep}${q}${user}:<secret>${q}`;
     })
     .replace(SECRET_FLAG, (m, f, sep, dq, sq, lq, bare) => {
       const v = firstDefined(dq, sq, bare);
-      const q = dq !== undefined ? '"' : sq !== undefined ? "'" : (lq || '');
-      return isRef(v) || v === '<secret>' ? m : `${f}${sep}${q}<secret>${q}`;
+      const quote = dq !== undefined ? '"' : sq !== undefined ? "'" : undefined;
+      const q = quote || lq || '';
+      return isRef(v, quote) || v === '<secret>' ? m : `${f}${sep}${q}<secret>${q}`;
     })
     .replace(SECRET_ASSIGN, (m, name, eq, v) => (isRef(v) || v === '<secret>' ? m : `${name}${eq}<secret>`))
     .replace(SECRET_CMD_LITERAL, (m, pre, v, close) => (isRef(v) ? m : `${pre}<secret>${close}`))
     .replace(SECRET_JSON, (m, k, sep, v) => (isRef(v) || v === '<secret>' ? m : `"${k}"${sep}"<secret>"`))
-    .replace(SECRET_SHORT_P, (m, cmd, pflag, sep, q, v) => (isRef(v) ? m : `${cmd}${pflag}${sep}${q}<secret>${q}`))
+    .replace(SECRET_SHORT_P, (m, cmd, pflag, sep, q, v) => {
+      if (/^mysql$/i.test(cmd) && sep) return m; // mysql `-p ` (space) is the prompt form
+      const quote = q === "'" ? "'" : undefined;
+      return isRef(v, quote) ? m : `${cmd}${pflag}${sep}${q}<secret>${q}`;
+    })
     .replace(SECRET_GH_BODY, (m, pre, dq, sq, bare) => {
       const v = firstDefined(dq, sq, bare);
-      const q = dq !== undefined ? '"' : sq !== undefined ? "'" : '';
-      return isRef(v) ? m : `${pre}${q}<secret>${q}`;
+      const quote = dq !== undefined ? '"' : sq !== undefined ? "'" : undefined;
+      const q = quote || '';
+      return isRef(v, quote) ? m : `${pre}${q}<secret>${q}`;
     })
     .replace(SECRET_NPM_AUTHTOKEN, (m, f, sep, v) => (isRef(v) ? m : `${f}${sep}<secret>`));
 }
