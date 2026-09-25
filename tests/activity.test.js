@@ -86,6 +86,11 @@ test('commandKey: a private-use char already in the input is left alone, not tur
   assert.ok(!key.includes('undefined'), key);
 });
 
+test('commandKey: deep (…) nesting never throws (depth-capped, not recursive)', () => {
+  const s = '('.repeat(5000) + 'ls' + ')'.repeat(5000);
+  assert.doesNotThrow(() => commandKey(s));
+});
+
 test('commandKey / shellSegments: separators inside quotes and $(…) are not split or respaced', () => {
   assert.equal(commandKey('grep -E "error|git" log'), 'grep -E "error|git" log');
   assert.equal(commandKey("rg 'foo;gh api' src"), "rg 'foo;gh api' src");

@@ -144,7 +144,11 @@ const isCdCmd = t => /^(?:cd|Set-Location)\b(?:\s.*)?$/i.test(t);
 // and, recursively, inside a `(…)` group that is a whole segment on its own (a
 // group's contents are not split by shellSegments(), so `(cd /tmp && ls)` never
 // reaches the top-level filter as a bare `cd` segment).
-function stripCdAndEnv(s) {
+// depth caps the `(…)` recursion below — pathological input (thousands of
+// nested groups) must never blow the call stack; beyond the cap the inner
+// text is kept as-is (unstripped) rather than throwing.
+const STRIP_DEPTH_MAX = 200;
+function stripCdAndEnv(s, depth = 0) {
   const segs = shellSegments(s)
     // `NAME=value cmd` env prefixes. A value with `$(`/`(` is not matched, so a
     // standalone `TOKEN=$(… | git credential fill)` assignment stays.
@@ -152,7 +156,7 @@ function stripCdAndEnv(s) {
       let text = g.text.replace(/\s+/g, ' ')
         .replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$'"]*) )+(?=\S)/, '');
       const grp = /^\((.*)\)$/s.exec(text);
-      if (grp) text = `(${stripCdAndEnv(grp[1])})`;
+      if (grp) text = `(${depth < STRIP_DEPTH_MAX ? stripCdAndEnv(grp[1], depth + 1) : grp[1]})`;
       return { ...g, text };
     })
     .filter(g => g.text && !isCdCmd(g.text));
