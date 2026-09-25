@@ -82,7 +82,7 @@ test('commandKey drops cd / Set-Location segments anywhere; an env prefix never 
 });
 
 test('commandKey: a private-use char already in the input is left alone, not turned into "undefined"', () => {
-  const key = commandKey('echo ""');
+  const key = commandKey('echo "\\uE010"');
   assert.ok(!key.includes('undefined'), key);
 });
 
@@ -118,7 +118,7 @@ test('shellSegments drops empty segments from consecutive separators, keeps a tr
 test('hashHeredocBodies: an unterminated heredoc is still hashed, no stray sentinel leaks into the key', () => {
   const key = commandKey('cat <<EOF\nfoo\nbar');
   assert.match(key, /^cat <<EOF \[heredoc [0-9a-f]{8}\]$/, key);
-  assert.ok(!key.includes('￿'), key);
+  assert.ok(!key.includes('\\uFFFF'), key);
 });
 
 test('commandKey collapses whitespace, spaces separators canonically', () => {
