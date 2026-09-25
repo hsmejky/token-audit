@@ -36,7 +36,7 @@ test('fixture .mcp.json (2 servers) + 1 user-scope server → CONFIG lists all 3
   assert.equal(r.config.mcpPrefixTokens, 3 * 800);
 });
 
-test('text output: mcp servers line + one line per server with its scope', () => {
+test('text output: CONFIG line counts MCP servers (names + scopes in --json)', () => {
   const { cwd, dir } = setupProject();
   fs.writeFileSync(path.join(cwd, '.mcp.json'), JSON.stringify({ mcpServers: { foo: {} } }));
 
@@ -45,12 +45,8 @@ test('text output: mcp servers line + one line per server with its scope', () =>
   const out = execFileSync(process.execPath,
     [script, '--claude-dir', dir, '--days', '36500'], { encoding: 'utf8', cwd });
   const lines = out.split('\n');
-  const header = lines.find(l => l.includes('mcp servers='));
-  assert.ok(header, 'expected an "mcp servers=" line in CONFIG');
-  assert.ok(header.includes('mcp servers=1'), header);
-  const serverLine = lines.find(l => l.trim().startsWith('foo'));
-  assert.ok(serverLine, 'expected a line naming the server');
-  assert.ok(serverLine.includes('mcp.json'), serverLine);
+  const cfgLine = lines.find(l => l.startsWith('CONFIG '));
+  assert.ok(cfgLine && cfgLine.includes(' mcp=1 '), 'expected mcp=1 on the CONFIG line, got:\n' + out);
 });
 
 test('project (local) scope: projects[<dir>].mcpServers in the user-config file is picked up', () => {
@@ -69,7 +65,7 @@ test('no MCP config anywhere → no mcp servers line, summary stays short', () =
   const script = path.join(__dirname, '..', 'plugin', 'skills', 'token-audit', 'scripts', 'token-audit.js');
   const out = execFileSync(process.execPath,
     [script, '--claude-dir', dir, '--days', '36500'], { encoding: 'utf8', cwd });
-  assert.ok(!out.includes('mcp servers='), 'did not expect an mcp servers line');
+  assert.ok(!out.includes(' mcp='), 'did not expect an mcp servers line');
 
   const r = auditCwd(dir, cwd, '--json');
   assert.deepEqual(r.config.mcpServers, []);

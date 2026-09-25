@@ -43,11 +43,9 @@ test('modelSettings.<model>.effortLevel for 3 models: CONFIG prints each model\'
 
   const out = auditText(dir);
   const lines = out.split('\n');
-  const idx = lines.indexOf('  effortLevel:');
-  assert.ok(idx !== -1, `expected an exact "  effortLevel:" line (no root default), got:\n${out}`);
-  assert.equal(lines[idx + 1], '    claude-fable-5-1=medium');
-  assert.equal(lines[idx + 2], '    claude-opus-5=high');
-  assert.equal(lines[idx + 3], '    claude-opus-5-5=high');
+  const cfgLine = lines.find(l => l.startsWith('CONFIG '));
+  assert.ok(cfgLine && cfgLine.includes(' effort=fable-5-1:medium,opus-5:high,opus-5-5:high '),
+    'expected every per-model level on the one CONFIG line, got:\n' + out);
   for (const line of lines) {
     assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
   }
@@ -64,8 +62,8 @@ test('root-only effortLevel (no modelSettings) still reported as before', () => 
   assert.deepEqual(r.config.modelEffort, []);
 
   const out = auditText(dir);
-  const line = out.split('\n').find(l => l.includes('effortLevel='));
-  assert.ok(line.includes('effortLevel=high'), `expected root-level effortLevel, got: ${line}`);
+  const line = out.split('\n').find(l => l.startsWith('CONFIG '));
+  assert.ok(line.includes(' effort=high '), `expected root-level effortLevel, got: ${line}`);
 });
 
 test('neither root nor modelSettings effortLevel set → unset', () => {
@@ -79,8 +77,8 @@ test('neither root nor modelSettings effortLevel set → unset', () => {
   assert.deepEqual(r.config.modelEffort, []);
 
   const out = auditText(dir);
-  const line = out.split('\n').find(l => l.includes('effortLevel='));
-  assert.ok(line.includes('effortLevel=unset'), `expected unset, got: ${line}`);
+  const line = out.split('\n').find(l => l.startsWith('CONFIG '));
+  assert.ok(line.includes(' effort=unset '), `expected unset, got: ${line}`);
 });
 
 // Mixed case: root effortLevel is a fallback default for any model without
@@ -109,11 +107,9 @@ test('root effortLevel + modelSettings entries: CONFIG prints default= alongside
 
   const out = auditText(dir);
   const lines = out.split('\n');
-  const idx = lines.indexOf('  effortLevel: default=low');
-  assert.ok(idx !== -1, `expected an exact "  effortLevel: default=low" line, got:\n${out}`);
-  assert.equal(lines[idx + 1], '    claude-fable-5-1=medium');
-  assert.equal(lines[idx + 2], '    claude-opus-5=high');
-  assert.equal(lines[idx + 3], '    claude-opus-5-5=high');
+  const cfgLine = lines.find(l => l.startsWith('CONFIG '));
+  assert.ok(cfgLine && cfgLine.includes(' effort=low,fable-5-1:medium,opus-5:high,opus-5-5:high '),
+    'expected the root default first, then per-model levels, got:\n' + out);
   for (const line of lines) {
     assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
   }
@@ -142,15 +138,11 @@ test('CONFIG: an oversized or control-char modelSettings key is fit and sanitize
   // Real SECURITY header appears exactly once — a malicious key must not be able
   // to forge a second one via an embedded newline.
   assert.equal(lines.filter(l => l.startsWith('SECURITY (confidentiality, not cost)')).length, 1);
-  // The sanitized key keeps its printable run. show() replaces each run of
-  // control/format chars (the injected newlines) with a single space; the
-  // remaining literal whitespace (the "  none" indent) is collapsed to one
-  // space by fit() -- run on the key at print time, same as any other CONFIG
-  // field -- not by show(). Checked as an exact line rather than a vague "no
-  // triple newline" check that would pass even if the injection partly worked.
-  assert.ok(
-    lines.some(l => l.trim() === 'claude-evil SECURITY (confidentiality, not cost) none=low'),
-    `expected the sanitized modelSettings key on one line, got:\n${out}`);
+  // The sanitized key keeps its printable run on the one CONFIG line (show()
+  // turns the injected newlines into spaces; fit() cuts it to 20 chars).
+  const cfgLine = lines.find(l => l.startsWith('CONFIG '));
+  assert.ok(cfgLine && cfgLine.includes('effort=evil SECURITY ('),
+    'expected the sanitized modelSettings key on the CONFIG line, got:\n' + out);
 });
 
 // Slice 20 re-review: root/per-model `effortLevel` and `cleanupPeriodDays` come
@@ -207,7 +199,7 @@ test('CONFIG: a hostile cleanupPeriodDays cannot forge a SECURITY block, valid n
     'settings.json': { cleanupPeriodDays: 30 },
   });
   const out2 = auditText(dir2);
-  assert.ok(out2.includes('cleanupPeriodDays=30'), out2);
+  assert.ok(out2.includes(' retention=30'), out2);
 });
 
 // Slice 20 review: settings.model is free text from settings.json too. show()
@@ -289,7 +281,8 @@ test('CONFIG: hostile-long model + cleanupPeriodDays + effortLevel together stil
   }
   // 4th review, finding 6 (nit): the 120-char check above passes vacuously if the
   // `model=` line never got printed at all -- assert it actually exists.
-  assert.ok(lines.some(l => l.startsWith('  model=')), `expected a "  model=" line, got:\n${out}`);
+  assert.ok(lines.some(l => l.startsWith('CONFIG ') && l.includes(' model=')),
+    `expected a CONFIG line with model=, got:\n${out}`);
 });
 
 // Slice 20 3rd review, finding 2: fit()/fitMiddle() only run at print time (text

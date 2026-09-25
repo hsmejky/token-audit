@@ -1435,9 +1435,6 @@ function flagLines(f) {
 function printFlagLine(f) {
   for (const l of flagLines(f)) console.log(l);
 }
-// Slice 28: a summary list whose length is set by the machine's config/data
-// prints at most SUMMARY_LIST_CAP rows + one "… +N more" line. --json keeps all.
-const SUMMARY_LIST_CAP = 3;
 // Slice 28 (design.md Q3, HITL): the summary shows the top FLAGS_SUMMARY_CAP
 // flags in rankFlags() order plus one "+N more: IDs" line; the rest continue in
 // DETAIL (inside DETAIL_MAX_LINES) and always in --json.
@@ -1505,10 +1502,52 @@ function trendLine(wks) {
   return `TREND        ${first.week} ${money(first.costPerMsg)}/msg → ${last.week} ${money(last.costPerMsg)}/msg ` +
     `${delta}   span ${span} wk (${wks.length} with data)   full table in --json`;
 }
-function printCapped(items, printRow, indent) {
-  for (const it of items.slice(0, SUMMARY_LIST_CAP)) printRow(it);
-  if (items.length > SUMMARY_LIST_CAP)
-    console.log(`${indent}… +${items.length - SUMMARY_LIST_CAP} more (full list in --json)`);
+// Slice 28 (design.md Q3, HITL D): CONFIG, UNPRICED and the SPEND family split
+// print one line each (≤ 120 chars); a list that doesn't fit ends in one
+// "+N more" marker, and --json carries every entry. fit()/textOf() run here, at
+// print time, on the already show()n (redacted/sanitized) values (Slice 20/29).
+function joinFit(parts, budget, sep, more) {
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    const rest = parts.length - i - 1;
+    if ([...[...out, parts[i], ...(rest ? [more(rest)] : [])].join(sep)].length > budget) break;
+    out.push(parts[i]);
+  }
+  if (out.length < parts.length) out.push(more(parts.length - out.length));
+  return out.join(sep);
+}
+function familyLine(cur) {
+  const fams = Object.entries(cur.byFamily).sort((a, b) => b[1] - a[1])
+    .map(([f, v]) => `${f} ${money(v)} ${pct(v / (cur.cost || 1))}`);
+  return '  ' + joinFit(fams, 118, '   ', n => `+${n} more (--json)`);
+}
+function unpricedLine(unpriced) {
+  const tok = unpriced.reduce((a, u) => a + u.tokens, 0);
+  const head = `UNPRICED     ${unpriced.length} model(s) ${(tok / 1e6).toFixed(2)}M tok: `;
+  const tail = ' -- add prices to PRICES + REFERENCE.md';
+  const budget = Math.max(20, 120 - [...head].length - [...tail].length);
+  return head + joinFit(unpriced.map(u => fit(u.model, 40)), budget, ', ', n => `+${n} more (--json)`) + tail;
+}
+// effort= lists the root effortLevel (the default for models without their own
+// entry) first, then each modelSettings.<model>.effortLevel as model:level with
+// the "claude-" prefix dropped; prefix≈ is the fixed tokens/request that
+// plugins (agent + skill definitions) and MCP servers add; retention =
+// cleanupPeriodDays (left out when unset: SECURITY's NO_RETENTION says so).
+function configLine(cfg) {
+  const head = 'CONFIG       ';
+  const tail = ` plugins=${cfg.pluginCount}` + (cfg.mcpServers.length ? ` mcp=${cfg.mcpServers.length}` : '') +
+    ` prefix≈${(((cfg.prefixTokens || 0) + (cfg.mcpPrefixTokens || 0)) / 1e3).toFixed(1)}k` +
+    (textOf(cfg.cleanupPeriodDays) == null ? '' : ` retention=${fit(textOf(cfg.cleanupPeriodDays), 12)}`);
+  const rest = 120 - [...head].length - [...tail].length;
+  const root = cfg.effortLevel ? [fit(textOf(cfg.effortLevel), 12)] : [];
+  const perModel = cfg.modelEffort.map(m =>
+    `${fit(String(textOf(m.model)).replace(/^claude-/, ''), 20)}:${fit(textOf(m.effortLevel), 10)}`);
+  // effort is fit first (it carries the per-model levels), model gets the rest (12..30).
+  const budget = rest - ' effort='.length - 'model='.length - 12;
+  const effort = root.length || perModel.length ? joinFit([...root, ...perModel], budget, ',', n => `+${n}`) : 'unset';
+  const modelRoom = rest - ' effort='.length - [...effort].length - 'model='.length;
+  const model = 'model=' + fit(textOf(cfg.model) ?? 'unset', Math.max(12, Math.min(30, modelRoom)));
+  return `${head}${model} effort=${effort}${tail}`;
 }
 const TOP_SUBAGENTS = 10;
 const TASK_WIDTH = 70;
@@ -1791,53 +1830,16 @@ async function main() {
   console.log('');
   console.log(`SPEND        ${money(cur.cost)}   prev window ${money(prev.cost)}` +
     (prev.cost ? `  ${cur.cost >= prev.cost ? '+' : ''}${(100 * (cur.cost / prev.cost - 1)).toFixed(0)}%` : ''));
-  for (const [f, v] of Object.entries(cur.byFamily).sort((a, b) => b[1] - a[1]))
-    console.log(`  ${f.padEnd(8)} ${money(v).padStart(8)}  ${pct(v / cur.cost)}`);
+  console.log(familyLine(cur));
   console.log(`  main ${money(cur.byChain.main)} (${pct(cur.byChain.main / (cur.cost || 1))})   ` +
     `subagents ${money(cur.byChain.sub)} (${pct(cur.byChain.sub / (cur.cost || 1))})`);
-  if (unpriced.length) {
-    const totTok = unpriced.reduce((a, u) => a + u.tokens, 0);
-    console.log(`UNPRICED     ${unpriced.length} model(s), ${(totTok / 1e6).toFixed(2)}M tokens not in pricing table`);
-    // Slice 28 review, finding a (part 1): name width was hard-capped at 28 even
-    // when the line had room for the original 40 — restore up to 40, but never
-    // past what keeps the whole row ≤ 120 chars (same dynamic-budget pattern as
-    // the banner/session-row project name above).
-    printCapped(unpriced, u => {
-      const suffix = ` rows=${String(u.rows).padStart(6)}  tokens=${(u.tokens / 1e6).toFixed(2)}M`;
-      const width = Math.min(40, Math.max(10, 120 - 2 - [...suffix].length));
-      console.log(`  ${fit(u.model, width).padEnd(width)}${suffix}`);
-    }, '  ');
-    // Slice 28 review, finding a (part 2): the merged WARNING used to be generic
-    // and never named the model(s) it's about. Name every unpriced model up to a
-    // 120-char budget; once that's used up, point at the rows above (already
-    // capped to SUMMARY_LIST_CAP) and --json for the rest instead of truncating
-    // a name mid-word.
-    {
-      const prefix = '  WARNING: unpriced model(s) ';
-      const suffix = ' -- add each price to PRICES + REFERENCE.md';
-      const budget = Math.max(10, 120 - [...prefix].length - [...suffix].length);
-      const names = unpriced.map(u => u.model);
-      const named = [];
-      for (const n of names) {
-        const next = [...named, n].join(', ');
-        if ([...next].length > budget) break;
-        named.push(n);
-      }
-      const joined = named.length === names.length
-        ? named.join(', ')
-        : named.length
-          ? `${named.join(', ')} (+${names.length - named.length} more, see rows above / --json)`
-          : 'see rows above / --json';
-      console.log(prefix + joined + suffix);
-    }
-  }
+  if (unpriced.length) console.log(unpricedLine(unpriced));
   console.log('');
   console.log(`PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
     (prev.msgs ? `   prev ${k(prev.avgCtx)} / ${money(prev.costPerMsg)}` : ''));
   console.log(`SESSIONS     ${cur.sessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
     `≥250 msgs: ${cur.sessions.filter(s => s.msgs >= 250).length}`);
   console.log(`ALL-TIME     ${money(all.cost)} over ${all.sessions.length} sessions, ${all.msgs} messages`);
-  console.log('');
 
   // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
   // it overlaps WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
@@ -1846,51 +1848,7 @@ async function main() {
   // is replaced by one TREND line spanning all history; --json keeps the full table
   // under `weeks`.
   console.log(trendLine(weeks(rows)));
-  console.log('');
-
-  console.log('CONFIG');
-  // A single-line `effortLevel=a=x, b=y, c=z` grows past 120 chars once 3+ per-model
-  // entries are set (real machines see this — Slice 20). Root-only/unset stays a short
-  // inline `effortLevel=`; per-model entries move to their own indented lines instead,
-  // matching the plugins/mcp-servers list style just below.
-  // Slice 20 3rd review, finding 2: cfg.* is the same object printed as --json,
-  // so it now carries the full (unfit) sanitized value (see showConfig/showAny
-  // above) — fit()/fitMiddle() run here, at print time, never in the JSON path.
-  // Slice 20 4th review, finding 1: cfg.model/cleanupPeriodDays/effortLevel can
-  // now be a live object/array (showAny() keeps --json's real type) — run each
-  // through textOf() first so fit() gets a string, not fit()'s own naive
-  // String(x) turning it into "[object Object]".
-  if (cfg.modelEffort.length) {
-    // model(60) + cleanupPeriodDays(30) + their fixed labels is 119 chars worst
-    // case, always within the 120 budget even with both maxed out.
-    console.log(`  model=${fit(textOf(cfg.model), 60)}   ` +
-      `cleanupPeriodDays=${fit(textOf(cfg.cleanupPeriodDays) ?? 'unset', 30)}`);
-    console.log('  effortLevel:' + (cfg.effortLevel ? ` default=${fit(textOf(cfg.effortLevel), 30)}` : ''));
-    for (const m of cfg.modelEffort)
-      console.log(`    ${fit(textOf(m.model), 60)}=${fit(textOf(m.effortLevel), 30)}`);
-  } else {
-    // Slice 20 3rd review, finding 1: all three fields inline on one line — a static
-    // 60/30/30 budget for model/cleanupPeriodDays/effortLevel can total 164 chars once
-    // every value is maxed out. Fit cleanupPeriodDays/effortLevel to their usual 30
-    // first (they're meant to be short: a number or a closed vocabulary), then give
-    // model whatever's left of the 120-char line — same dynamic-budget approach as the
-    // banner/session-row project name, instead of a static guess for all three at once.
-    const cleanup = fit(textOf(cfg.cleanupPeriodDays) ?? 'unset', 30);
-    const effort = fit(textOf(cfg.effortLevel) ?? 'unset', 30);
-    const suffix = `   cleanupPeriodDays=${cleanup}   effortLevel=${effort}`;
-    const budget = Math.max(10, 120 - '  model='.length - suffix.length);
-    console.log(`  model=${fit(textOf(cfg.model), budget)}` + suffix);
-  }
-  console.log(`  plugins=${cfg.pluginCount}   agent defs=${cfg.agentDefs}   skill defs=${cfg.skillDefs}   ` +
-    `fixed prefix ≈${(cfg.prefixTokens / 1e3).toFixed(1)}k tok/request`);
-  printCapped(cfg.plugins.filter(p => p.prefixTokens >= 200), p =>
-    console.log(`    ${fit(p.name, 40).padEnd(40)} ${String(p.agents).padStart(3)} agents ` +
-      `${String(p.skills).padStart(3)} skills  ≈${(p.prefixTokens / 1e3).toFixed(1)}k tok`), '    ');
-  if (cfg.mcpServers.length) {
-    console.log(`  mcp servers=${cfg.mcpServers.length}   ` +
-      `est. prefix ≈${(cfg.mcpPrefixTokens / 1e3).toFixed(1)}k tok/request`);
-    printCapped(cfg.mcpServers, s => console.log(`    ${fit(s.name, 30).padEnd(30)} ${s.scope}`), '    ');
-  }
+  console.log(configLine(cfg));
   console.log('');
 
   // Slice 28 (design.md Q3/Q5, HITL Q-B/Q-C): top FLAGS_SUMMARY_CAP in rank

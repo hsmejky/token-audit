@@ -92,115 +92,87 @@ test('fixture fires every section: all cost flags, UNPRICED, MCP, 3-model effort
   assert.equal(r.config.modelEffort.length, 3);
 });
 
-// HITL (Slice 28, variant B — design.md Q3): TOP SESSIONS dropped, WEEKS -> one
-// TREND line, and FLAGS capped to the top FLAGS_SUMMARY_CAP (4) by dollar amount
-// close most of the gap (58 -> 37 lines with FLAGS capped to 0), but do not reach
-// 24 on this worst-case fixture: with every flag capped away entirely (0 shown)
-// the summary still measures 37 lines, all from CONFIG (3-model effortLevel + 8
-// MCP servers), UNPRICED, and the other fixed-width sections variant B did not
-// touch. Real `--all --days 3650` data (4 `byFamily` rows, no MCP/plugin config)
-// measures 33. Meeting 24 needs a design decision beyond variant B's three
-// changes (see design.md Q3 "Open (not resolved by variant B)") -> still HITL.
-test('summary ≤ 24 lines when every section fires at once', { todo: 'HITL: needs a design decision' }, () => {
+// Slice 28 (design.md Q3, HITL D): CONFIG, UNPRICED and the SPEND family split
+// print one line each; full lists live in --json only. With variant B (TOP
+// SESSIONS dropped, WEEKS -> TREND, FLAGS top 4) the worst-case fixture fits
+// the 24-line summary budget.
+test('summary ≤ 24 lines when every section fires at once (with and without DETAIL)', () => {
   const out = auditText(everySection(), '--days', '7');
   const sum = summaryLines(out);
-  assert.ok(sum.length <= 24, `summary is ${sum.length} lines:\n${sum.join('\n')}`);
+  assert.ok(sum.length <= 24, 'summary is ' + sum.length + ' lines:\n' + sum.join('\n'));
+  const compact = auditText(everySection(), '--days', '7', '--no-detail').replace(/\n$/, '').split('\n');
+  assert.ok(compact.length <= 24, '--no-detail is ' + compact.length + ' lines:\n' + compact.join('\n'));
+  for (const l of out.split('\n')) assert.ok([...l].length <= 120, 'line over 120: ' + l);
 });
 
-// Unbounded-list caps (Slice 28): a list whose length is set by the machine's
-// config/data (MCP servers, unknown models, heavy plugins) prints at most
-// LIST_CAP rows in the text summary plus one `… +N more` line; --json keeps all.
-const LIST_CAP = 3;
-// Exact text of the shared cap line printCapped() emits (MCP servers, UNPRICED
-// models, plugin rows) — matched verbatim, not a loose `includes()`, so it can't
-// be satisfied by unrelated text that happens to contain the same "+N more"
-// digits (e.g. the UNPRICED WARNING line's own "(+N more, see rows above /
-// --json)" aside, a different phrase entirely). Indent varies by caller: '  '
-// for UNPRICED, '    ' for CONFIG's plugin/MCP-server rows.
-const CAP_MORE = (n, indent = '  ') => `${indent}… +${n} more (full list in --json)`;
-const moreLine = (lines, n, indent) => lines.filter(l => l === CAP_MORE(n, indent));
-
-test('CONFIG: 8 MCP servers print 3 rows + one "+5 more" line; --json keeps all 8', () => {
+test('CONFIG: one line (model, 3-model effort, plugin/mcp counts, prefix, retention); --json keeps all', () => {
   const dir = everySection({ mcp: 8 });
   const sum = summaryLines(auditText(dir, '--days', '7'));
-  const cfg = section(sum, /^CONFIG$/);
-  assert.equal(cfg.filter(l => /^ {4}server-\d/.test(l)).length, LIST_CAP, sum.join('\n'));
-  assert.equal(moreLine(cfg, 5, '    ').length, 1, sum.join('\n'));
-  assert.equal(audit(dir, '--days', '7').config.mcpServers.length, 8);
+  const cfg = section(sum, /^CONFIG /);
+  assert.equal(cfg.length, 1, sum.join('\n'));
+  // retention= is left out while unset (SECURITY's NO_RETENTION already says so)
+  assert.match(cfg[0],
+    /^CONFIG {7}model=\S.* effort=fable-5-1:high,opus-5:high,opus-5-5:high plugins=1 mcp=8 prefix≈[\d.]+k$/);
+  assert.ok(!sum.some(l => /server-\d/.test(l)), sum.join('\n'));
+  const json = audit(dir, '--days', '7');
+  assert.equal(json.config.mcpServers.length, 8);
+  assert.equal(json.config.modelEffort.length, 3);
 });
 
-// Boundary (Slice 28 review, finding d): exactly at the cap prints no "more"
-// line at all; one over the cap prints exactly "+1 more".
-test('CONFIG: exactly 3 MCP servers -> no "more" line', () => {
-  const dir = everySection({ mcp: 3 });
-  const cfg = section(summaryLines(auditText(dir, '--days', '7')), /^CONFIG$/);
-  assert.equal(cfg.filter(l => /^ {4}server-\d/.test(l)).length, 3, cfg.join('\n'));
-  assert.equal(cfg.filter(l => l.includes('more')).length, 0, cfg.join('\n'));
+test('CONFIG: no MCP servers -> no mcp= field', () => {
+  const cfg = section(summaryLines(auditText(everySection({ mcp: 0 }), '--days', '7')), /^CONFIG /);
+  assert.equal(cfg.length, 1);
+  assert.ok(!cfg[0].includes(' mcp='), cfg[0]);
 });
 
-test('CONFIG: 4 MCP servers -> 3 rows + exactly "+1 more"', () => {
-  const dir = everySection({ mcp: 4 });
-  const cfg = section(summaryLines(auditText(dir, '--days', '7')), /^CONFIG$/);
-  assert.equal(cfg.filter(l => /^ {4}server-\d/.test(l)).length, LIST_CAP, cfg.join('\n'));
-  assert.equal(moreLine(cfg, 1, '    ').length, 1, cfg.join('\n'));
-});
-
-test('UNPRICED: 5 unknown models print 3 rows + "+2 more" + one WARNING naming models; --json keeps all 5', () => {
+test('UNPRICED: one line naming what fits + "+N more (--json)"; --json keeps all 5', () => {
   const dir = everySection({ unknownModels: 5 });
   const sum = summaryLines(auditText(dir, '--days', '7'));
   const unp = section(sum, /^UNPRICED\b/);
-  assert.equal(unp.filter(l => /^ {2}claude-zzz-\d/.test(l)).length, LIST_CAP, sum.join('\n'));
-  assert.equal(moreLine(unp, 2).length, 1, sum.join('\n'));
-  assert.equal(unp.filter(l => l.includes('WARNING')).length, 1, sum.join('\n'));
-  // Slice 28 review, finding a: the WARNING now names models (not silent);
-  // check it actually names the first 3 (within budget for this fixture).
-  const warning = unp.find(l => l.includes('WARNING'));
-  assert.match(warning, /claude-zzz-0.*claude-zzz-1.*claude-zzz-2/);
+  assert.equal(unp.length, 1, sum.join('\n'));
+  assert.ok([...unp[0]].length <= 120, unp[0]);
+  assert.match(unp[0], /^UNPRICED {5}5 model\(s\) [\d.]+M tok: claude-zzz-0, claude-zzz-1, /);
+  assert.match(unp[0], /, \+\d more \(--json\) -- add prices to PRICES \+ REFERENCE\.md$/);
   const json = audit(dir, '--days', '7');
   assert.equal(json.unpriced.length, 5);
-  // Slice 28 review, finding d: check the actual names of items 4 and 5, not
-  // just the array length — a bug that dropped or reordered them would still
-  // pass a length-only check.
   assert.equal(json.unpriced[3].model, 'claude-zzz-3');
   assert.equal(json.unpriced[4].model, 'claude-zzz-4');
 });
 
-// Boundary (Slice 28 review, finding d): exactly at the cap prints no "more"
-// line; one over prints exactly "+1 more". --json keeps every entry either way.
-test('UNPRICED: exactly 3 unknown models -> no "more" line', () => {
-  const dir = everySection({ unknownModels: 3 });
-  const unp = section(summaryLines(auditText(dir, '--days', '7')), /^UNPRICED\b/);
-  assert.equal(unp.filter(l => /^ {2}claude-zzz-\d/.test(l)).length, 3, unp.join('\n'));
-  assert.equal(unp.filter(l => l.includes('more')).length, 0, unp.join('\n'));
+test('UNPRICED: 3 unknown models -> all named on the one line, no "more"', () => {
+  const unp = section(summaryLines(auditText(everySection({ unknownModels: 3 }), '--days', '7')), /^UNPRICED\b/);
+  assert.equal(unp.length, 1, unp.join('\n'));
+  assert.match(unp[0], /claude-zzz-0, claude-zzz-1, claude-zzz-2 -- add/);
+  assert.ok(!unp[0].includes('more'), unp[0]);
 });
 
-test('UNPRICED: 4 unknown models -> 3 rows + exactly "+1 more"; --json item 4 named', () => {
-  const dir = everySection({ unknownModels: 4 });
-  const unp = section(summaryLines(auditText(dir, '--days', '7')), /^UNPRICED\b/);
-  assert.equal(unp.filter(l => /^ {2}claude-zzz-\d/.test(l)).length, LIST_CAP, unp.join('\n'));
-  assert.equal(moreLine(unp, 1).length, 1, unp.join('\n'));
-  const json = audit(dir, '--days', '7');
-  assert.equal(json.unpriced.length, 4);
-  assert.equal(json.unpriced[3].model, 'claude-zzz-3');
+test('SPEND: model families on one line, then main/subagents', () => {
+  const dir = tmpClaudeDir({ 'projects/p/s.jsonl': [...t('a', { model: 'claude-opus-5-5' }),
+    ...t('b', { model: 'claude-fable-5-1' })] });
+  const sum = summaryLines(auditText(dir));
+  const i = sum.findIndex(l => l.startsWith('SPEND'));
+  assert.match(sum[i + 1], /^ {2}(Opus|Fable) \$[\d.]+ [\d.]+% {3}(Opus|Fable) \$[\d.]+ [\d.]+%$/, sum.join('\n'));
+  assert.match(sum[i + 2], /^ {2}main /, sum.join('\n'));
 });
 
-test('CONFIG: 5 plugins over the 200-tok row threshold print 3 rows + one "+2 more" line', () => {
+test('CONFIG: 5 heavy plugins -> counted on the one CONFIG line, no per-plugin rows; --json keeps all', () => {
   const files = { 'projects/p/s.jsonl': t('m1'), 'settings.json': { enabledPlugins: {} } };
   const desc = 'd'.repeat(1000);
   for (let p = 0; p < 5; p++) {
-    files['settings.json'].enabledPlugins[`plug${p}@mkt`] = true;
-    files[`plugins/cache/mkt/plug${p}/.claude-plugin/plugin.json`] = {};
+    files['settings.json'].enabledPlugins['plug' + p + '@mkt'] = true;
+    files['plugins/cache/mkt/plug' + p + '/.claude-plugin/plugin.json'] = {};
   }
   const dir = tmpClaudeDir(files);
-  // tmpClaudeDir JSON-encodes non-array content; agent .md files need raw text.
   for (let p = 0; p < 5; p++) {
-    const f = path.join(dir, `plugins/cache/mkt/plug${p}/agents/a.md`);
+    const f = path.join(dir, 'plugins/cache/mkt/plug' + p + '/agents/a.md');
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, `---\nname: a\ndescription: ${desc}\n---\nbody`);
+    fs.writeFileSync(f, '---\nname: a\ndescription: ' + desc + '\n---\nbody');
   }
-  const cfg = section(summaryLines(auditText(dir)), /^CONFIG$/);
-  assert.equal(cfg.filter(l => /^ {4}\S*plug\d/.test(l)).length, LIST_CAP, cfg.join('\n'));
-  assert.equal(moreLine(cfg, 2, '    ').length, 1, cfg.join('\n'));
+  const sum = summaryLines(auditText(dir));
+  const cfg = section(sum, /^CONFIG /);
+  assert.equal(cfg.length, 1, sum.join('\n'));
+  assert.ok(cfg[0].includes(' plugins=5 '), cfg[0]);
+  assert.ok(!sum.some(l => /plug\d/.test(l)), sum.join('\n'));
   assert.equal(audit(dir).config.plugins.length, 5);
 });
 
