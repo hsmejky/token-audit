@@ -1289,9 +1289,14 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
     add('OPUS_HEAVY', `Opus = ${(100 * cur.opusShare).toFixed(0)}% of spend — no model-per-phase split visible`);
   }
   if (cfg.agentDefs > 20 || cfg.prefixTokens > 5000) {
+    // Slice 20 3rd review, finding 6 (pre-existing): p.name is attacker/author
+    // controlled (same as elsewhere in CONFIG) and was printed here with no length
+    // cap — fit it same as the CONFIG plugin listing does, so 3 worst-case names
+    // can't alone blow the FLAGS line (wrapWords()'s hard-break below is the
+    // second line of defense for anything that still gets through too long).
     add('PLUGIN_BLOAT', `${cfg.agentDefs} agent + ${cfg.skillDefs} skill definitions ≈ ` +
       `${(cfg.prefixTokens / 1e3).toFixed(1)}k tokens in every request prefix ` +
-      `(worst: ${cfg.plugins.slice(0, 3).map(p => p.name.split('/').pop()).join(', ')})`);
+      `(worst: ${cfg.plugins.slice(0, 3).map(p => fit(p.name.split('/').pop(), 40)).join(', ')})`);
   }
   if (!out.length) add('CLEAN', 'no threshold breached in this window');
   return out;
@@ -1374,7 +1379,19 @@ function wrapWords(text, width) {
   const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
   const lines = [];
   let cur = '';
-  for (const w of words) {
+  for (let w of words) {
+    // Slice 20 3rd review, finding 6 (pre-existing): a single "word" longer than
+    // width (e.g. an attacker-controlled plugin/MCP-server name with no spaces)
+    // can't be wrapped by breaking *between* words — the old loop just let it
+    // ride through as its own overlong line. Hard-break it into width-sized
+    // chunks instead, so no returned line ever exceeds width regardless of what
+    // the source text contains.
+    while ([...w].length > width) {
+      const chars = [...w];
+      if (cur) { lines.push(cur); cur = ''; }
+      lines.push(chars.slice(0, width).join(''));
+      w = chars.slice(width).join('');
+    }
     const next = cur ? `${cur} ${w}` : w;
     if ([...next].length > width && cur) { lines.push(cur); cur = w; }
     else cur = next;
@@ -1552,11 +1569,31 @@ const shown = new Map();
 // and could still forge layout or reorder printed text. \p{Cc} covers C0+C1,
 // \p{Cf} covers the format/bidi class; \u2028/\u2029 (line/paragraph separator)
 // aren't in either category but are still line breaks to a terminal.
+// Slice 20 3rd review: \p{Cf} is broad \u2014 it also matches ZWNJ/ZWJ/SHY (U+200C,
+// U+200D, U+00AD), which show up legitimately in Persian/Arabic names and emoji
+// ZWJ sequences. Collapsing them to a space is a display-only tradeoff (this
+// regex only runs inside show(), on the printed copy); grouping/keys are computed
+// off the raw value beforehand and are unaffected.
 const CONTROL_CHARS = /[\p{Cc}\p{Cf}\u2028\u2029]+/gu;
 const show = v => {
   if (typeof v !== 'string') return v;
   if (!shown.has(v)) shown.set(v, redactPaths(v).replace(CONTROL_CHARS, ' '));
   return shown.get(v);
+};
+// Slice 20 3rd review, finding 2: fit()/fitMiddle() must run only at print time
+// (text report) \u2014 showConfig() feeds --json too, and truncating a value there
+// silently drops data from the JSON contract (REFERENCE.md:375, "the full prefix
+// is in --json"). This is the JSON-safe counterpart to show() for a config value
+// that isn't necessarily a string: strings/numbers/booleans/null pass through
+// show()/unchanged so --json keeps their real type; an object or array (a forged
+// settings.json value where a string was expected) is neither truncated nor
+// blindly coerced with String() into the useless "[object Object]" \u2014 it's
+// JSON-stringified and then run through show() so the forged structure stays
+// visible, redacted and control-char-safe instead of silently vanishing.
+const showAny = v => {
+  if (v == null || typeof v === 'number' || typeof v === 'boolean') return v;
+  if (typeof v === 'string') return show(v);
+  try { return show(JSON.stringify(v)); } catch { return show(String(v)); }
 };
 // Slice 20 re-review: settings.json is as untrusted as an MCP server / plugin
 // name (config(), :767/:773-774) — effortLevel and cleanupPeriodDays were
@@ -1566,12 +1603,12 @@ const show = v => {
 // sanitized rather than hide it. cleanupPeriodDays should be a plain number;
 // anything else prints sanitized too, instead of silently passing through.
 const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
-const showEffortLevel = v => v == null ? v : (EFFORT_LEVELS.has(v) ? v : fit(show(String(v)), 30));
+const showEffortLevel = v => v == null ? v : (EFFORT_LEVELS.has(v) ? v : showAny(v));
 const showCleanupPeriodDays = v =>
-  (v == null || (typeof v === 'number' && Number.isFinite(v))) ? v : fit(show(String(v)), 30);
+  (v == null || (typeof v === 'number' && Number.isFinite(v))) ? v : showAny(v);
 const showSessions = sum => ({ ...sum,
   sessions: sum.sessions.map(s => ({ ...s, project: show(s.project), model: show(s.model) })) });
-const showConfig = c => ({ ...c, model: fit(show(c.model), 60),
+const showConfig = c => ({ ...c, model: showAny(c.model),
   cleanupPeriodDays: showCleanupPeriodDays(c.cleanupPeriodDays),
   effortLevel: showEffortLevel(c.effortLevel),
   modelEffort: c.modelEffort.map(m => ({ ...m, model: show(m.model), effortLevel: showEffortLevel(m.effortLevel) })),
@@ -1685,13 +1722,28 @@ async function main() {
   // entries are set (real machines see this — Slice 20). Root-only/unset stays a short
   // inline `effortLevel=`; per-model entries move to their own indented lines instead,
   // matching the plugins/mcp-servers list style just below.
+  // Slice 20 3rd review, finding 2: cfg.* is the same object printed as --json,
+  // so it now carries the full (unfit) sanitized value (see showConfig/showAny
+  // above) — fit()/fitMiddle() run here, at print time, never in the JSON path.
   if (cfg.modelEffort.length) {
-    console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}`);
-    console.log('  effortLevel:' + (cfg.effortLevel ? ` default=${cfg.effortLevel}` : ''));
-    for (const m of cfg.modelEffort) console.log(`    ${fit(m.model, 60)}=${m.effortLevel}`);
+    // model(60) + cleanupPeriodDays(30) + their fixed labels is 119 chars worst
+    // case, always within the 120 budget even with both maxed out.
+    console.log(`  model=${fit(cfg.model, 60)}   cleanupPeriodDays=${fit(cfg.cleanupPeriodDays ?? 'unset', 30)}`);
+    console.log('  effortLevel:' + (cfg.effortLevel ? ` default=${fit(cfg.effortLevel, 30)}` : ''));
+    for (const m of cfg.modelEffort)
+      console.log(`    ${fit(m.model, 60)}=${fit(m.effortLevel, 30)}`);
   } else {
-    console.log(`  model=${cfg.model}   cleanupPeriodDays=${cfg.cleanupPeriodDays ?? 'unset'}   ` +
-      `effortLevel=${cfg.effortLevel ?? 'unset'}`);
+    // Slice 20 3rd review, finding 1: all three fields inline on one line — a static
+    // 60/30/30 budget for model/cleanupPeriodDays/effortLevel can total 164 chars once
+    // every value is maxed out. Fit cleanupPeriodDays/effortLevel to their usual 30
+    // first (they're meant to be short: a number or a closed vocabulary), then give
+    // model whatever's left of the 120-char line — same dynamic-budget approach as the
+    // banner/session-row project name, instead of a static guess for all three at once.
+    const cleanup = fit(cfg.cleanupPeriodDays ?? 'unset', 30);
+    const effort = fit(cfg.effortLevel ?? 'unset', 30);
+    const suffix = `   cleanupPeriodDays=${cleanup}   effortLevel=${effort}`;
+    const budget = Math.max(10, 120 - '  model='.length - suffix.length);
+    console.log(`  model=${fit(cfg.model, budget)}` + suffix);
   }
   console.log(`  plugins=${cfg.pluginCount}   agent defs=${cfg.agentDefs}   skill defs=${cfg.skillDefs}   ` +
     `fixed prefix ≈${(cfg.prefixTokens / 1e3).toFixed(1)}k tok/request`);

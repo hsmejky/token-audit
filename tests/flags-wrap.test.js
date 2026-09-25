@@ -54,3 +54,17 @@ test('printFlagLine: a non-command flag still wraps and normalizes whitespace as
   assert.ok(printed.length > 1, 'expected the long prose text to wrap onto more than one line');
   assert.ok(!printed[0].includes('  b'), 'expected internal whitespace runs collapsed for a prose flag');
 });
+
+// Slice 20 3rd review, finding 6: wrapWords() only broke between words, so a
+// single "word" longer than the wrap width (e.g. an attacker-controlled plugin
+// name with no separators, PLUGIN_BLOAT's "worst: ..." list) rode straight
+// through unwrapped and overran 120 chars. It must now hard-break.
+test('printFlagLine: a single word longer than the wrap width is hard-broken, not left overrunning', () => {
+  const longWord = 'p'.repeat(250);
+  const printed = captureLines(() => printFlagLine({ id: 'PLUGIN_BLOAT', text: `worst: ${longWord}` }));
+  for (const line of printed) {
+    assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
+  }
+  // No characters of the long word may be dropped in the process.
+  assert.equal(printed.join('').split('p').length - 1, 250);
+});
