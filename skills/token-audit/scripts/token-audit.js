@@ -636,16 +636,39 @@ const POLL_MIN_CALLS = 20; // same command key >= N calls in one session
 // the false positives). See REFERENCE.md "POLLING".
 const POLL_CATEGORIES = new Set(['wait/poll', 'github', 'read', ACTIVITY_OTHER]);
 // Unquoted absolute paths left in a key (`O=/c/Users/me/…`, `{ cd /home/me/p; … }`,
-// `type C:\Users\me\x`) → <path>, so a printed key never carries a user or
-// project name. Needs two separators (`/c/x`, not `//FI`); a URL is kept
-// (its `//` follows `:`, not a word boundary like space, `=`, `(` or a quote).
-const ABS_PATH = /(^|[\s=(`'"])(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()<>]+[\\/][^\s`'"|;&()<>]*/g;
-const redactPaths = key => key.replace(ABS_PATH, '$1<path>');
+// `type C:\Users\me\x`, `>/home/me/out.log`, `2>/home/me/err.log`,
+// `-d @/c/Users/me/x`, `PATH=$PATH:/home/me/bin`, `scp host:/home/me/x`,
+// `file:///home/me/x`, `~/me.log`, `~me/x/y`) → <path>, so redactPaths() aims
+// to keep a printed key from carrying a user or project name. Trigger chars:
+// start/space/`=`/`(`/quote/backtick (existing) plus `>`, `<`, `@` and `:`
+// not immediately followed by `//` (scp/env/redirect targets). Still needs
+// two separators after the trigger (`/c/x`, not `//FI`), so an http(s) URL
+// stays readable (its `//` follows `:` with nothing between). `~`/`~user`
+// need only one separator (the `~` itself signals a path). `file://` is
+// redacted despite the `//`, since it names a local file, not a web
+// resource. `C:\Users\<name>` is a special case: the name segment may
+// contain a space (Explorer displays "First Last"), which the generic rule
+// can't allow without swallowing trailing prose. Emails (`user@host.tld`)
+// are redacted separately — a path trigger char never precedes them.
+const EMAIL = /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g;
+const FILE_URL = /\bfile:\/\/\/?[^\s'"`<>|;&()]*/gi;
+const WIN_USERS_PATH = /[A-Za-z]:\\Users\\[^\\]+(?:\\[^\s\\'"`<>|;&()]*)*/g;
+const TILDE_PATH = /(^|[\s=(`'"<>@:])~[\w.-]*(?:[\\/][^\s`'"|;&()<>]*)?/g;
+const ABS_PATH = /(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()<>]+[\\/][^\s`'"|;&()<>]*/g;
+const redactPaths = key => key
+  .replace(EMAIL, '<email>')
+  .replace(FILE_URL, '<path>')
+  .replace(WIN_USERS_PATH, '<path>')
+  .replace(TILDE_PATH, '$1<path>')
+  .replace(ABS_PATH, '$1<path>');
 // Polling runs in this window: Bash/PowerShell calls of a POLL_CATEGORIES
 // category, grouped per session (sessionKey) by commandKey; a group of
 // >= POLL_MIN_CALLS calls is a run. cost = 1/n of each n-call turn (as in
 // activity()), share = of window spend; most expensive run first.
-// `groups[].key` is path-redacted. See REFERENCE.md "POLLING".
+// `groups[].key` is path-redacted. `groups[].parent` is the parent sid for a
+// subagent group (null for a main session), since one subagent id spawned
+// under two different parents is two groups sharing the same `sid`.
+// See REFERENCE.md "POLLING".
 function polling(rows) {
   const groups = new Map();
   let total = 0;
@@ -654,7 +677,7 @@ function polling(rows) {
     for (const c of r.calls) {
       if (!SHELL_TOOLS.has(c.tool) || !POLL_CATEGORIES.has(categorize(c))) continue;
       const id = sessionKey(r) + '\u0000' + c.key;
-      const g = groups.get(id) || { sid: r.sid, key: redactPaths(c.key), count: 0, cost: 0 };
+      const g = groups.get(id) || { sid: r.sid, parent: r.isSub ? r.parent : null, key: redactPaths(c.key), count: 0, cost: 0 };
       g.count++;
       g.cost += r.cost / r.calls.length; // 1/n of the turn, as in activity()
       groups.set(id, g);

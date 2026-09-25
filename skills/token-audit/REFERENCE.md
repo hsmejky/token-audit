@@ -135,7 +135,10 @@ whole context, so a wait that takes 25 checks costs 25 turns of a long session. 
 prints the number of polling runs (session × command key with ≥ `POLL_MIN_CALLS` = 20
 calls, a named constant, provisional — Slice 15 re-tunes it), their combined cost and share
 of window spend, and the most expensive run's count and command key. `--json`: the flag
-carries `groups[]` = `{ sid, key, count, cost, share }`, most expensive first.
+carries `groups[]` = `{ sid, parent, key, count, cost, share }`, most expensive first.
+`parent` is the parent sid for a subagent group, `null` for a main session — needed because
+the same subagent id spawned under two different parents shares one `sid`; `parent` is what
+tells those two groups apart.
 
 **Do:** turn the wait into one waiting turn instead of dozens:
 - `gh pr checks --watch` (or `gh run watch`) — blocks until CI finishes, one call, one turn.
@@ -158,16 +161,28 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   (2026-09-25, all history) the bulk of real polling was `cat`/`tail` of background-task
   `.output` files (read), `tasklist` and `echo waiting-N` (other); wait/poll alone caught
   1 of ~10. Same key ≥ 20 over all categories gave 14 hits, 2 of them pytest loops.
-- **Real-data result with this rule**: 12 runs, ~10 look like real polling (task-output
-  tails, a `sleep` loop, `tasklist`, `echo waiting-N`, a log `grep | tail`). Known false
-  positive: `cat "<file>"` over 44 *different* result files (quoted paths collapse to
-  `<path>`); unclear: 78× `wc -c CLAUDE.md`. A "gap between repeats" rule was tried and
-  dropped: it didn't remove the false positive and cut a real log-polling run.
+- **Real-data result with this rule**: 12 runs. ~9 look like real polling (task-output
+  tails, a `sleep` loop, `tasklist`, `echo waiting-N`, a log `grep | tail`). 2 are the same
+  kind of collapse spread across many different files, not a wait: `cat "<file>"` ×63 (44
+  distinct raw commands) and `tail -N "<file>"` ×40 (35 distinct raw commands) — quoted
+  paths to different result files all normalize to the same `commandKey()`. 1 is unclear:
+  `wc -c CLAUDE.md` ×78, a single identical raw command every time (could be a real repeated
+  check or noise). A "gap between repeats" rule was tried and dropped: it didn't remove the
+  spread-out-file collapses and cut a real log-polling run. Tightening this (e.g. requiring
+  a dominant raw command share, or time-clustering the repeats) belongs in `polling()` itself,
+  not `commandKey()` — deferred to Slice 15.
 - **Cost = 1/n of an n-call turn** (same split as COST BY ACTIVITY), share of window spend.
 - **Printed key is path-redacted**: `commandKey()` leaves some paths in (`O=/c/Users/…`
-  assignments, `{ cd …; }`, `(cd …) 2>&1`, `$(cd …)`, unquoted `C:\…` args), so any unquoted
-  absolute path (two separators, after start/space/`=`/`(`/quote; URLs kept) → `<path>`, in
-  the text and in `groups[].key`. The key is cut in the middle (`head…tail`) so the line
+  assignments, `{ cd …; }`, `(cd …) 2>&1`, `$(cd …)`, unquoted `C:\…` args), so `polling()`'s
+  `redactPaths()` masks what's left, in the text and in `groups[].key`. An unquoted absolute
+  path is redacted after any of: start of key, whitespace, `=`, `(`, a quote/backtick, `>`,
+  `<`, `@`, or `:` not immediately followed by `//` (redirects, `@file` args, `NAME=$VAR:/…`,
+  `scp host:/…`) — still needs two path separators after the trigger, so an http(s) URL
+  (`//` with nothing between) stays readable. `~` / `~user` need only one separator. A
+  `file://` URL is redacted despite the `//`, since it names a local file. A quoted
+  `C:\Users\<name>` path is redacted whole even when the name contains a space. A bare email
+  (`user@host.tld`) is redacted to `<email>`. This is best-effort, not a guarantee for every
+  possible shell construct. The key is cut in the middle (`head…tail`) so the line
   stays ≤ 120 chars and both the program and e.g. `…/check-runs` stay visible.
 - **Heredoc bodies are hashed raw** (commandKey step 1): a poll script re-run verbatim
   groups; the same script with a different PR number inside the body is a different key.
@@ -376,7 +391,8 @@ Decisions not fixed by design.md (judgment calls):
 
 `commandKey(command)` (exported) turns a `Bash` / `PowerShell` command into a key so the same
 command against a different PR number, commit, path or cwd groups together. `POLLING`
-counts identical keys per session (wait-type categories only — see its playbook entry); `BOILERPLATE` (Slice 13) takes a prefix of it.
+counts identical keys per session (wait-type categories only — see its playbook entry);
+`BOILERPLATE` (Slice 13) takes a prefix of it.
 Steps, in order:
 
 1. Heredoc bodies hashed: the line with `<<TAG` / `<<'TAG'` / `<<-TAG` stays; the body through

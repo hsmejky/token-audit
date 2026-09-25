@@ -89,7 +89,10 @@ test('POLLING: shares add up over several runs; worst = most expensive run', () 
   // runs $110 = 73% (B alone would be 53%).
   const r = audit(tmpClaudeDir({
     'projects/p/a.jsonl': bashTurns(30, 'a', checkRuns, { input_tokens: 250000, output_tokens: 0 }),
-    'projects/p/b.jsonl': [...bashTurns(20, 'b', () => 'tail -5 /tmp/x.log'), ...bashTurns(10, 'g', () => 'git status')],
+    'projects/p/b.jsonl': [
+      ...bashTurns(20, 'b', () => 'tail -5 /tmp/x.log'),
+      ...bashTurns(10, 'g', () => 'git status'),
+    ],
   }));
   const [f] = pollingFlags(r);
   assert.deepEqual(f.groups.map(g => g.count), [20, 30]);
@@ -162,4 +165,117 @@ test('POLLING: one subagent id under two parents is two sessions (10 + 10 calls 
     'projects/p/m2/subagents/agent-a.jsonl': bashTurns(10, 'y', checkRuns),
   }));
   assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
+});
+
+test('POLLING: same subagent id under two parents, both ≥20× — groups[].parent tells them apart', () => {
+  const r = audit(tmpClaudeDir({
+    'projects/p/m1/subagents/agent-a.jsonl': bashTurns(20, 'x', checkRuns),
+    'projects/p/m2/subagents/agent-a.jsonl': bashTurns(20, 'y', checkRuns),
+  }));
+  const [f] = pollingFlags(r);
+  assert.ok(f, JSON.stringify(r.flags));
+  assert.equal(f.groups.length, 2);
+  assert.equal(f.groups[0].sid, f.groups[1].sid, 'same subagent id in both groups');
+  assert.notEqual(f.groups[0].parent, f.groups[1].parent, 'different parent must distinguish the groups');
+  assert.deepEqual(new Set(f.groups.map(g => g.parent)), new Set(['m1', 'm2']));
+});
+
+// Review finding 1: redactPaths() missed several places a path can start, and
+// let an email through untouched. One test per case.
+test('POLLING: redirect target (>) does not leak a user name', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `node x${i}.js >/c/Users/jdoe/out.log`),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: stderr redirect (2>) does not leak a user name', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `node x${i}.js 2>/home/jdoe/err.log`),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: @-file argument (curl -d @path) does not leak a user name', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `curl -d @/c/Users/jdoe/body${i}.json https://api.example.com/x`),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: env-var-prefixed PATH assignment (NAME=$VAR:/path) does not leak a user name', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => 'PATH=$PATH:/home/jdoe/bin'),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: scp-style host:/path target does not leak a user name', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `scp host:/home/jdoe/x${i}`),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: file:// URL does not leak a user name (unlike http(s), which stays readable)', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `curl file:///home/jdoe/x${i}`),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: http(s) URL stays readable (not redacted)', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', checkRuns),
+  })));
+  assert.ok(f);
+  assert.match(f.groups[0].key, /^curl -s https:\/\/api\.github\.com\//);
+});
+
+test('POLLING: ~/file shorthand (one separator) does not leak a user name', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => 'cat ~/jdoe.log'),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: ~user shorthand does not leak a user name', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => 'ls ~jdoe/x/y'),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: quoted Windows path with a space in the user name does not leak the surname', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `echo "see C:\\Users\\Petr Svarc\\x${i}"`),
+  })));
+  assert.ok(f);
+  assert.ok(!/Svarc/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<path>/);
+});
+
+test('POLLING: an email address is redacted to <email>', () => {
+  const [f] = pollingFlags(audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(25, 't', () => 'curl -u jdoe@gmail.com:$T https://api.example.com/x'),
+  })));
+  assert.ok(f);
+  assert.ok(!/jdoe@gmail\.com/.test(f.groups[0].key), f.groups[0].key);
+  assert.match(f.groups[0].key, /<email>/);
 });
