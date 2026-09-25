@@ -63,13 +63,21 @@ test('--json `all`: includes cost from sessions outside the --days window', () =
     // in all-time.
     'projects/p/old-main.jsonl': turn({ id: 'old-1', ts: daysAgo(24) }),
     'projects/p/old-main/subagents/agent-old.jsonl': turns(3, 'old-sub', { ts: daysAgo(24) }),
-    // Inside the window: counted in both cur and all.
+    // Inside the window: counted in both cur and all. Also carries its own subagent, so
+    // "all.cost only sums main sessions" would fail this test too, not just "all.cost
+    // ignores rows outside the window" (which the old session alone would already cover).
     'projects/p/new-main.jsonl': turn({ id: 'new-1', ts: daysAgo(1) }),
+    'projects/p/new-main/subagents/agent-new.jsonl': turns(2, 'new-sub', { ts: daysAgo(1) }),
   });
   const r = audit(dir, '--days', '7');
   assert.equal(r.cur.sessions.some(s => s.sid === 'old-main' || s.sid === 'agent-old'), false,
     'old session and its subagent must be outside the cur window');
   assert.equal(r.all.sessions, 2, 'ALL-TIME sessions counts both main sessions, old and new');
+  const newMainCost = r.cur.sessions.find(s => s.sid === 'new-main').cost;
+  const newSubCost = r.cur.sessions.find(s => s.sid === 'agent-new').cost;
+  assert.ok(newSubCost > 0, 'fixture must actually carry in-window subagent cost for this test to mean anything');
+  assert.equal((newMainCost + newSubCost).toFixed(6), r.cur.cost.toFixed(6),
+    'SPEND must include the in-window subagent cost');
   assert.ok(r.all.cost > r.cur.cost,
     `ALL-TIME cost (${r.all.cost}) must exceed the windowed SPEND (${r.cur.cost}) ` +
     'since it includes the old session + its subagent, which the window excludes');
