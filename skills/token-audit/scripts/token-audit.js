@@ -510,10 +510,13 @@ function workUnits(cur, all) {
       if (full.last > u.last) u.last = full.last;
     }
   }
-  return [...units.values()].map(u => {
+  // `first`/`last` are scratch fields used only to compute `span` below — drop them
+  // before returning so they don't leak into --json (REFERENCE.md's documented
+  // detail.units[] shape does not list them).
+  return [...units.values()].map(({ first, last, ...u }) => {
     const cost = u.mainCost + u.subCost;
     return { ...u, cost, subShare: cost ? u.subCost / cost : 0,
-      span: (u.last > u.first) ? u.last - u.first : 0 };
+      span: (last > first) ? last - first : 0 };
   }).sort((a, b) => b.cost - a.cost).slice(0, TOP_UNITS);
 }
 
@@ -528,7 +531,7 @@ function detail(cur, tasks, all) {
 const DETAIL_SECTIONS = [
   // Work units: parent + subagent rollup. Columns: 2+8+2+7+2+6+2+3+2+5+2+5+2+5+2+proj.
   d => d.units.length ? [
-    `TOP ${TOP_UNITS} WORK UNITS (this window, parent + subagents)`,
+    `TOP ${TOP_UNITS} WORK UNITS (this window, parent + subagents; span = full history)`,
     `  ${'sid'.padEnd(8)}  ${'cost'.padStart(7)}  ${'sub%'.padStart(6)}  ${'#ag'.padStart(3)}  ` +
       `${'turns'.padStart(5)}  ${'peak'.padStart(5)}  ${'span'.padStart(5)}  project`,
     ...d.units.map(u =>

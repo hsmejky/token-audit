@@ -128,9 +128,16 @@ test('WORK UNITS: parent + 2 subagents roll up into one unit, cost = sum, main/s
   const [u] = units;
   assert.equal(u.agents, 2);
   assert.equal(u.turns, 4 + 3 + 2);
-  assert.ok(Math.abs(u.cost - (u.mainCost + u.subCost)) < 1e-9, 'cost = mainCost + subCost');
-  assert.ok(Math.abs(u.subShare - u.subCost / u.cost) < 1e-9, 'subShare = subCost / cost');
-  assert.ok(u.subShare > 0 && u.subShare < 1, `expect a real mixed split, got ${u.subShare}`);
+  // All 9 turns share the same usage and model (opus-5-5, $4/MTok input, 1000 input
+  // tokens, no cache/output) so every turn costs exactly the same: 1000 * 4 / 1e6.
+  // Exact numbers below pin the split so the test fails if subCost were ever
+  // double-counted (e.g. 2x sub turns would give subShare 10/14, not 5/9).
+  const singleTurnCost = 1000 * 4 / 1e6;
+  const close = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: got ${a}, want ${b}`);
+  close(u.mainCost, 4 * singleTurnCost, 'mainCost = 4 main turns');
+  close(u.subCost, 5 * singleTurnCost, 'subCost = 5 sub turns (3 + 2), not double-counted');
+  close(u.cost, 9 * singleTurnCost, 'cost = mainCost + subCost');
+  close(u.subShare, 5 / 9, 'subShare = subCost / cost, exactly 5/9');
 });
 
 test('WORK UNITS: session with no subagents -> unit with sub 0%', () => {
@@ -140,6 +147,52 @@ test('WORK UNITS: session with no subagents -> unit with sub 0%', () => {
   assert.equal(units[0].agents, 0);
   assert.equal(units[0].subShare, 0);
   assert.equal(units[0].subCost, 0);
+});
+
+test('WORK UNITS: peak ctx = max context across main + subs; span = full-history first..last', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': [
+      turn({ id: 'main-0', ts: '2026-09-01T09:00:00.000Z',
+             usage: { input_tokens: 0, cache_read_input_tokens: 2000, output_tokens: 0 } }),
+      turn({ id: 'main-1', ts: '2026-09-05T09:00:00.000Z',
+             usage: { input_tokens: 0, cache_read_input_tokens: 5000, output_tokens: 0 } }),
+    ].flat(),
+    [SUB + '.jsonl']: turn({ id: 'sub-0', ts: '2026-09-01T09:30:00.000Z',
+      usage: { input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 0 } }),
+    [SUB + '.meta.json']: { description: 'peak/span agent' },
+  });
+  const { units } = audit(dir).detail;
+  assert.equal(units.length, 1);
+  const [u] = units;
+  assert.equal(u.peakCtx, 9000, 'peak ctx = largest single context hit by any session in the unit');
+  const expectedSpan = Date.parse('2026-09-05T09:00:00.000Z') - Date.parse('2026-09-01T09:00:00.000Z');
+  assert.equal(u.span, expectedSpan, 'span = full-history first-seen -> last-seen across the unit');
+});
+
+test('WORK UNITS: subagent with no main-session rows forms an orphan unit keyed by parent id', () => {
+  const dir = tmpClaudeDir({
+    [SUB + '.jsonl']: turns(3, 'sub-only', { usage: { input_tokens: 1000, output_tokens: 0 } }),
+    [SUB + '.meta.json']: { description: 'orphan agent' },
+  });
+  const { units } = audit(dir).detail;
+  assert.equal(units.length, 1);
+  const [u] = units;
+  assert.equal(u.key, '3ac91e04-uuid', 'orphan unit keyed by the parent id, no main session exists');
+  assert.equal(u.mainCost, 0);
+  assert.equal(u.agents, 1);
+  assert.ok(u.subCost > 0);
+  assert.equal(u.cost, u.subCost, 'cost = subCost only, mainCost is 0');
+});
+
+test('WORK UNITS: --json units omit the internal first/last fields', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/3ac91e04-uuid.jsonl': turns(4, 'main'),
+    [SUB + '.jsonl']: turns(3, 'sub-a'),
+    [SUB + '.meta.json']: { description: 'first agent' },
+  });
+  const { units } = audit(dir).detail;
+  assert.deepEqual(Object.keys(units[0]).sort(),
+    ['agents', 'cost', 'key', 'mainCost', 'peakCtx', 'project', 'subCost', 'subShare', 'span', 'turns'].sort());
 });
 
 test('WORK UNITS: text report shows a WORK UNITS section, sorted by cost desc, lines <= 120 chars', () => {
@@ -152,6 +205,7 @@ test('WORK UNITS: text report shows a WORK UNITS section, sorted by cost desc, l
   const detail = detailLines(auditText(dir));
   const header = detail.find(l => l.includes('WORK UNIT'));
   assert.ok(header, `expected a WORK UNITS header, got:\n${detail.join('\n')}`);
+  assert.match(header, /full history/i, 'header must flag that span is full-history, not window-clipped');
   for (const l of detail) assert.ok([...l].length <= 120, `line too long (${[...l].length}): ${l}`);
   const rows = detail.filter(l => l.includes('3ac91e04') || l.includes('solo-sess'));
   assert.equal(rows.length, 2);
