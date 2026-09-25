@@ -188,10 +188,10 @@ p99 572k, max 830k. 150 turns sits at p90–p92 (the second project alone: p85),
 turn histogram's count halves at 175 (25-turn buckets from 25–175 each carry about the
 same total $, so the lever is real all the way up — 150 is a tuning choice, not a "nothing
 past here" cliff), and matches the `maxTurns` playbook advice below, so the flag and the
-playbook agree on one number. 300k (the original the design phase guess) is only ≈ p85 of peak
+playbook agree on one number. 300k (the original design-phase guess) is only ≈ p85 of peak
 ctx and added 65 subagents that stay under 150 turns — "normal Opus agent that read a
 lot", not a long run; on the second project it fired on 1 in 4 subagents, which felt noisy in
-practice. 400k ≈ p93 overall (between second project's own p90 352k and p95 495k), so the ctx
+practice. 400k ≈ p93 overall (between the second project's own p90 352k and p95 495k), so the ctx
 arm now catches outliers instead of the upper quarter. Real-data check: all-history 83
 subagents = 17% of spend; the second project 17 subagents = 34% of spend (its worst offenders: a
 287-turn/638k agent, a 226-turn/538k agent, a 189-turn/558k agent); token-audit 0 — its
@@ -250,11 +250,12 @@ log tails, progress `grep -c`); the main false-positive risk at that band was re
 same script while iterating (`python <path>` × 10–17), fixed by moving script runs to their
 own `script run` activity category (below) and leaving it out of `POLL_CATEGORIES` — a
 `python foo.py` re-run is work, not a wait. Note: the second project GitHub-polling case (89
-`check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of second project spend) still
+`check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of the second project spend) still
 does not trip `POLLING` even at N = 10 — it is spread over 33 sessions (max 8 calls/session)
 behind ~87 distinct per-call keys (a fresh PR/commit id each time), so no single key repeats
-enough in one session. A cross-session version of this detector is out of scope for a
-per-session threshold; see the plan's "Cross-session GitHub polling (AFK)" slice.
+enough in one session. A cross-session version of this detector — flagging the same polling shape spread across many
+sessions instead of repeated within one — is out of scope for a per-session threshold and
+remains a possible future addition.
 
 **Do:** turn the wait into one waiting turn instead of dozens:
 - `gh pr checks --watch` (or `gh run watch`) — blocks until CI finishes, one call, one turn.
@@ -398,7 +399,7 @@ and #turns. `--json`: the flag carries `groups[]` = `{ prefix, sessions, turns, 
 most expensive first.
 
 **Slice 15 HITL re-tune: kept N = 5** (real, deduped, all-history data; distribution of
-sessions-per-prefix over 206 prefixes: p50 1, p90 2, p95 3, p99 8, max 71 — full table in
+sessions-per-prefix over 206 prefixes: p50 1, p90 2, p95 3, p99 8, max 71 — full table
 measured during development). 5 sits between p95 (3) and p99 (8): loosening to 3 (~p95)
 lets in more idioms (`T=$(mktemp -d)`, loop counters) without finding more real boilerplate;
 tightening to 8 (~p99) drops nothing but the two biggest hits. The false positives N = 5 lets
@@ -571,7 +572,7 @@ with the confidentiality rules anyway.
 Sonnet — report the number, never assert it (the design phase Q6).** The claim held for the
 first project this script measured (below: 20.4 % of spend, pre-dedupe) but not for the
 second project that motivated this rewrite (85 % of spend, mostly Opus — 82 % is
-that project's share of *input tokens*, not spend; see the design phase's evidence table) or
+that project's share of *input tokens*, not spend) or
 for this machine's own all-history data today (below:
 35.1 % of spend, 82.7 % of that on Opus). When the measured share is large and/or Opus-
 heavy, subagent count/duration *is* the lever — that's `LONG_AGENT`'s job (subagents
@@ -749,7 +750,7 @@ Decisions not fixed by the design phase (judgment calls):
   to. Originally folded into `other`, which kept totals whole (turns and cost still sum to
   the window's totals with `reply`) but hid `other`'s real composition — measured on
   2026-09-25, all-history real data, reply-type turns were ≈ 7% of total spend on their
-  own (9.6% on second project, 9.7% on token-audit), by far the largest single piece of what
+  own (9.6% on the second project, 9.7% on token-audit), by far the largest single piece of what
   `other` used to mean. Split into its own category so `other` reports only genuinely
   uncategorized tool calls.
 - **Split = per call, evenly.** A turn with n tool calls gives 1/n of its cost, 1/n of a turn
@@ -761,9 +762,9 @@ Decisions not fixed by the design phase (judgment calls):
 - **`harness` and `script run` (Slice 15) pulled out of `other`.** Measured on 2026-09-25,
   all-history real data, `other`'s composition (share of total spend) was: reply-shaped
   turns ≈ 7% (now `reply`, above), shell runs of a script (`python …`, `node …`,
-  `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% second project / 2.4% token-audit (now
+  `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% the second project / 2.4% token-audit (now
   `script run`), harness tools (`Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, …)
-  ≈ 1.6% all / 1.4% second project / 5.4% token-audit (now `harness`), wait-shaped commands
+  ≈ 1.6% all / 1.4% the second project / 5.4% token-audit (now `harness`), wait-shaped commands
   (`echo waiting-*`, `tasklist`, `true`) ≈ 0.2% (folded into `wait/poll`'s busy-poll row,
   table row 9 above), misc shell (`mkdir`, `cp`, `rm`, `for`, `export …`) ≈ 0.2–0.6%,
   genuinely unmatched ≈ 0.1%. So `other` was never one thing — it was mostly replies, script
@@ -787,7 +788,7 @@ Decisions not fixed by the design phase (judgment calls):
 ### Activity table vs Q9 hand estimates (Slice 15)
 
 The design phase Q9 gave two hand estimates to verify once this feature existed: polling ≈ 1–2%
-of second project spend, screenshots ≈ 2.6%. Measured with the finished script (second project,
+of the second project spend, screenshots ≈ 2.6%. Measured with the finished script (the second project,
 `--all --days 3650`, real data):
 
 - **Polling: `wait/poll` 1.35% + `github` 1.49% = 2.84%.** The hand estimate holds
@@ -795,10 +796,10 @@ of second project spend, screenshots ≈ 2.6%. Measured with the finished script
   / `sleep` loops, i.e. the `wait/poll` category alone); it reads 2.8% if every GitHub API
   call counts, including `pulls` fetches and the `git credential fill` setup that isn't
   itself a wait. No bug — a definition gap, not a measurement gap. This case (89 `check-runs`
-  + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of second project spend, spread across 33
+  + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of the second project spend, spread across 33
   sessions with ≤ 8 calls/session and ~87 distinct keys) is also why `POLLING` itself never
-  fires on it — see the "Cross-session GitHub polling" slice in the plan.
-- **Screenshots: `screenshot/image` table row = 4.89% of second project spend.** Higher than the
+  fires on it — catching this would need a cross-session detector, out of scope here.
+- **Screenshots: `screenshot/image` table row = 4.89% of the second project spend.** Higher than the
   2.6% hand estimate because the table charges the *whole turn* (full context) to the
   category, not just the image's own tokens. A second, narrower measure — the tokens a
   screenshot actually carries forward in context (image tokens × remaining turns in that
@@ -907,8 +908,7 @@ full population, not the 10 rows the reader is already looking at (those would s
 dominated by the leaderboard itself, converging to roughly the top-10's own median as list size
 shrinks). This mirrors the summary's SESSIONS median/p90 (Slice 15: main sessions only,
 `cur.mainSessions`, see `LONG_SESSION` above), which is likewise computed over its full
-population — main sessions, not subagents — rather than just the top ones. Not yet reconciled
-against the design phase's own text — see "Open questions" in the design phase.
+population — main sessions, not subagents — rather than just the top ones.
 
 ### Subagent task text — source
 
