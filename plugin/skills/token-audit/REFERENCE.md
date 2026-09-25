@@ -552,11 +552,14 @@ regardless of measured cost impact.
 
 ## Measured non-levers
 
-Do not recommend these — they were measured and are noise, on every project checked so far:
+Do not recommend these — they were measured and are noise. Tool output and screenshots
+were re-confirmed on the `demo-proj` project; output tokens (≈ 12 %) and `effortLevel`
+were only measured on the first project this script checked:
 
 | candidate | actual share of spend |
 |---|---|
 | all tool output (file reads, greps, bash) over full history | **≈ 0.15 %** |
+| screenshots carried in context | ≈ 2.6 % (see "Activity table vs Q9 hand estimates" below) |
 | output tokens | ≈ 12 % |
 | `effortLevel` overrides | negligible — `high` is already the default |
 
@@ -567,8 +570,9 @@ with the confidentiality rules anyway.
 **Subagents are a non-lever only when their measured share is small and they run on
 Sonnet — report the number, never assert it (design.md Q6).** The claim held for the
 first project this script measured (below: 20.4 % of spend, pre-dedupe) but not for the
-`demo-proj` project that motivated this rewrite (82 % of spend, mostly Opus — see
-design.md's evidence table) or for this machine's own all-history data today (below:
+`demo-proj` project that motivated this rewrite (85 % of spend, mostly Opus — 82 % is
+that project's share of *input tokens*, not spend; see design.md's evidence table) or
+for this machine's own all-history data today (below:
 35.1 % of spend, 82.7 % of that on Opus). When the measured share is large and/or Opus-
 heavy, subagent count/duration *is* the lever — that's `LONG_AGENT`'s job (subagents
 over 150 turns or 400k peak context; see its playbook above), not this section's.
@@ -601,8 +605,8 @@ not duplicated here.
 > **Supersedes the pre-Slice-2 baseline.** The first full measurement (2026-08-04 →
 > 2026-09-15, 283 sessions, 63 910 transcript lines) counted every transcript line as a
 > message; one API response is written as several lines (thinking / text / tool_use)
-> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.8× (that
-> window: 118 574 lines → 63 083 turns, $24.1k → $12.9k). It reported 86.5 % Opus share,
+> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.8× (all-time
+> on this machine: 118 574 lines → 63 083 turns, $24.1k → $12.9k). It reported 86.5 % Opus share,
 > 79.6 % / 20.4 % main/subagent split, sessions ≥ 250 msgs at 57.5 % of spend — do not
 > read a trend into old-baseline vs. this table; the dedupe fix and threshold re-tune
 > (Slice 15) both moved the numbers.
