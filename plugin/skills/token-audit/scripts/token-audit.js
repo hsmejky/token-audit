@@ -1423,6 +1423,16 @@ function printFlagLine(f) {
   console.log(`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`);
   for (let i = 1; i < lines.length; i++) console.log(`${' '.repeat(17)}${lines[i]}`);
 }
+// Slice 28: a summary list whose length is set by the machine's config/data
+// (unknown models, heavy plugins, MCP servers) prints at most SUMMARY_LIST_CAP
+// rows + one `… +N more` line, so it can't grow the ≤ 24-line summary without
+// bound. --json keeps every entry.
+const SUMMARY_LIST_CAP = 3;
+function printCapped(items, printRow, indent) {
+  for (const it of items.slice(0, SUMMARY_LIST_CAP)) printRow(it);
+  if (items.length > SUMMARY_LIST_CAP)
+    console.log(`${indent}… +${items.length - SUMMARY_LIST_CAP} more (full list in --json)`);
+}
 const TOP_SUBAGENTS = 10;
 const TASK_WIDTH = 70;
 const TOP_UNITS = 10;
@@ -1711,12 +1721,9 @@ async function main() {
   if (unpriced.length) {
     const totTok = unpriced.reduce((a, u) => a + u.tokens, 0);
     console.log(`UNPRICED     ${unpriced.length} model(s), ${(totTok / 1e6).toFixed(2)}M tokens not in pricing table`);
-    for (const u of unpriced) {
-      console.log(`  ${fit(u.model, 28).padEnd(28)} rows=${String(u.rows).padStart(6)}  ` +
-        `tokens=${(u.tokens / 1e6).toFixed(2)}M`);
-      const name = fit(u.model, 40);
-      console.log(`  WARNING: unknown model '${name}' -- add its price to PRICES + REFERENCE.md`);
-    }
+    printCapped(unpriced, u => console.log(`  ${fit(u.model, 28).padEnd(28)} rows=${String(u.rows).padStart(6)}  ` +
+      `tokens=${(u.tokens / 1e6).toFixed(2)}M`), '  ');
+    console.log(`  WARNING: unknown model(s) -- add each price to PRICES + REFERENCE.md`);
   }
   console.log('');
   console.log(`PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
@@ -1780,14 +1787,13 @@ async function main() {
   }
   console.log(`  plugins=${cfg.pluginCount}   agent defs=${cfg.agentDefs}   skill defs=${cfg.skillDefs}   ` +
     `fixed prefix ≈${(cfg.prefixTokens / 1e3).toFixed(1)}k tok/request`);
-  for (const p of cfg.plugins.filter(p => p.prefixTokens >= 200))
+  printCapped(cfg.plugins.filter(p => p.prefixTokens >= 200), p =>
     console.log(`    ${fit(p.name, 40).padEnd(40)} ${String(p.agents).padStart(3)} agents ` +
-      `${String(p.skills).padStart(3)} skills  ≈${(p.prefixTokens / 1e3).toFixed(1)}k tok`);
+      `${String(p.skills).padStart(3)} skills  ≈${(p.prefixTokens / 1e3).toFixed(1)}k tok`), '    ');
   if (cfg.mcpServers.length) {
     console.log(`  mcp servers=${cfg.mcpServers.length}   ` +
       `est. prefix ≈${(cfg.mcpPrefixTokens / 1e3).toFixed(1)}k tok/request`);
-    for (const s of cfg.mcpServers)
-      console.log(`    ${fit(s.name, 30).padEnd(30)} ${s.scope}`);
+    printCapped(cfg.mcpServers, s => console.log(`    ${fit(s.name, 30).padEnd(30)} ${s.scope}`), '    ');
   }
   console.log('');
 

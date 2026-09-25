@@ -79,9 +79,10 @@ every run just from these, drowning out a real new-model warning. A `<synthetic>
 with non-zero usage (unexpected, but not ruled out) is not excluded — it still goes
 through the normal UNPRICED + warning path below.
 
-Every entry under `UNPRICED` also prints a `WARNING` line in the text report naming the
-model and saying to add its price to `PRICES` + this table (`--json` doesn't need a
-separate field — the model already being listed under `unpriced` is the signal). By
+The text report lists the `UNPRICED` models (at most 3 rows + `… +N more`, Slice 28 cap)
+followed by one `WARNING` line saying to add each price to `PRICES` + this table (`--json`
+lists every model and doesn't need a separate field — the model already being listed under
+`unpriced` is the signal). By
 construction every `UNPRICED` entry is a model `rateFor` doesn't have an exact row for,
 so the warning fires for exactly the same set as the one AC asked to be covered: "every
 model present in real data either matches an exact known row or shows up in the new-model
@@ -718,9 +719,10 @@ BOILERPLATE lines are unaffected — their variable part is already bounded to
 
 ### MCP servers — CONFIG's `mcp servers=` line
 
-Slice 14. CONFIG lists every MCP server configured for the scoped project, one line
+Slice 14. CONFIG lists the MCP servers configured for the scoped project, one line
 per server, tagged `user` / `project` / `mcp.json` for which of the 3 sources above
-declared it. No line at all when nothing is configured (keeps the summary short).
+declared it. Slice 28: at most 3 server rows + one `… +N more (full list in --json)` line
+(same cap for UNPRICED models and the per-plugin rows under `plugins=`); `--json` keeps all. No line at all when nothing is configured (keeps the summary short).
 Under `--all` (no single scoped project), only `user`-scope servers are listed —
 `project` and `mcp.json` need one project directory to check.
 
