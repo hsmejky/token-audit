@@ -2,9 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, tmpClaudeDir, turn, turns } = require('./harness');
 
-// design.md Q5 / plan.md Slice 10: LONG_AGENT fires for a subagent over 150
-// turns OR with peak context > 300k. Thresholds are named constants in the
-// script (LONG_AGENT_TURNS, LONG_AGENT_CTX) — see REFERENCE.md "LONG_AGENT".
+// design.md Q5 / plan.md Slice 10 (thresholds re-tuned Slice 15): LONG_AGENT fires for
+// a subagent over 150 turns OR with peak context > 400k. Thresholds are named constants
+// in the script (LONG_AGENT_TURNS, LONG_AGENT_CTX) — see REFERENCE.md "LONG_AGENT".
 
 function withSubagent(n) {
   return tmpClaudeDir({
@@ -29,25 +29,25 @@ test('LONG_AGENT: subagent at 149 turns / 200k peak ctx does not fire', () => {
     `LONG_AGENT must not fire under both thresholds, got: ${JSON.stringify(r.flags)}`);
 });
 
-test('LONG_AGENT: subagent at 40 turns but 350k peak ctx fires', () => {
+test('LONG_AGENT: subagent at 40 turns but 450k peak ctx fires', () => {
   const dir = tmpClaudeDir({
     'projects/p/main.jsonl': turn({ id: 'm-1' }),
     'projects/p/main/subagents/agent-a.jsonl':
-      turns(40, 'a', { usage: { input_tokens: 0, cache_read_input_tokens: 350000, output_tokens: 0 } }),
+      turns(40, 'a', { usage: { input_tokens: 0, cache_read_input_tokens: 450000, output_tokens: 0 } }),
   });
   const r = audit(dir);
   assert.ok(r.flags.some(f => f.id === 'LONG_AGENT'),
     `expected LONG_AGENT from peak ctx alone, got: ${JSON.stringify(r.flags)}`);
 });
 
-test('LONG_AGENT: 39 turns at 50k ctx + 1 turn at 350k ctx fires (peak, not avg)', () => {
-  // avg ctx = (39*50k + 350k) / 40 = 57.5k, well under the 300k threshold —
+test('LONG_AGENT: 39 turns at 50k ctx + 1 turn at 450k ctx fires (peak, not avg)', () => {
+  // avg ctx = (39*50k + 450k) / 40 = 60k, well under the 400k threshold —
   // only a check against *peak* ctx (not average) can fire this one.
   const dir = tmpClaudeDir({
     'projects/p/main.jsonl': turn({ id: 'm-1' }),
     'projects/p/main/subagents/agent-a.jsonl': [
       ...turns(39, 'a', { usage: { input_tokens: 0, cache_read_input_tokens: 50000, output_tokens: 0 } }),
-      ...turn({ id: 'a-39', usage: { input_tokens: 0, cache_read_input_tokens: 350000, output_tokens: 0 } }),
+      ...turn({ id: 'a-39', usage: { input_tokens: 0, cache_read_input_tokens: 450000, output_tokens: 0 } }),
     ],
   });
   const r = audit(dir);
@@ -65,26 +65,26 @@ test('LONG_AGENT: subagent at exactly 150 turns does not fire (strict >, boundar
     `150 turns must not fire (strict >), got: ${JSON.stringify(r.flags)}`);
 });
 
-test('LONG_AGENT: subagent at exactly 300000 peak ctx does not fire (strict >, boundary)', () => {
+test('LONG_AGENT: subagent at exactly 400000 peak ctx does not fire (strict >, boundary)', () => {
   const dir = tmpClaudeDir({
     'projects/p/main.jsonl': turn({ id: 'm-1' }),
     'projects/p/main/subagents/agent-a.jsonl':
-      turns(10, 'a', { usage: { input_tokens: 0, cache_read_input_tokens: 300000, output_tokens: 0 } }),
+      turns(10, 'a', { usage: { input_tokens: 0, cache_read_input_tokens: 400000, output_tokens: 0 } }),
   });
   const r = audit(dir);
   assert.ok(!r.flags.some(f => f.id === 'LONG_AGENT'),
-    `300000 peak ctx must not fire (strict >), got: ${JSON.stringify(r.flags)}`);
+    `400000 peak ctx must not fire (strict >), got: ${JSON.stringify(r.flags)}`);
 });
 
-test('LONG_AGENT: subagent at 300001 peak ctx fires (boundary)', () => {
+test('LONG_AGENT: subagent at 400001 peak ctx fires (boundary)', () => {
   const dir = tmpClaudeDir({
     'projects/p/main.jsonl': turn({ id: 'm-1' }),
     'projects/p/main/subagents/agent-a.jsonl':
-      turns(10, 'a', { usage: { input_tokens: 0, cache_read_input_tokens: 300001, output_tokens: 0 } }),
+      turns(10, 'a', { usage: { input_tokens: 0, cache_read_input_tokens: 400001, output_tokens: 0 } }),
   });
   const r = audit(dir);
   assert.ok(r.flags.some(f => f.id === 'LONG_AGENT'),
-    `300001 peak ctx must fire, got: ${JSON.stringify(r.flags)}`);
+    `400001 peak ctx must fire, got: ${JSON.stringify(r.flags)}`);
 });
 
 test('LONG_AGENT: a main session alone (not a subagent) never fires it, however long', () => {

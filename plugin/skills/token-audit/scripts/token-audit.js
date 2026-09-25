@@ -283,7 +283,29 @@ const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)
   String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)?(?: ${PY_OPT})* -m|py(?: ${PY_OPT})* -m|uv run|poetry run|` +
   String.raw`npx(?: -y| --yes)?|bunx|(?:pnpm|yarn) (?:dlx|exec)|npm exec`;
 // Word lists the rules share (regex alternations).
-const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`;
+// Slice 15 HITL: added the two "burn a turn on purpose to wait" patterns found on
+// real data (`echo waiting-N` / `echo idle-check-N`, `tasklist` / `Get-Process`
+// busy-polls) so they count as wait/poll instead of falling to `other`.
+const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)|` +
+  String.raw`echo (?:waiting|idle)\S*|tasklist|Get-Process`;
+// Harness tools that are neither agent spawns nor real work: skills, tool search,
+// interactive UI, task/queue management, plan mode, worktrees, scheduling. Slice 15
+// HITL: these used to fall to `other`, which hid most of `other`'s real composition.
+const HARNESS_TOOLS = String.raw`Skill|ToolSearch|AskUserQuestion|TaskStop|TaskCreate|TaskUpdate|TaskList|` +
+  String.raw`TodoWrite|ListAgents|EnterPlanMode|ExitPlanMode|EnterWorktree|ExitWorktree|CronCreate|` +
+  String.raw`CronDelete|ScheduleWakeup`;
+// A bare interpreter or script-file run (Slice 15 HITL): `python foo.py`, `node x.mjs`,
+// `sh script.sh` — as opposed to a runner/checker (RUNNERS/CHECKERS above, e.g.
+// `python -m pytest`) or a screenshot script (SHOT_RUN above), both of which are
+// checked first in ACTIVITY_RULES and so win. Catches the "rerun the same script while
+// iterating" turns that used to collapse into `other` (and, at low enough POLLING N,
+// looked like false-positive polling).
+const SCRIPT_INTERP = String.raw`python\S*|py|node|deno|bun|tsx|ts-node|sh|bash|pwsh|powershell`;
+// Bare-file alternative's target, bounded like SHOT_TARGET above: `[^\s${CMD}]*`, not
+// `\S+` — a `\S+` anchored at every CMD (e.g. every `(` of 50k nested parens, none of
+// them whitespace) backtracks per anchor across the rest of the string, O(n^2)/worse;
+// excluding CMD too stops each attempt at the very next command boundary.
+const SCRIPT_FILE = String.raw`[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`;
 // `-{1,2}[\w]…`, not `-{1,2}[\w-]…`: a flag's leading dashes and its name must not both
 // be able to absorb `-`, or a repeated `--a --a --a …` has many ways to split the same
 // run of dashes between the two and the engine tries them all (exponential; Slice 30).
@@ -304,16 +326,21 @@ const SHOT_RUN = String.raw`${CMD}(?:${SHOT_EXEC})?${SHOT_TARGET}`;
 const rx = (strings, ...vals) => new RegExp(String.raw(strings, ...vals), 'i');
 const ACTIVITY_RULES = [
   [rx`^(?:Agent|Task|SendMessage) `, 'agent spawn'],
+  [rx`^(?:${HARNESS_TOOLS}) `, 'harness'],
   [rx`^(?:WebFetch|WebSearch) `, 'web'],
   [rx`${IMAGE}|^\S*screenshot\S* |${SHOT_RUN}`, 'screenshot/image'],
   [rx`^(?:Monitor|TaskOutput|BashOutput) |${CMD}(?:${POLLERS})\b|check-runs|actions/runs`, 'wait/poll'],
   [rx`api\.github\.com|${CMD}gh `, 'github'],
   [rx`${CMD}(?:${RUNNERS}|${CHECKERS})\b`, 'test/lint/build'],
   [rx`${CMD}git\b`, 'git'],
+  [rx`${CMD}(?:${SCRIPT_INTERP})(?: |$)|${CMD}${SCRIPT_FILE}`, 'script run'],
   [rx`^(?:Edit|Write|MultiEdit|NotebookEdit) |${CMD}(?:sed -i|cat >|tee )`, 'edit'],
   [rx`^(?:Read|Grep|Glob) |${CMD}(?:${READERS})\b`, 'read'],
 ];
 const ACTIVITY_OTHER = 'other';
+// A turn with no tool_use at all (final answer, plan, question to the user) — Slice 15
+// HITL: split out of `other` so `other` reflects only genuinely uncategorized tool calls.
+const ACTIVITY_REPLY = 'reply';
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 // Sticky (sticks to lastIndex, no scanning forward to find a match) so a chain of wrapper
 // words is consumed word-by-word in markCommands() without slicing the remaining string.
@@ -381,12 +408,12 @@ const activityCategory = (name, input) => categorize(toolCall({ name, input }));
 // to 100 %. A turn with no tool_use (plain text / thinking answer) → other.
 // Every category is listed (zeros included), sorted by cost desc.
 function activity(rows) {
-  const cats = new Map([...ACTIVITY_RULES.map(([, c]) => c), ACTIVITY_OTHER]
+  const cats = new Map([...ACTIVITY_RULES.map(([, c]) => c), ACTIVITY_OTHER, ACTIVITY_REPLY]
     .map(c => [c, { category: c, turns: 0, ctx: 0, cost: 0 }]));
   let total = 0;
   for (const r of rows) {
     total += r.cost;
-    const hit = r.calls.length ? r.calls.map(categorize) : [ACTIVITY_OTHER];
+    const hit = r.calls.length ? r.calls.map(categorize) : [ACTIVITY_REPLY];
     for (const c of hit) {
       const e = cats.get(c);
       e.turns += 1 / hit.length; e.ctx += r.ctx / hit.length; e.cost += r.cost / hit.length;
@@ -592,16 +619,21 @@ function summarize(rows) {
     s.model = Object.keys(mc).sort((a, b) => mc[b] - mc[a])[0];
   }
   const msgs = rows.length;
-  const msgCounts = list.map(s => s.msgs).sort((a, b) => a - b);
+  // Slice 15 HITL: SESSIONS' median/p90 and LONG_SESSION are main-threads-only — a
+  // subagent's own turn distribution is LONG_AGENT's / subagentDistribution()'s job,
+  // and mixing the two double-counted the same sessions under both flags.
+  const mainList = list.filter(s => !s.isSub);
+  const msgCounts = mainList.map(s => s.msgs).sort((a, b) => a - b);
   const pick = q => quantile(msgCounts, q); // shared with subagentDistribution() below
 
   return {
-    cost, msgs, byFamily, byChain, sessions: list,
+    cost, msgs, byFamily, byChain, sessions: list, mainSessions: mainList,
     avgCtx: msgs ? ctx / msgs : 0,
     costPerMsg: msgs ? cost / msgs : 0,
     medianMsgs: pick(0.5), p90Msgs: pick(0.9),
     topShare: cost ? list.slice(0, 5).reduce((a, s) => a + s.cost, 0) / cost : 0,
-    longShare: cost ? list.filter(s => s.msgs >= 250).reduce((a, s) => a + s.cost, 0) / cost : 0,
+    longShare: cost ? mainList.filter(s => s.msgs >= LONG_SESSION_TURNS)
+      .reduce((a, s) => a + s.cost, 0) / cost : 0,
     opusShare: cost ? (byFamily.Opus || 0) / cost : 0,
   };
 }
@@ -785,15 +817,21 @@ function config() {
 
 // ------------------------------------------------------------------- flags
 const DAY = 86400e3;
-// LONG_AGENT thresholds (design.md Q5) — provisional, Slice 15 re-tunes both
-// on real data. Named constants so re-tuning is a one-line change.
+// LONG_AGENT thresholds (design.md Q5) — Slice 15 HITL decision, re-tuned on real,
+// deduped, all-history data (see REFERENCE.md "LONG_AGENT" for the percentiles).
 const LONG_AGENT_TURNS = 150; // "over N turns" -> strictly greater than N
-const LONG_AGENT_CTX = 300e3; // "peak context > 300k" -> strictly greater than
-// POLLING threshold (design.md Q9) — provisional, Slice 15 re-tunes it.
-const POLL_MIN_CALLS = 20; // same command key >= N calls in one session
+const LONG_AGENT_CTX = 400e3; // "peak context > 400k" -> strictly greater than
+// LONG_SESSION threshold (Slice 15 HITL decision) — main threads only; a long
+// subagent is LONG_AGENT's job instead (the two flags used to double-count the
+// same sessions). See REFERENCE.md "LONG_SESSION".
+const LONG_SESSION_TURNS = 200; // ">= N turns" on a main (non-subagent) session fires
+// POLLING threshold (design.md Q9) — Slice 15 HITL decision, re-tuned on real data.
+const POLL_MIN_CALLS = 10; // same command key >= N calls in one session
 // Categories whose repeat is a wait. A repeated test run, commit or edit is
 // the work itself, not polling (Slice 11 real-data check: those were most of
-// the false positives). See REFERENCE.md "POLLING".
+// the false positives). `script run` (Slice 15) is deliberately excluded too:
+// a re-run of the same script while iterating is work, not a wait — see
+// REFERENCE.md "POLLING".
 const POLL_CATEGORIES = new Set(['wait/poll', 'github', 'read', ACTIVITY_OTHER]);
 // Unquoted absolute paths left in a key (`O=/c/Users/me/…`, `{ cd /home/me/p; … }`,
 // `type C:\Users\me\x`, `>/home/me/out.log`, `2>/home/me/err.log`,
@@ -1251,9 +1289,12 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
       `${(span(w) / DAY).toFixed(1)}d ${money(w.cost)}`,
       multiday.reduce((a, s) => a + s.cost, 0));
   }
-  const long = cur.sessions.filter(s => s.msgs >= 250);
+  // Slice 15 HITL: main threads only — a long subagent fires LONG_AGENT instead
+  // (mixing the two double-counted the same sessions under both flags).
+  const long = cur.mainSessions.filter(s => s.msgs >= LONG_SESSION_TURNS);
   if (long.length) {
-    add('LONG_SESSION', `${long.length} session(s) ≥250 msgs = ${(100 * cur.longShare).toFixed(0)}% of spend`,
+    add('LONG_SESSION',
+      `${long.length} session(s) ≥${LONG_SESSION_TURNS} msgs = ${(100 * cur.longShare).toFixed(0)}% of spend`,
       long.reduce((a, s) => a + s.cost, 0));
   }
   // Subagents over LONG_AGENT_TURNS turns or with a peak context over
@@ -1853,7 +1894,12 @@ async function main() {
   const det = DETAIL ? showDetail(detail(cur, tasks, all, curRows)) : null;
 
   if (JSON_OUT) {
-    const trim = s => ({ ...s, sessions: s.sessions.slice(0, TOP) });
+    // mainSessions (Slice 15: SESSIONS/LONG_SESSION's main-threads-only view) is an
+    // internal computation detail, dropped here rather than redacted+trimmed like
+    // sessions — it holds the same objects sessions does, just filtered, and no
+    // --json field currently reads it (median/p90/LONG_SESSION are already their own
+    // redacted/summarized fields).
+    const trim = ({ mainSessions, ...s }) => ({ ...s, sessions: s.sessions.slice(0, TOP) });
     console.log(JSON.stringify({ windowDays: DAYS, scope, cur: trim(cur), prev: trim(prev),
       all: { cost: all.cost, msgs: all.msgs, sessions: all.sessions.length },
       weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced,
@@ -1893,8 +1939,10 @@ async function main() {
     '',
     `PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
       (prev.msgs ? `   prev ${k(prev.avgCtx)} / ${money(prev.costPerMsg)}` : ''),
-    `SESSIONS     ${cur.sessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
-      `≥250 msgs: ${cur.sessions.filter(s => s.msgs >= 250).length}`,
+    // Slice 15 HITL: main threads only (see LONG_SESSION_TURNS) — subagents are
+    // LONG_AGENT's / DETAIL's "Subagent distribution" territory.
+    `SESSIONS     ${cur.mainSessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
+      `≥${LONG_SESSION_TURNS} msgs: ${cur.mainSessions.filter(s => s.msgs >= LONG_SESSION_TURNS).length}`,
     `ALL-TIME     ${money(all.cost)} over ${all.sessions.length} sessions, ${all.msgs} messages`,
     // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
     // it overlapped WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest

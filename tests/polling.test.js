@@ -4,7 +4,7 @@ const { audit, auditText, tmpClaudeDir } = require('./harness');
 const { redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // plan.md Slice 12 / design.md Q9: POLLING = the same normalized command
-// (commandKey) >= POLL_MIN_CALLS (20, provisional) times in one session.
+// (commandKey) >= POLL_MIN_CALLS (10, Slice 15 HITL decision) times in one session.
 // Only commands whose repeat is a wait count (not test/lint/build, git, edit):
 // see REFERENCE.md "POLLING".
 
@@ -34,10 +34,10 @@ test('POLLING: 25 check-runs calls on different PR numbers in one session fire o
   assert.equal(fl[0].groups[0].key, CHECK_KEY);
 });
 
-test('POLLING: exactly 20 calls in one session fire (>= boundary), 19 do not', () => {
+test('POLLING: exactly 10 calls in one session fire (>= boundary), 9 do not', () => {
   const at = n => pollingFlags(audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(n, 't', checkRuns) })));
-  assert.equal(at(20).length, 1, '20 calls must fire');
-  assert.equal(at(19).length, 0, '19 calls must not fire');
+  assert.equal(at(10).length, 1, '10 calls must fire');
+  assert.equal(at(9).length, 0, '9 calls must not fire');
 });
 
 test('POLLING: 25 calls spread over 5 sessions (5 each) do not fire — the count is per session', () => {
@@ -47,9 +47,11 @@ test('POLLING: 25 calls spread over 5 sessions (5 each) do not fire — the coun
 });
 
 test('POLLING: a subagent session counts on its own, not merged with its parent', () => {
+  // 5 + 5 = 10 would fire if wrongly merged (>= POLL_MIN_CALLS); kept separate, neither
+  // session alone reaches 10.
   const r = audit(tmpClaudeDir({
-    'projects/p/main.jsonl': bashTurns(10, 'm', checkRuns),
-    'projects/p/main/subagents/agent-a.jsonl': bashTurns(10, 'a', checkRuns),
+    'projects/p/main.jsonl': bashTurns(5, 'm', checkRuns),
+    'projects/p/main/subagents/agent-a.jsonl': bashTurns(5, 'a', checkRuns),
   }));
   assert.equal(pollingFlags(r).length, 0);
 });
@@ -79,7 +81,7 @@ test('POLLING: flag text has command key, count and cost share; a multi-call tur
   assert.equal(f.groups[0].count, 25);
   assert.equal(+f.groups[0].cost.toFixed(6), 98);
   assert.equal(+f.groups[0].share.toFixed(6), 0.7);
-  assert.match(f.text, /^1 run\(s\) ≥20×\/session = \$98\.0, 70% of spend; top 25× /);
+  assert.match(f.text, /^1 run\(s\) ≥10×\/session = \$98\.0, 70% of spend; top 25× /);
   assert.ok(f.text.endsWith('check-runs'), f.text);
   assert.ok(f.text.includes('curl -s https://api.git'), f.text);
 });
@@ -97,7 +99,7 @@ test('POLLING: shares add up over several runs; worst = most expensive run', () 
   }));
   const [f] = pollingFlags(r);
   assert.deepEqual(f.groups.map(g => g.count), [20, 30]);
-  assert.match(f.text, /^2 run\(s\) ≥20×\/session = \$110, 73% of spend; top 20× tail -N /);
+  assert.match(f.text, /^2 run\(s\) ≥10×\/session = \$110, 73% of spend; top 20× tail -N /);
 });
 
 test('POLLING: repeats whose category is the work itself (test/lint/build, git, edit) do not fire', () => {
@@ -160,15 +162,15 @@ test('POLLING: a long key is cut in the middle — program and endpoint both sta
   assert.match(line, /top 25× curl -s -H .*….*\/check-runs$/, line);
 });
 
-test('POLLING: one subagent id under two parents is two sessions (10 + 10 calls do not fire)', () => {
+test('POLLING: one subagent id under two parents is two sessions (5 + 5 calls do not fire)', () => {
   const r = audit(tmpClaudeDir({
-    'projects/p/m1/subagents/agent-a.jsonl': bashTurns(10, 'x', checkRuns),
-    'projects/p/m2/subagents/agent-a.jsonl': bashTurns(10, 'y', checkRuns),
+    'projects/p/m1/subagents/agent-a.jsonl': bashTurns(5, 'x', checkRuns),
+    'projects/p/m2/subagents/agent-a.jsonl': bashTurns(5, 'y', checkRuns),
   }));
   assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
 });
 
-test('POLLING: same subagent id under two parents, both ≥20× — groups[].parent tells them apart', () => {
+test('POLLING: same subagent id under two parents, both ≥10× — groups[].parent tells them apart', () => {
   const r = audit(tmpClaudeDir({
     'projects/p/m1/subagents/agent-a.jsonl': bashTurns(20, 'x', checkRuns),
     'projects/p/m2/subagents/agent-a.jsonl': bashTurns(20, 'y', checkRuns),
@@ -185,7 +187,7 @@ test('POLLING: same subagent id under two parents, both ≥20× — groups[].par
 // let an email through untouched. One test per case.
 test('POLLING: redirect target (>) does not leak a user name', () => {
   const [f] = pollingFlags(audit(tmpClaudeDir({
-    'projects/p/s1.jsonl': bashTurns(25, 't', i => `node x${i}.js >/c/Users/jdoe/out.log`),
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `echo x${i} >/c/Users/jdoe/out.log`),
   })));
   assert.ok(f);
   assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);
@@ -194,7 +196,7 @@ test('POLLING: redirect target (>) does not leak a user name', () => {
 
 test('POLLING: stderr redirect (2>) does not leak a user name', () => {
   const [f] = pollingFlags(audit(tmpClaudeDir({
-    'projects/p/s1.jsonl': bashTurns(25, 't', i => `node x${i}.js 2>/home/jdoe/err.log`),
+    'projects/p/s1.jsonl': bashTurns(25, 't', i => `echo x${i} 2>/home/jdoe/err.log`),
   })));
   assert.ok(f);
   assert.ok(!/jdoe/.test(f.groups[0].key), f.groups[0].key);

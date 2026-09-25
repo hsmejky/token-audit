@@ -139,10 +139,30 @@ every turn; cost per message climbs the whole time.
 **Do:** finish the session, write the artifact (design md / plan md / issue), `/clear`,
 reopen against the artifact. Never resume yesterday's session "just to ask one thing".
 
-### `LONG_SESSION` — sessions ≥ 250 messages
+### `LONG_SESSION` — main sessions ≥ 200 messages
 
 Same mechanism, measured by turns instead of days. The script prints what share of
 window spend these sessions hold — usually a quarter to a half from a handful of them.
+
+**Slice 15 HITL re-tune (real, deduped, all-history data, `token-audit.js --all --days
+3650` and per-project cuts; see `design/slice15-proposal.md` §3 for the full table):**
+main-thread turn distribution (subagents excluded) was p50 35, p75 64, p90 121, p95 185,
+p99 4784 (main history: 195 sessions; the p99 jump is the two multi-day monster sessions,
+already caught by `MULTIDAY`). Two changes from the original design:
+
+- **Main threads only.** The original flag counted every session, including subagents —
+  double-counting the same sessions `LONG_AGENT` already flags (all-history: 13 sessions
+  `≥250`, of which 9 were subagents). `LONG_SESSION` now filters to `!isSub`
+  (`cur.mainSessions`, also what the summary's `SESSIONS` line reports); a long subagent
+  is `LONG_AGENT`'s job.
+- **`LONG_SESSION_TURNS` = 200** (was 250, and implicitly counted the wrong population).
+  200 sits at the histogram's gap between the ordinary cluster (up to ~215) and the true
+  multi-day monsters, ≈ p95 of main threads overall and ≈ p99 of the last-14-days window.
+  250 would fire on zero main-thread sessions in the last 14 days and zero in demo-proj —
+  effectively dead; 150 (~p90) still catches some ordinary long interactive sessions, not
+  just orchestrators. Real-data check on this rule: all-history 6 sessions = 54% of spend;
+  demo-proj 1 session (its worst orchestrator, 215 turns) = 5% of spend; token-audit 0
+  (its one-slice-per-agent discipline never reaches 200 on a main thread).
 
 **Do:** one session = one workflow phase. `/grill-me` → save md → `/clear` →
 `/to-issues` reads the md → save → `/clear` → `/tdd`. The artifacts already exist;
@@ -153,14 +173,30 @@ session costs ~400k of context; the same review in a fresh session with the md l
 costs ~20k — 20× cheaper, and more objective, because it cannot see its own earlier
 reasoning.
 
-### `LONG_AGENT` — subagents over 150 turns or 300k peak context
+### `LONG_AGENT` — subagents over 150 turns or 400k peak context
 
 A subagent is just another session — the same "context re-sent every turn" mechanism as
 `MULTIDAY`/`LONG_SESSION` applies to it too, but a fat implementer subagent is easy to miss
 because it lives inside a work unit, not among the top main sessions. The script prints how
-many subagents cross either threshold and their combined share of window spend. Thresholds
-(`LONG_AGENT_TURNS` = 150, `LONG_AGENT_CTX` = 300k, named constants in the script) are
-provisional, to be re-tuned on real data.
+many subagents cross either threshold and their combined share of window spend.
+
+**Slice 15 HITL re-tune** (`LONG_AGENT_TURNS` = 150 unchanged, `LONG_AGENT_CTX` raised
+300k → 400k; real, deduped, all-history data — full table in `design/slice15-proposal.md`
+§2): subagent turn distribution (762 subagents, all history) p50 34, p75 73, p90 134,
+p95 174, p99 287, max 456; peak-ctx distribution p50 146k, p75 239k, p90 352k, p95 440k,
+p99 572k, max 830k. 150 turns sits at p90–p92 (demo-proj alone: p85), right before the
+turn histogram's count halves at 175 (25-turn buckets from 25–175 each carry about the
+same total $, so the lever is real all the way up — 150 is a tuning choice, not a "nothing
+past here" cliff), and matches the `maxTurns` playbook advice below, so the flag and the
+playbook agree on one number. 300k (the original design.md guess) is only ≈ p85 of peak
+ctx and added 65 subagents that stay under 150 turns — "normal Opus agent that read a
+lot", not a long run; on demo-proj it fired on 1 in 4 subagents, which felt noisy in
+practice. 400k ≈ p93 overall (between demo-proj's own p90 352k and p95 495k), so the ctx
+arm now catches outliers instead of the upper quarter. Real-data check: all-history 83
+subagents = 17% of spend; demo-proj 17 subagents = 34% of spend (its worst offenders: a
+287-turn/638k agent, a 226-turn/538k agent, a 189-turn/558k agent); token-audit 0 — its
+disciplined one-slice-per-agent runs (max 95 turns / 182k peak) never fire, so the flag
+stays clean on the project that already follows the playbook below.
 
 **Do:**
 - Give the agent a hard `maxTurns` in its `.claude/agents/*.md` frontmatter. A limit hit
@@ -175,10 +211,11 @@ provisional, to be re-tuned on real data.
 **Judgment calls:** design.md Q5 says "over N turns or peak context > 300k" but leaves three
 details unstated; decided at implementation time:
 
-**Decided**: both comparisons are strict `>` (151 turns fires, 150 does not; 300 001 ctx fires,
-300 000 does not) — design.md phrases the threshold as "over N turns" and "peak context > 300k,"
-both explicitly strictly-greater language. `LONG_SESSION` instead uses `>=`, because its own
-threshold ("250 messages") is stated as the boundary itself, not phrased as "over 250".
+**Decided**: both comparisons are strict `>` (151 turns fires, 150 does not; 400 001 ctx fires,
+400 000 does not — the boundary moved with the Slice 15 re-tune, the comparison direction did
+not) — design.md phrases the threshold as "over N turns" and "peak context > 300k," both
+explicitly strictly-greater language. `LONG_SESSION` instead uses `>=`, because its own
+threshold ("200 messages") is stated as the boundary itself, not phrased as "over 200".
 
 **Decided**: "share of spend" is the flagged subagents' combined cost as a fraction of the
 **current window's total spend** (`cur.cost`, main + subagent), not just the subagent chain's
@@ -189,17 +226,35 @@ same way ("X% of everything spent this window").
 REFERENCE entry sits in the same position — both are "a session ran too long" flags, one for
 main sessions, one for subagents, so they read together.
 
-### `POLLING` — the same command ≥ 20× in one session
+### `POLLING` — the same command ≥ 10× in one session
 
 Cost = turns × context: every "is it done yet?" check is a full turn that re-sends the
 whole context, so a wait that takes 25 checks costs 25 turns of a long session. The script
-prints the number of polling runs (session × command key with ≥ `POLL_MIN_CALLS` = 20
-calls, a named constant, provisional — Slice 15 re-tunes it), their combined cost and share
+prints the number of polling runs (session × command key with ≥ `POLL_MIN_CALLS` = 10
+calls, a named constant), their combined cost and share
 of window spend, and the most expensive run's count and command key. `--json`: the flag
 carries `groups[]` = `{ sid, parent, key, count, cost, share }`, most expensive first.
 `parent` is the parent sid for a subagent group, `null` for a main session — needed because
 the same subagent id spawned under two different parents shares one `sid`; `parent` is what
 tells those two groups apart.
+
+**Slice 15 HITL re-tune** (`POLL_MIN_CALLS` 20 → 10; real, deduped, all-history data, sessions
+with any poll-category shell call, n = 819 — full table in `design/slice15-proposal.md` §4):
+per-session max repeat of one key was p50 1, p75 2, p90 3, p95 6, p99 20, max 104 — almost
+every session repeats nothing, the tail is thin. 20 (the original guess) sat at exactly p99,
+catching only near-certain waits (12 runs all-history, 0.8% of spend) and never fired on
+demo-proj at all, so its own known GitHub-polling case stayed invisible to the flag. 10 ≈ p97:
+40 runs all-history = $207 = 1.5% of spend, 6 runs in the last 14 days, 1 in demo-proj. The
+10–19 band is mostly genuine waits (`until grep -q "passed|failed" … ; sleep N ; done` loops,
+log tails, progress `grep -c`); the main false-positive risk at that band was re-running the
+same script while iterating (`python <path>` × 10–17), fixed by moving script runs to their
+own `script run` activity category (below) and leaving it out of `POLL_CATEGORIES` — a
+`python foo.py` re-run is work, not a wait. Note: the demo-proj GitHub-polling case (89
+`check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of demo-proj spend) still
+does not trip `POLLING` even at N = 10 — it is spread over 33 sessions (max 8 calls/session)
+behind ~87 distinct per-call keys (a fresh PR/commit id each time), so no single key repeats
+enough in one session. A cross-session version of this detector is out of scope for a
+per-session threshold; see plan.md's "Cross-session GitHub polling (AFK)" slice.
 
 **Do:** turn the wait into one waiting turn instead of dozens:
 - `gh pr checks --watch` (or `gh run watch`) — blocks until CI finishes, one call, one turn.
@@ -217,11 +272,16 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   a subagent is its own session, also vs. a same-named agent under another parent). Other
   tools (`Read`, `TaskOutput`, …) don't count — POLLING is about a *command*.
 - **Only categories where a repeat is a wait count**: `POLL_CATEGORIES` = wait/poll, github,
-  read, other. test/lint/build, git, edit and screenshot are excluded — a repeated test run
-  is a TDD loop, not polling. Why not just wait/poll + github: on real transcripts
-  (2026-09-25, all history) the bulk of real polling was `cat`/`tail` of background-task
-  `.output` files (read), `tasklist` and `echo waiting-N` (other); wait/poll alone caught
-  1 of ~10. Same key ≥ 20 over all categories gave 14 hits, 2 of them pytest loops.
+  read, other. test/lint/build, git, edit, screenshot and (Slice 15) `script run` are
+  excluded — a repeated test run is a TDD loop, a repeated script run is iterating on it,
+  not polling. Why not just wait/poll + github: on real transcripts (2026-09-25, all
+  history) the bulk of real polling was `cat`/`tail` of background-task `.output` files
+  (read), `tasklist` and `echo waiting-N` (other, at the time); wait/poll alone caught 1 of
+  ~10. Same key ≥ 20 over all categories gave 14 hits, 2 of them pytest loops. Slice 15
+  additionally moved `tasklist`/`Get-Process` and `echo waiting-*`/`echo idle-*` from
+  `other` into `wait/poll` itself (they are "burn a turn on purpose to wait" patterns, not
+  uncategorized noise), so this bullet's `other` catch is narrower now than the 2026-09-25
+  measurement above describes.
 - **Real-data result with this rule**: 12 runs. ~9 look like real polling (task-output
   tails, a `sleep` loop, `tasklist`, `echo waiting-N`, a log `grep | tail`). 2 are the same
   kind of collapse spread across many different files, not a wait: `cat "<file>"` ×63 (44
@@ -252,8 +312,8 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   of a `[\w.+-]` run so a long unbroken run of such characters (no real email) redacts in
   linear time instead of quadratic.
 - **Secret layer — credentials are redacted to `<secret>`** before the path and name layers
-  (`redactPaths()` → `redactSecrets()`), so a token pasted into a command that repeats ≥ 20×
-  never prints. Shapes: known token prefixes (`ghp_`/`gho_`/`ghs_`/`ghu_`, `github_pat_`,
+  (`redactPaths()` → `redactSecrets()`), so a token pasted into a command that repeats ≥ 10×
+  (Slice 15: was ≥ 20×) never prints. Shapes: known token prefixes (`ghp_`/`gho_`/`ghs_`/`ghu_`, `github_pat_`,
   `sk-`/`sk-ant-`, `xoxb-`/`xoxp-`/`xoxa-`/`xoxs-`, `AKIA…`, a JWT `eyJ….….…`); the value of an
   `Authorization:` / `Cookie:` / `*-Token:` / `*-Api-Key:` / `*Secret:` header (a `Bearer` /
   `Basic` / `token` scheme word stays); the header value runs to the next quote/backtick/
@@ -332,10 +392,20 @@ one `sleep`/`until … done` loop inside a single call waits for free.
 The same setup typed again in session after session is a tool or setting that is missing:
 every session re-derives it (and re-spends turns getting it right). The script prints the
 number of boilerplate prefixes (a setup prefix seen in ≥ `BOILER_MIN_SESSIONS` = 5 distinct
-sessions, a named constant, provisional — Slice 15 re-tunes it), the combined cost and share
+sessions, a named constant), the combined cost and share
 of window spend of the turns carrying them, and the most expensive prefix with its #sessions
 and #turns. `--json`: the flag carries `groups[]` = `{ prefix, sessions, turns, cost, share }`,
 most expensive first.
+
+**Slice 15 HITL re-tune: kept N = 5** (real, deduped, all-history data; distribution of
+sessions-per-prefix over 206 prefixes: p50 1, p90 2, p95 3, p99 8, max 71 — full table in
+`design/slice15-proposal.md` §5). 5 sits between p95 (3) and p99 (8): loosening to 3 (~p95)
+lets in more idioms (`T=$(mktemp -d)`, loop counters) without finding more real boilerplate;
+tightening to 8 (~p99) drops nothing but the two biggest hits. The false positives N = 5 lets
+through (`SHA=$(git rev-parse HEAD)`, `n=<value>` loop counters, `start=$(date +%s)` timing)
+are cheap and rank low in the flag's own $-sorted output, so they cost nothing in practice.
+Real-data check: all-history 7 prefixes = $188 = 1% of spend; demo-proj 4 prefixes = $9.38 =
+1% of spend; token-audit 0.
 
 **Do:** replace the setup with the tool or setting it stands in for:
 - `TOKEN=$(printf 'protocol=https\nhost=github.com\n' | git credential fill | …)` + `curl
@@ -597,15 +667,18 @@ and `timeout 600 python -m pytest | tail` is a test run. Priority order and what
 | # | category | tool / command |
 |---|---|---|
 | 1 | agent spawn | `Agent`, `Task`, `SendMessage` |
-| 2 | web | `WebFetch`, `WebSearch` |
-| 3 | screenshot/image | `Read` of a .png/.jpg/.gif/.webp/.bmp; any tool named `*screenshot*` (MCP); a `screenshot*.mjs/js/ts/py/sh` script *run* (at a command start, directly or via `node`/`python`/`bun`/`deno`/`tsx`/`bash`/`sh`/`pwsh`); `.screenshot(` in such an interpreter's command |
-| 4 | wait/poll | `Monitor`, `TaskOutput`, `BashOutput`; `sleep`, `Start-Sleep`, `gh pr checks`, `gh run watch/view`; any `check-runs` / `actions/runs` URL |
-| 5 | github | `api.github.com`, `gh …` |
-| 6 | test/lint/build | `pnpm/npm/yarn/bun [--opts] [run/exec] test/lint/build/typecheck/…` (e.g. `pnpm --filter x test`), `vitest`, `jest`, `pytest`, `unittest`, `ruff`, `mypy`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make`, `cargo test/build/check/clippy/nextest`, `go test/build/vet` |
-| 7 | git | `git …` |
-| 8 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
-| 9 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
-| – | other | no rule matched (python/node scripts, `ToolSearch`, `Skill`, `AskUserQuestion`, …) |
+| 2 | harness (Slice 15) | `Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TodoWrite`, `ListAgents`, `EnterPlanMode`, `ExitPlanMode`, `EnterWorktree`, `ExitWorktree`, `CronCreate`, `CronDelete`, `ScheduleWakeup` |
+| 3 | web | `WebFetch`, `WebSearch` |
+| 4 | screenshot/image | `Read` of a .png/.jpg/.gif/.webp/.bmp; any tool named `*screenshot*` (MCP); a `screenshot*.mjs/js/ts/py/sh` script *run* (at a command start, directly or via `node`/`python`/`bun`/`deno`/`tsx`/`bash`/`sh`/`pwsh`); `.screenshot(` in such an interpreter's command |
+| 5 | wait/poll | `Monitor`, `TaskOutput`, `BashOutput`; `sleep`, `Start-Sleep`, `gh pr checks`, `gh run watch/view`; `echo waiting-*`/`echo idle-*`, `tasklist`, `Get-Process` (Slice 15); any `check-runs` / `actions/runs` URL |
+| 6 | github | `api.github.com`, `gh …` |
+| 7 | test/lint/build | `pnpm/npm/yarn/bun [--opts] [run/exec] test/lint/build/typecheck/…` (e.g. `pnpm --filter x test`), `vitest`, `jest`, `pytest`, `unittest`, `ruff`, `mypy`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make`, `cargo test/build/check/clippy/nextest`, `go test/build/vet` |
+| 8 | git | `git …` |
+| 9 | script run (Slice 15) | a bare interpreter run (`python\S*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start — below test/lint/build, git and screenshot/image, all of which win first (`python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot) |
+| 10 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
+| 11 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
+| – | other | no rule matched at all |
+| – | reply (Slice 15) | the turn made no tool call (final answer, plan, question to the user) |
 
 Decisions not fixed by design.md (judgment calls):
 
@@ -626,18 +699,69 @@ Decisions not fixed by design.md (judgment calls):
   their options are skipped only in front of a known script name.
 - **Screenshot = running a screenshot script**, not touching it: `cat` / `git log --` / `Write`
   of `scripts/screenshot.mjs` are read / git / edit.
-- **Turn with no `tool_use` → `other`.** A text-only or thinking-only turn (final answer,
-  plan, question to the user) has no tool to attribute it to. `other` keeps totals whole
-  (turns and cost sum to the window's totals); a separate "text" category was not in the Q9
-  list. On demo-proj (2026-09-25) ≈ 8 % of turns had no tool call.
+- **Turn with no `tool_use` → `reply` (Slice 15; `other` before it).** A text-only or
+  thinking-only turn (final answer, plan, question to the user) has no tool to attribute it
+  to. Originally folded into `other`, which kept totals whole (turns and cost still sum to
+  the window's totals with `reply`) but hid `other`'s real composition — measured on
+  2026-09-25, all-history real data, reply-type turns were ≈ 7% of total spend on their
+  own (9.6% on demo-proj, 9.7% on token-audit), by far the largest single piece of what
+  `other` used to mean. Split into its own category so `other` reports only genuinely
+  uncategorized tool calls.
 - **Split = per call, evenly.** A turn with n tool calls gives 1/n of its cost, 1/n of a turn
   and 1/n of its context weight to each call's category (k calls in one category → k/n). So
   `turns` can be fractional in `--json` (shown rounded in text, `<1` below one), `avgCtx` is
   `Σ(w·ctx) / Σw`, and turns, cost and share each sum to the window totals.
 - **Tool calls of a turn = union over its JSONL lines** (one line per content part, all
   sharing `message.id`); a `tool_use.id` seen twice counts once.
+- **`harness` and `script run` (Slice 15) pulled out of `other`.** Measured on 2026-09-25,
+  all-history real data, `other`'s composition (share of total spend) was: reply-shaped
+  turns ≈ 7% (now `reply`, above), shell runs of a script (`python …`, `node …`,
+  `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% demo-proj / 2.4% token-audit (now
+  `script run`), harness tools (`Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, …)
+  ≈ 1.6% all / 1.4% demo-proj / 5.4% token-audit (now `harness`), wait-shaped commands
+  (`echo waiting-*`, `tasklist`, `true`) ≈ 0.2% (folded into `wait/poll`'s `POLLERS`, above),
+  misc shell (`mkdir`, `cp`, `rm`, `for`, `export …`) ≈ 0.2–0.6%, genuinely unmatched ≈ 0.1%.
+  So `other` was never one thing — it was mostly replies, script re-runs and harness
+  bookkeeping wearing a single "uncategorized" label. `script run` sits below
+  test/lint/build, git and screenshot/image in `ACTIVITY_RULES` (checked above them, they
+  win); its file-extension alternative is written `[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`, not
+  `\S+\.(?:m?js|py|sh|ps1)\b` — the latter, anchored at every `CMD` boundary (e.g. every
+  `(` of 50k nested parens, none of them whitespace), backtracks per anchor across the rest
+  of the string, O(n²) or worse (Slice 30's exact bug class); excluding `CMD` from the
+  class too stops each attempt at the very next command boundary, same fix as `SHOT_TARGET`
+  above.
 
-### Cost by activity — command key
+### Activity table vs Q9 hand estimates (Slice 15)
+
+design.md Q9 gave two hand estimates to verify once this feature existed: polling ≈ 1–2%
+of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (demo-proj,
+`--all --days 3650`, real data):
+
+- **Polling: `wait/poll` 1.35% + `github` 1.49% = 2.84%.** The hand estimate holds
+  (1.3–2%) if "polling" means only the actual wait endpoints (`check-runs` / `actions/runs`
+  / `sleep` loops, i.e. the `wait/poll` category alone); it reads 2.8% if every GitHub API
+  call counts, including `pulls` fetches and the `git credential fill` setup that isn't
+  itself a wait. No bug — a definition gap, not a measurement gap. This case (89 `check-runs`
+  + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of demo-proj spend, spread across 33
+  sessions with ≤ 8 calls/session and ~87 distinct keys) is also why `POLLING` itself never
+  fires on it — see the "Cross-session GitHub polling" slice in plan.md.
+- **Screenshots: `screenshot/image` table row = 4.89% of demo-proj spend.** Higher than the
+  2.6% hand estimate because the table charges the *whole turn* (full context) to the
+  category, not just the image's own tokens. A second, narrower measure — the tokens a
+  screenshot actually carries forward in context (image tokens × remaining turns in that
+  session, at the session's cache-read price) — comes to ≈ 1.4% (the original hand estimate,
+  2.6%, was computed on non-deduped turns; 2.6 / 1.8, the dedupe factor, ≈ 1.4%, i.e. the
+  gap there was the pre-Slice-2 dedupe bug, not a real difference). The conclusion from
+  design.md Q6 stands either way: screenshots are a non-lever (≈ 1.4% actually carried in
+  context); the table's 4.9% is turn cost that the verification step would spend regardless
+  of whether it looked at a screenshot.
+- **`other` (now `other` + `reply` + `script run` + `harness` together, so they can be
+  compared to the old single-bucket `other`): before Slice 15, all-history 20.4%, demo-proj
+  18.1%, token-audit 17.9%, last-14-days 16.7%. After Slice 15 (same real data, `other`
+  alone): all-history 0.28%, demo-proj 0.76%, token-audit 0.66% — comfortably under the
+  "~1%" target on every cut, on both projects. The rest of the old `other` moved to
+  `reply` (≈7–10%), `script run` (≈2–14% depending on project), `harness` (≈1–5%) and a
+  small amount into `wait/poll`'s two new `POLLERS` patterns.
 
 `commandKey(command)` (exported) turns a `Bash` / `PowerShell` command into a key so the same
 command against a different PR number, commit, path or cwd groups together. `POLLING`

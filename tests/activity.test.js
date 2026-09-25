@@ -154,7 +154,7 @@ test('turn with 2 tool calls (git + Read) splits its cost 50/50', () => {
   assert.match(rows[0], /^\s+git\s+<1\s+0k\s+\$2\.00\s+50\.0%$/);
 });
 
-test('turn without tool_use -> other; text-only lines of a tool turn do not dilute its split', () => {
+test('turn without tool_use -> reply (Slice 15); text-only lines of a tool turn do not dilute its split', () => {
   const thinking = { type: 'assistant', timestamp: '2026-09-01T10:00:00.000Z', message: { id: 'm2',
     model: 'claude-opus-5-5', role: 'assistant', usage: USAGE, content: [{ type: 'thinking', thinking: '' }] } };
   const dir = tmpClaudeDir({
@@ -167,7 +167,8 @@ test('turn without tool_use -> other; text-only lines of a tool turn do not dilu
   });
   const act = audit(dir).detail.activity;
   const cats = byCat(act);
-  assert.deepEqual({ turns: cats.other.turns, cost: cats.other.cost }, { turns: 1, cost: 4 });
+  assert.deepEqual({ turns: cats.reply.turns, cost: cats.reply.cost }, { turns: 1, cost: 4 });
+  assert.deepEqual({ turns: cats.other.turns, cost: cats.other.cost }, { turns: 0, cost: 0 });
   assert.deepEqual({ turns: cats.edit.turns, cost: cats.edit.cost }, { turns: 0.5, cost: 2 });
   assert.deepEqual({ turns: cats.git.turns, cost: cats.git.cost }, { turns: 0.5, cost: 2 });
   assert.equal(act.reduce((a, c) => a + c.turns, 0), 2, 'turns sum to deduped turn count');
@@ -222,8 +223,8 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [sh('test -f a.txt && echo yes'), 'other'],
     [['WebFetch', { url: 'https://x', prompt: 'y' }], 'web'],
     [['WebSearch', { query: 'y' }], 'web'],
-    [sh('python - <<\'PY\'\nimport io\nPY'), 'other'],
-    [['AskUserQuestion', {}], 'other'],
+    [sh('python - <<\'PY\'\nimport io\nPY'), 'script run'],
+    [['AskUserQuestion', {}], 'harness'],
     // runners behind wrappers; the runner outranks trailing pipe helpers
     [sh('python -m pytest tests/ -q 2>&1 | tail -20'), 'test/lint/build'],
     [sh('timeout 600 python3 -m pytest -x'), 'test/lint/build'],
@@ -253,6 +254,17 @@ test('activityCategory: one example per category, first matching rule wins', () 
     // quoted env value with a space must not corrupt the segment that follows it
     [sh("( TIMEFORMAT='%R sec'; time python -m pytest )"), 'test/lint/build'],
     [['NewToolWeNeverSaw', {}], 'other'],
+    // Slice 15 HITL: `script run` — a bare interpreter/script-file run, below
+    // test/lint/build, git and screenshot/image (all checked earlier and win)
+    [sh('python scripts/report.py --days 7'), 'script run'],
+    [sh('node scripts/build.mjs'), 'script run'],
+    [sh('S=/tmp/x.mjs ; node $S'), 'script run'],
+    [sh('./run.sh --flag'), 'script run'],
+    [sh('python -m pytest tests/'), 'test/lint/build'], // runner wrapper still wins over script run
+    // Slice 15 HITL: `harness` — CC's own tools, not agent spawn / real work
+    [['Skill', { skill: 'commit' }], 'harness'],
+    [['ToolSearch', { query: 'x' }], 'harness'],
+    [['TodoWrite', { todos: [] }], 'harness'],
   ];
   const got = cases.map(([[tool, input]]) => activityCategory(tool, input));
   assert.deepEqual(got, cases.map(c => c[1]));
@@ -265,12 +277,22 @@ test('script source: no inline regex modifier groups (?i:…) / (?-i:…) / (?m:
   assert.doesNotMatch(src, /\(\?-?[a-z]+:/, 'inline modifier group found — throws SyntaxError on Node < 23');
 });
 
-test('activityCategory: a long non-matching command after `node ` does not blow up (linear, not quadratic)', () => {
-  const command = 'node ' + 'x'.repeat(200000);
+test('activityCategory: a long non-matching command after `ruby ` does not blow up (linear, not quadratic)', () => {
+  // `ruby` is not in any rule (SCRIPT_INTERP included) — stays a genuine non-match, unlike
+  // `node`, which Slice 15's `script run` rule now catches on its own.
+  const command = 'ruby ' + 'x'.repeat(200000);
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
   assert.ok(Date.now() - t0 < 1000, 'should classify a 200k-char command in well under 1s');
   assert.equal(cat, 'other');
+});
+
+test('activityCategory: `node ` script run classifies a long trailing arg in well under 1s', () => {
+  const command = 'node ' + 'x'.repeat(200000);
+  const t0 = Date.now();
+  const cat = activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+  assert.equal(cat, 'script run');
 });
 
 test('activityCategory: many `-X` interpreter options before -m do not blow up (linear, not quadratic)', () => {
@@ -373,8 +395,10 @@ test('DETAIL prints the top 6 categories by cost: category, turns, avg ctx, cost
 
 test('--json detail.activity: every category (zeros included), with turns / avgCtx / cost / share', () => {
   const act = audit(eightCategoryDir()).detail.activity;
+  // Slice 15 HITL added harness / script run / reply; zero-cost categories keep
+  // ACTIVITY_RULES table order (stable sort) after the nonzero ones.
   assert.deepEqual(act.map(a => a.category), ['web', 'agent spawn', 'edit', 'read', 'wait/poll', 'github',
-    'test/lint/build', 'git', 'screenshot/image', 'other']);
+    'test/lint/build', 'git', 'harness', 'screenshot/image', 'script run', 'other', 'reply']);
   const git = byCat(act).git;
   assert.deepEqual({ ...git, cost: +git.cost.toFixed(4), share: +git.share.toFixed(4) },
     { category: 'git', turns: 1, avgCtx: 80000, cost: 4.016, share: +(4.016 / 144.24).toFixed(4) });
@@ -385,6 +409,6 @@ test('no turns in the window -> one "none" line; --json lists every category at 
   const dir = tmpClaudeDir({ 'projects/p/s1.jsonl': toolTurn('m1', [['Read', { file_path: 'a' }]]) });
   assert.ok(detailLines(auditText(dir, '--days', '1')).includes('COST BY ACTIVITY  none in this window'));
   const act = audit(dir, '--days', '1').detail.activity;
-  assert.equal(act.length, 10);
+  assert.equal(act.length, 13); // Slice 15 HITL: + harness, script run, reply
   assert.ok(act.every(a => a.turns === 0 && a.cost === 0 && a.share === 0 && a.avgCtx === 0));
 });
