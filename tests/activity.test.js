@@ -72,6 +72,15 @@ test('commandKey drops cd / Set-Location segments anywhere; an env prefix never 
   assert.equal(commandKey('Set-Location "C:\\Users\\x"\ngit status'), 'git status');
   assert.equal(commandKey('git status && cd /c/other && ls'), 'git status && ls');
   assert.equal(commandKey('pnpm build && CI=1 pnpm test'), 'pnpm build && pnpm test');
+  assert.equal(commandKey('Set-Location -Path C:\\x; git status'), 'git status');
+  assert.equal(commandKey('cd /c/my dir && git status'), 'git status');
+  assert.equal(commandKey('(cd /tmp && ls)'), '(ls)');
+  assert.equal(commandKey('git status && (cd /tmp && ls) || echo no'), 'git status && (ls) || echo no');
+});
+
+test('commandKey: a private-use char already in the input is left alone, not turned into "undefined"', () => {
+  const key = commandKey('echo ""');
+  assert.ok(!key.includes('undefined'), key);
 });
 
 test('commandKey / shellSegments: separators inside quotes and $(…) are not split or respaced', () => {

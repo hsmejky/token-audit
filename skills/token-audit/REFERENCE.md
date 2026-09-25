@@ -348,8 +348,10 @@ Steps, in order:
    whitespace collapsed; leading `NAME=value` env prefixes removed (`CI=1 pnpm test` →
    `pnpm test`) — a value containing `$(` or `(` is not a prefix, and a bare assignment with
    no command after it stays (`TOKEN=$(… | git credential fill)` is the BOILERPLATE signal); a
-   segment that is only `cd <dir>` / `Set-Location <dir>` is dropped wherever it appears (cwd
-   is not the command, and would leak the project path); empty segments dropped.
+   segment that is only `cd <anything>` / `Set-Location <anything>` — an unquoted multi-word
+   path (`cd /c/my dir`), a `-Path`/`-LiteralPath` flag, or any other trailing text — is dropped
+   wherever it appears, including recursively inside a `(…)` group that is a whole segment on
+   its own (cwd is not the command, and would leak the project path); empty segments dropped.
 6. Segments re-joined with canonical separators ` && `, ` || `, ` | `, ` ; `.
 
 Judgment calls:

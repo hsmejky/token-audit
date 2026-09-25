@@ -133,14 +133,30 @@ function commandKey(command) {
   s = s.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>');
   s = s.replace(/\b[0-9a-f]{7,}\b/gi, m => (/\d/.test(m) ? '<id>' : m)); // commit SHAs, hex ids
   s = s.replace(/\d+/g, 'N');
+  s = stripCdAndEnv(s);
+  return s.replace(/[\uE000-\uF8FF]/g, ch => kept[ch.charCodeAt(0) - 0xE000] ?? ch);
+}
+// A segment that is only `cd <dir>` / `Set-Location [-Path] <dir>` — cwd is not the
+// command, and any argument text (flags, an unquoted path with spaces) would leak
+// the project path (Slice 12 prints keys).
+const isCdCmd = t => /^(?:cd|Set-Location)\b(?:\s.*)?$/i.test(t);
+// Strips `NAME=value` env prefixes and cd/Set-Location segments — at the top level
+// and, recursively, inside a `(…)` group that is a whole segment on its own (a
+// group's contents are not split by shellSegments(), so `(cd /tmp && ls)` never
+// reaches the top-level filter as a bare `cd` segment).
+function stripCdAndEnv(s) {
   const segs = shellSegments(s)
     // `NAME=value cmd` env prefixes. A value with `$(`/`(` is not matched, so a
     // standalone `TOKEN=$(… | git credential fill)` assignment stays.
-    .map(g => ({ ...g, text: g.text.replace(/\s+/g, ' ')
-      .replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$]*) )+(?=\S)/, '') }))
-    .filter(g => g.text && !/^(?:cd|Set-Location)(?: \S+)?$/i.test(g.text)); // cwd is not the command
-  s = segs.map((g, i) => (i < segs.length - 1 ? `${g.text} ${g.sep} ` : g.text)).join('');
-  return s.replace(/[-]/g, ch => kept[ch.charCodeAt(0) - 0xE000]);
+    .map(g => {
+      let text = g.text.replace(/\s+/g, ' ')
+        .replace(/^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|()$]*) )+(?=\S)/, '');
+      const grp = /^\((.*)\)$/s.exec(text);
+      if (grp) text = `(${stripCdAndEnv(grp[1])})`;
+      return { ...g, text };
+    })
+    .filter(g => g.text && !isCdCmd(g.text));
+  return segs.map((g, i) => (i < segs.length - 1 ? `${g.text} ${g.sep} ` : g.text)).join('');
 }
 // Top-level segments of a shell string: [{ text, sep }], sep = the separator
 // after it (`&&`, `||`, `|`, `;` — a newline counts as `;` — or '' at the end).
