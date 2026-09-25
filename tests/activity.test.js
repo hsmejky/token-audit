@@ -238,6 +238,8 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [sh('grep -n "page.screenshot(" src/a.ts'), 'read'],
     [sh('./scripts/screenshot.sh out.png'), 'screenshot/image'],
     [sh('timeout 60 node scripts/screenshot.mjs a.html'), 'screenshot/image'],
+    // SHOT_EXEC must not cross a command boundary into the next command
+    [sh('node build.js && git add scripts/screenshot.ts'), 'git'],
     [sh('curl -s https://api.github.com/repos/o/r/actions/runs/123/jobs'), 'wait/poll'],
     [['NewToolWeNeverSaw', {}], 'other'],
   ];
