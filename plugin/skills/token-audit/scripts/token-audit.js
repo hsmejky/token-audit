@@ -346,9 +346,19 @@ const ACTIVITY_RULES = [
   [rx`${CMD}(?:${RUNNERS}|${CHECKERS})\b`, 'test/lint/build'],
   [rx`${CMD}git\b`, 'git'],
   [rx`${CMD}(?:${BUSY_POLLERS})\b`, 'wait/poll'],
-  [rx`${CMD}(?:${SCRIPT_INTERP})(?: |$)|${CMD}${SCRIPT_FILE}`, 'script run'],
   [rx`^(?:Edit|Write|MultiEdit|NotebookEdit) |${CMD}(?:sed -i|cat >|tee )`, 'edit'],
   [rx`^(?:Read|Grep|Glob) |${CMD}(?:${READERS})\b`, 'read'],
+  // Slice 15 fix (review, real data): `script run` below edit/read, not above. A
+  // `python - <<EOF … EOF` heredoc editing a file, or `python -c "…"` reading one,
+  // is edit/read work, not "run a script" — but SCRIPT_INTERP's bare `python[^\s CMD]*`
+  // also matches the interpreter token at the front of those, so when this rule ran
+  // BEFORE edit/read it stole those turns: on real data, edit 12.2%->9.6%, read
+  // 32.1%->27.4%, script run 13.6% (vs. ~6.4% expected from the Slice 15 proposal),
+  // driven almost entirely by 503 `python - <<EOF` read calls + 284 edit calls. Moving
+  // this rule after edit/read means it only claims turns edit/read didn't already
+  // recognize (e.g. `python foo.py`, `node x.mjs` with no heredoc/`-c` payload) —
+  // i.e. `script run` now only takes share from `other`, matching the proposal.
+  [rx`${CMD}(?:${SCRIPT_INTERP})(?: |$)|${CMD}${SCRIPT_FILE}`, 'script run'],
 ];
 const ACTIVITY_OTHER = 'other';
 // A turn with no tool_use at all (final answer, plan, question to the user) — Slice 15
@@ -1891,6 +1901,11 @@ async function main() {
   const cur = showSessions(summarize(curRows));
   const prev = showSessions(summarize(rows.filter(r => r.ts >= prevFrom && r.ts < curFrom)));
   const all = summarize(rows);
+  // ALL-TIME (summary line + --json `all`) is main sessions only, same population as
+  // SESSIONS (all.mainSessions) — see the ALL-TIME line below for why this isn't just
+  // all.cost/all.msgs.
+  const allMainCost = all.mainSessions.reduce((a, s) => a + s.cost, 0);
+  const allMainMsgs = all.mainSessions.reduce((a, s) => a + s.msgs, 0);
   // Windowed the same as SPEND (cur), not all-time — otherwise UNPRICED prints
   // all-history totals under a header that says "this window".
   const unpriced = aggregateUnpriced(unprizedRows, curFrom).map(u => ({ ...u, model: show(u.model) }));
@@ -1914,7 +1929,10 @@ async function main() {
     // redacted/summarized fields).
     const trim = ({ mainSessions, ...s }) => ({ ...s, sessions: s.sessions.slice(0, TOP) });
     console.log(JSON.stringify({ windowDays: DAYS, scope, cur: trim(cur), prev: trim(prev),
-      all: { cost: all.cost, msgs: all.msgs, sessions: all.sessions.length },
+      // main sessions only (allMainCost/allMainMsgs/all.mainSessions.length) — matches
+      // the ALL-TIME summary line, not all.cost/all.msgs/all.sessions (those include
+      // subagents; still used internally by cur/prev/detail, not exposed here).
+      all: { cost: allMainCost, msgs: allMainMsgs, sessions: all.mainSessions.length },
       weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced,
       ...(det ? { detail: det } : {}) }, null, 2));
     return;
@@ -1956,7 +1974,11 @@ async function main() {
     // LONG_AGENT's / DETAIL's "Subagent distribution" territory.
     `SESSIONS     ${cur.mainSessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
       `≥${LONG_SESSION_TURNS} msgs: ${cur.mainSessions.filter(s => s.msgs >= LONG_SESSION_TURNS).length}`,
-    `ALL-TIME     ${money(all.cost)} over ${all.sessions.length} sessions, ${all.msgs} messages`,
+    // Slice 15 HITL: ALL-TIME counts main sessions only (all.mainSessions), same
+    // population as SESSIONS above — all.cost/all.msgs/all.sessions include subagents
+    // (needed elsewhere: DETAIL's WORK UNITS, LONG_AGENT spans), so cost/messages here
+    // are re-summed over main sessions rather than reusing those all-history totals.
+    `ALL-TIME     ${money(allMainCost)} over ${all.mainSessions.length} sessions, ${allMainMsgs} messages`,
     // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
     // it overlapped WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
     // overrun sources on real --all data. Still in --json as cur.sessions (trimmed to

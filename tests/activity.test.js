@@ -232,6 +232,17 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [['WebFetch', { url: 'https://x', prompt: 'y' }], 'web'],
     [['WebSearch', { query: 'y' }], 'web'],
     [sh('python - <<\'PY\'\nimport io\nPY'), 'script run'],
+    // Review finding (Slice 15): `script run` moved below edit/read in ACTIVITY_RULES.
+    // A Bash call with a `python - <<EOF … EOF` segment PLUS a real edit/read segment
+    // used to classify as `script run` (that rule ran first and `.find()` picks the
+    // first rule with a match anywhere in the subject, not the first segment in the
+    // command) — on real data this stole ~503 read + ~284 edit calls from their true
+    // categories. Now edit/read are checked first, so these compounds classify as
+    // they did before Slice 15 added the `script run` rule.
+    [sh('python - <<\'EOF\'\nprint(1)\nEOF\nsed -i \'s/a/b/\' out.py'), 'edit'],
+    [sh('python - <<\'EOF\'\nprint(1)\nEOF\ncat out.py'), 'read'],
+    // …but a bare script run with no edit/read segment alongside still wins.
+    [sh('python x.py'), 'script run'],
     [['AskUserQuestion', {}], 'harness'],
     // runners behind wrappers; the runner outranks trailing pipe helpers
     [sh('python -m pytest tests/ -q 2>&1 | tail -20'), 'test/lint/build'],

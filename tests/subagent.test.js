@@ -28,6 +28,20 @@ test('each subagent session carries its parent session id; main sessions have no
   assert.equal(byId['3ac91e04-uuid'].parent, null);
 });
 
+// Slice 15 HITL: ALL-TIME (--json `all`) counts main sessions only, same population as
+// SESSIONS (all.mainSessions) — a subagent session/turn/cost must not inflate it.
+test('--json `all` (ALL-TIME) excludes subagent sessions, msgs and cost', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/main-1.jsonl': turn({ id: 'm1' }),
+    'projects/p/main-1/subagents/agent-a1.jsonl': turns(3, 'sub-a'),
+  });
+  const r = audit(dir);
+  assert.equal(r.all.sessions, 1, 'only the main session counted');
+  assert.equal(r.all.msgs, 1, 'subagent turns excluded from the message count');
+  const mainCost = r.cur.sessions.find(s => s.sid === 'main-1').cost;
+  assert.equal(r.all.cost.toFixed(6), mainCost.toFixed(6), 'subagent cost excluded');
+});
+
 // Real on-disk layout: a subagent id (e.g. from a `fork` agent whose name
 // happens to collide across runs) can appear under two different parent
 // session directories. Identity for a subagent session is (parent, sid) —

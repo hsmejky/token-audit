@@ -600,7 +600,15 @@ real data and on the fixture that fires every section at once (`tests/summary-bu
   cost nothing), and `span N wk (M with data)` — N = calendar weeks from the first to the last
   week with data, M = weeks that had any rows. With one week of data it prints `week of <date>
   only` and no change. The full per-week table is `--json`'s `weeks`. CONFIG: see "CONFIG — one
-  line" below.
+  line" below. **ALL-TIME is main sessions only (Slice 15 HITL)** — same population as
+  `SESSIONS` above it (`mainSessions`, `!isSub`), not every session ever seen. Before, it
+  summed `all.cost`/`all.msgs`/`all.sessions.length`, which include subagent sessions and
+  turns — the dollar figure and message count didn't match the session count next to them
+  (a subagent's cost/turns were folded in, but its session wasn't one of the ones "over"
+  which that cost was spent). `--json`'s `all: { cost, msgs, sessions }` follows the same
+  fix (main sessions only); `all.cost`/`all.msgs`/`all.sessions` internally (`workUnits()`,
+  `LONG_AGENT` spans) still use every session, including subagents — only the exposed
+  ALL-TIME figure changed.
 - **FLAGS** — as many as fit (`fitFlags()`; typically 4-5) + one `… +N more: IDs` line for the
   rest (see "Summary cap and ranking"); **SECURITY** in full.
 
@@ -675,9 +683,9 @@ and `timeout 600 python -m pytest | tail` is a test run. Priority order and what
 | 7 | test/lint/build | `pnpm/npm/yarn/bun [--opts] [run/exec] test/lint/build/typecheck/…` (e.g. `pnpm --filter x test`), `vitest`, `jest`, `pytest`, `unittest`, `ruff`, `mypy`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make`, `cargo test/build/check/clippy/nextest`, `go test/build/vet` |
 | 8 | git | `git …` |
 | 9 | wait/poll — busy-poll (Slice 15) | `echo waiting-*`/`echo idle-*`, `tasklist`, `Get-Process`, checked below git and test/lint/build — real work wins a compound like `git status; Get-Process` (review finding: these used to live in row 5's high-priority rule, so that compound fell to wait/poll instead of git) |
-| 10 | script run (Slice 15) | a bare interpreter run (`python[^\s‣]*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start — below test/lint/build, git and screenshot/image, all of which win first (`python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot) |
-| 11 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
-| 12 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
+| 10 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
+| 11 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
+| 12 | script run (Slice 15) | a bare interpreter run (`python[^\s‣]*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start — below test/lint/build, git, screenshot/image, edit **and read** (all of which win first: `python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot). Moved below edit/read after a review finding (real data): a compound Bash call mixing a `python - <<EOF … EOF` heredoc segment with a real edit/read segment (e.g. a `cat`/`sed -i` elsewhere in the same call) used to classify as `script run` — `.find()` over `ACTIVITY_RULES` picks the first *rule* with a match anywhere in the subject, not the first *segment* in the command, and `script run` ran before edit/read. Measured: read 32.1%→27.4%, edit 12.2%→9.6%, `script run` 13.6% instead of the ≈6.4% the table above expects (driven by ≈503 read + ≈284 edit calls, mostly `python - <<EOF` scripts). With `script run` last, it only ever claims turns edit/read didn't already recognize — i.e. it only takes share from `other`, as designed |
 | – | other | no rule matched at all |
 | – | reply (Slice 15) | the turn made no tool call (final answer, plan, question to the user) |
 
@@ -724,8 +732,9 @@ Decisions not fixed by design.md (judgment calls):
   table row 9 above), misc shell (`mkdir`, `cp`, `rm`, `for`, `export …`) ≈ 0.2–0.6%,
   genuinely unmatched ≈ 0.1%. So `other` was never one thing — it was mostly replies, script
   re-runs and harness bookkeeping wearing a single "uncategorized" label. `script run` sits
-  below test/lint/build, git and screenshot/image in `ACTIVITY_RULES` (checked above them,
-  they win); its file-extension alternative is written `[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`,
+  below test/lint/build, git, screenshot/image, edit and read in `ACTIVITY_RULES` (checked
+  above it, they win — see table row 12 above for the edit/read review finding); its
+  file-extension alternative is written `[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`,
   not `\S+\.(?:m?js|py|sh|ps1)\b` — the latter, anchored at every `CMD` boundary (e.g. every
   `(` of 50k nested parens, none of them whitespace), backtracks per anchor across the rest
   of the string, O(n²) or worse (Slice 30's exact bug class); excluding `CMD` from the
