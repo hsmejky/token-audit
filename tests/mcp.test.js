@@ -6,7 +6,7 @@ const { auditCwd, tmpClaudeDir, tmpUserConfig, tmpDir, turn } = require('./harne
 const { projectFolder } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 14: CONFIG lists MCP servers from 3 sources — `.mcp.json` in the
-// scoped project (design.md "project" / plan.md ".mcp.json"), the user-scope
+// scoped project, the user-scope
 // top-level `mcpServers` in the sibling `~/.claude.json`-equivalent file, and
 // that same file's per-project `local`-scope `projects[<path>].mcpServers`.
 

@@ -6,7 +6,7 @@ const { audit, auditText, tmpClaudeDir, tmpUserConfig } = require('./harness');
 const { fitFlags, flagsMoreLine, continuedFlagLines, appendFlagsMore, familyLine, renderDetail } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// plan.md Slice 28 / design.md Q3: the summary (everything above DETAIL) stays
+// Slice 28 / design decision Q3: the summary (everything above DETAIL) stays
 // ≤ 24 lines. The fixture below fires every section at once: all cost flags,
 // UNPRICED (several unknown models), CONFIG with many MCP servers + plugins +
 // 3-model effortLevel, SECURITY.
@@ -94,7 +94,7 @@ test('fixture fires every section: all cost flags, UNPRICED, MCP, 3-model effort
   assert.equal(r.config.modelEffort.length, 3);
 });
 
-// Slice 28 (design.md Q3, HITL D): CONFIG, UNPRICED and the SPEND family split
+// Slice 28 (design decision Q3, HITL D): CONFIG, UNPRICED and the SPEND family split
 // print one line each; full lists live in --json only. With variant B (TOP
 // SESSIONS dropped, WEEKS -> TREND, FLAGS top 4) the worst-case fixture fits
 // the 24-line summary budget.

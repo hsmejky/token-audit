@@ -126,7 +126,7 @@ test('same subagent id under two different parents stays two sessions, not merge
     'each session must total only its own turns, not the merged pair');
 });
 
-// Slice 28 (design.md Q3, HITL decision): TOP SESSIONS was dropped from the
+// Slice 28 (design decision Q3, HITL decision): TOP SESSIONS was dropped from the
 // summary (it overlapped DETAIL's WORK UNITS / TOP SUBAGENTS) — this project-
 // name-not-uuid guarantee now lives in DETAIL's WORK UNITS project column
 // instead (a subagent-only unit is keyed by its parent dir, sid = first 8

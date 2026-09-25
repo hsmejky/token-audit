@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
 const { redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// plan.md Slice 12 / design.md Q9: POLLING = the same normalized command
+// Slice 12 / design decision Q9: POLLING = the same normalized command
 // (commandKey) >= POLL_MIN_CALLS (10, Slice 15 HITL decision) times in one session.
 // Only commands whose repeat is a wait count (not test/lint/build, git, edit):
 // see REFERENCE.md "POLLING".
@@ -142,7 +142,7 @@ test('POLLING: new Slice 15 busy-poll commands (echo waiting/idle, tasklist, Get
 });
 
 // Review finding (Slice 15): `script run` (a bare `python foo.py` re-run while iterating) is
-// deliberately excluded from POLL_CATEGORIES (§4 slice15-proposal.md) — it is work, not a
+// deliberately excluded from POLL_CATEGORIES (Slice 15) — it is work, not a
 // wait. 10 is POLL_MIN_CALLS itself (the boundary), so this also confirms the category
 // exclusion, not just the threshold, is what keeps it from firing.
 test('POLLING: `python x.py` repeated 10x (script run) does not fire — script run is not a poll category', () => {

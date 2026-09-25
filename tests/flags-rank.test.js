@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// Slice 28 (design.md Q3/Q5, HITL Q-B): FLAGS rank by extra cost where design.md
+// Slice 28 (design decision Q3/Q5, HITL Q-B): FLAGS rank by extra cost where that decision
 // defines one (REGRESSION, POLLING, BOILERPLATE: tier 0, by $ desc), then a fixed
 // priority for flags whose $ is only the flagged spend ($ = tie-break within a
 // tier): LONG_AGENT > LONG_SESSION, MULTIDAY > OPUS_HEAVY, CONCENTRATION >

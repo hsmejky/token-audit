@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
 const { commandKey, setupPrefixes } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// plan.md Slice 13 / design.md Q9: BOILERPLATE = the same setup prefix of a
+// Slice 13 / design decision Q9: BOILERPLATE = the same setup prefix of a
 // command repeated across >= BOILER_MIN_SESSIONS (5, provisional)
 // sessions. Prefix definition: see REFERENCE.md "BOILERPLATE".
 

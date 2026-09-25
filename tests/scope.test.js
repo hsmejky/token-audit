@@ -42,8 +42,8 @@ test('projectFolder maps underscore, dot, and space to dash (not just \\ / :)', 
 // Slice 20 review: real project folder names can run well past the header's
 // own budget (~38 chars) before hitting the 120-char line cap — the header must
 // fitMiddle() the project name rather than overrun it. (Slice 28: TOP SESSIONS,
-// the other line this test used to check, was dropped from the summary — see
-// design.md Q3; DETAIL's WORK UNITS project column replaces it, but that one
+// the other line this test used to check, was dropped from the summary —
+// design decision Q3; DETAIL's WORK UNITS project column replaces it, but that one
 // uses a fixed 40-char fit() cap, not a dynamic budget, so it can't overrun
 // regardless of project-name length — nothing left there to regression-test.)
 test('CONFIG-adjacent header stays <=120 chars for a long project path', () => {
@@ -192,7 +192,7 @@ test('--project "." scopes to the cwd project, not every project', () => {
   assert.equal(r.cur.sessions.length, 1);
 });
 
-// The exact bug called out in the plan: `--project --json` must not take
+// The exact bug this guards against: `--project --json` must not take
 // `--json` as the project path.
 test('--project immediately followed by --json does not swallow --json as the value', () => {
   const dir = tmpClaudeDir({
