@@ -712,12 +712,49 @@ function currentIdentity() {
   } catch { /* no git or no user.name */ }
   return (machineIdentity = { username, home: os.homedir(), name });
 }
+// Secret layer (runs first): a credential typed or pasted into a command → <secret>,
+// so a secret repeated in ≥ 20 calls (POLLING) or ≥ 5 sessions (BOILERPLATE) never
+// prints. commandKey() already turned digits into N, so shapes allow any word char.
+// A value that is a reference (`$VAR`, `${VAR}`, `$(…)`) is not a secret and stays.
+// Every pattern starts at the start of a run (lookbehind) and bounds its name part,
+// so a 200k-char run can't make it quadratic. See REFERENCE.md "POLLING".
+const TOK_CHAR = '(?:[\\w-]|<id>)';
+const SECRET_SHAPE = new RegExp('(?<![\\w-])(?:gh[opsu]_|github_pat_|sk-|xox[bpas]-)' +
+  `${TOK_CHAR}{12,}|(?<![\\w-])AKIA[A-Z0-9]{8,}|(?<![\\w-])eyJ${TOK_CHAR}{4,}\\.${TOK_CHAR}{4,}\\.${TOK_CHAR}*`, 'g');
+// header `Name: [scheme ]value` — Authorization, Cookie, *Token / *Api-Key / *Secret headers.
+const SECRET_HEADER = new RegExp(
+  /(?<![\w-])((?:Proxy-)?Authorization|Cookie|[\w-]{0,40}?(?:Token|Api-?Key|Secret)):/.source +
+  /([ \t]*)((?:Bearer|Basic|Token|Digest)[ \t]+)?([^\s'"`]+)/.source, 'gi');
+const SECRET_BEARER = /(?<![\w-])(Bearer[ \t]+)([^\s'"`]+)/gi;
+const SECRET_USERPASS = /(?<![\w-])(-u|--user)([ \t]+|=)(['"]?)([^\s'"`:]{0,256}):([^\s'"`]+)/g;
+const SECRET_FLAG_WORD =
+  /password|passwd|passphrase|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|creds?/;
+const SECRET_FLAG = new RegExp(`(?<![\\w-])(--?[\\w-]{0,40}?(?:${SECRET_FLAG_WORD.source})[\\w-]{0,40})` +
+  /(=|[ \t]+)(['"]?)([^\s'"`<>|;&()]+)/.source, 'gi');
+// `NAME=value` where NAME looks like a credential (also `export …`, `$env:…`, `?access_token=`).
+// Starts after start/space/separator/quote/`?`/`:` only, so `s/^password=//p` stays.
+const SECRET_ASSIGN = new RegExp(/(?<=^|[\s;&|(?"'`:])(?=\w{0,63}?(?:token|key|secret|pass|pwd|auth|cred))/.source +
+  /([A-Za-z_]\w{0,63})([ \t]?=[ \t]?)("[^"\n]{0,512}"|'[^'\n]{0,512}'|[^\s'"`;&|()<>]+)/.source, 'gi');
+const SECRET_URL_CRED = /(\/\/[^\s/:@'"`]{1,256}):([^\s/@'"`]{1,256})@/g;
+const isRef = v => /^["']?\$/.test(v);
+function redactSecrets(s) {
+  return s
+    .replace(SECRET_URL_CRED, '$1:<secret>@')
+    .replace(SECRET_SHAPE, '<secret>')
+    .replace(SECRET_HEADER, (m, name, sp, scheme = '', v) => (isRef(v) ? m : `${name}:${sp}${scheme}<secret>`))
+    .replace(SECRET_BEARER, (m, b, v) => (isRef(v) ? m : `${b}<secret>`))
+    .replace(SECRET_USERPASS, (m, f, sep, q, user, v) =>
+      (isRef(v) || isRef(q + user) ? m : `${f}${sep}${q}${user}:<secret>`))
+    .replace(SECRET_FLAG, (m, f, sep, q, v) => (isRef(v) || v === '<secret>' ? m : `${f}${sep}${q}<secret>`))
+    .replace(SECRET_ASSIGN, (m, name, eq, v) => (isRef(v) || v === '<secret>' ? m : `${name}${eq}<secret>`));
+}
 const idPatterns = new WeakMap();
 // identity = { username, home, name } — injectable for tests; defaults to this machine.
+// Layers in order: secrets, then paths/emails, then this user's name (value layer).
 function redactPaths(key, identity = currentIdentity()) {
   if (!idPatterns.has(identity)) idPatterns.set(identity, identityPattern(identity));
   const id = idPatterns.get(identity);
-  const out = key
+  const out = redactSecrets(key)
     .replace(EMAIL, '<email>')
     .replace(FILE_URL, '<path>')
     .replace(WIN_USERS_PATH, '<path>')
@@ -762,14 +799,22 @@ const BOILER_MIN_SESSIONS = 5; // same setup prefix in >= N distinct sessions
 // && python …`). A value that is only a path (`S=<path>`, `S=/c/…/scratchpad`,
 // `F="$HOME/x"`) is a shorthand for a location, not a missing tool → null.
 // Real-data numbers and the definitions that were tried: REFERENCE.md "BOILERPLATE".
-const SETUP_ASSIGN = /^(?:export )?[A-Za-z_]\w*=(.*)$/s;
+const SETUP_ASSIGN = /^((?:export )?[A-Za-z_]\w*=)(.*)$/s;
 const VAR_ROOTED_PATH = /^(?:<path>|\$\{?\w+\}?)(?:[\\/]|$)/;
+const unquote = v => v.replace(/^(["'])(.*)\1$/s, '$2');
 function setupPrefix(key) {
   const segs = shellSegments(key);
   const m = segs.length > 1 && SETUP_ASSIGN.exec(segs[0].text);
   if (!m) return null;
-  const value = m[1].replace(/^(["'])(.*)\1$/s, '$2');
+  const value = unquote(m[2]);
   return value && !isPathText(value) && !VAR_ROOTED_PATH.test(value) ? segs[0].text : null;
+}
+// Printed form of a setup prefix: a literal value (not `$(…)` / `$VAR` / `${VAR}`) may
+// be a pasted secret, so it prints as `NAME=<value>`; any other value goes through
+// redactPaths() (secret, path and name layers). Grouping stays on the raw prefix.
+function showPrefix(prefix) {
+  const m = SETUP_ASSIGN.exec(prefix);
+  return m && !/^\$[({\w]/.test(unquote(m[2])) ? `${m[1]}<value>` : redactPaths(prefix);
 }
 // Boilerplate prefixes in this window: Bash/PowerShell calls grouped by
 // setupPrefix() (raw, unredacted) over all sessions (sessionKey); a prefix seen
@@ -793,7 +838,7 @@ function boilerplate(rows) {
     }
   }
   return [...groups.values()].filter(g => g.sessions.size >= BOILER_MIN_SESSIONS)
-    .map(g => ({ prefix: redactPaths(g.prefix), sessions: g.sessions.size, turns: g.turns.size,
+    .map(g => ({ prefix: showPrefix(g.prefix), sessions: g.sessions.size, turns: g.turns.size,
       cost: g.cost, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions);
 }

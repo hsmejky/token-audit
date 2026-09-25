@@ -190,6 +190,24 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   bare email (`user@host.tld`) is redacted to `<email>`; the match is anchored to the start
   of a `[\w.+-]` run so a long unbroken run of such characters (no real email) redacts in
   linear time instead of quadratic.
+- **Secret layer — credentials are redacted to `<secret>`** before the path and name layers
+  (`redactPaths()` → `redactSecrets()`), so a token pasted into a command that repeats ≥ 20×
+  never prints. Shapes: known token prefixes (`ghp_`/`gho_`/`ghs_`/`ghu_`, `github_pat_`,
+  `sk-`/`sk-ant-`, `xoxb-`/`xoxp-`/`xoxa-`/`xoxs-`, `AKIA…`, a JWT `eyJ….….…`); the value of an
+  `Authorization:` / `Cookie:` / `*-Token:` / `*-Api-Key:` / `*Secret:` header (a `Bearer` /
+  `Basic` / `token` scheme word stays) and of a bare `Bearer x`; the password of `-u` /
+  `--user user:pass` and of URL credentials (`https://user:pass@host`); the value of a flag
+  whose name contains password/passwd/passphrase/pwd/token/secret/api-key/access-key/
+  private-key/cred (`--password=x`, `--token x`); and `NAME=value` (also `export`, `$env:`,
+  `?access_token=`) where NAME matches `/TOKEN|KEY|SECRET|PASS|PWD|AUTH|CRED/i`. A value that
+  is a reference — `$VAR`, `${VAR}`, `$(…)`, quoted or not — is not a secret and stays
+  (`-H "Authorization: token $TOKEN"`, `TOKEN=$(… git credential fill …)` stay readable). An
+  assignment matches only after start/whitespace/separator/quote/`?`/`:`, so a sed script's
+  `s/^password=//p` stays. Every pattern is anchored to the start of a run and bounds its
+  name part, so it stays linear on 200k-char inputs. Normal keys are untouched (`a=b`,
+  `-o=json`, `PYTHONIOENCODING=utf-N`, `sort --key=N`, `git push -u origin main`). Accepted
+  over-redaction: an odd NAME containing a keyword (`MONKEY=x`, `GIT_ASKPASS=x`) and a boolean
+  flag named like a secret flag followed by a plain word (`--no-token foo`).
 - **Value layer — the current user's name is redacted to `<user>`** wherever it is left in
   the key, whatever the path shape (`C--Users-Petr-Svarc-proj` project-folder form, a path
   the patterns above miss) or plain text, any case. Terms: the login name
@@ -259,8 +277,13 @@ exact raw prefix; Bash/PowerShell calls only, all activity categories.
   setting would have made shorter or fewer. It over-states the saving (the turn also did real
   work), so read the share as "spend on turns that needed this setup". #turns counts a turn
   once even if several of its calls carry the prefix.
-- **Printed prefix is redacted with `redactPaths()`** (text and `groups[].prefix`), grouping
-  uses the raw prefix — two users' `$(cat /home/<name>/.token)` are two groups. The prefix is
+- **A literal value prints as `NAME=<value>`** (text and `groups[].prefix`): a value that is
+  not `$(…)` / `$VAR` / `${VAR}` may be a pasted secret (`export GH_TOKEN=ghp_…`, a digit-free
+  password), and the value is what makes it boilerplate only through its name
+  (`export PYTHONIOENCODING=<value>`). Any other prefix is redacted with `redactPaths()`
+  (secret layer — see POLLING — then paths, then the user's name), so a token inside `$(…)`
+  prints as `<secret>`. Grouping uses the raw prefix — two users' `$(cat /home/<name>/.token)`
+  are two groups, and two different literal values of one NAME are two groups. The prefix is
   cut in the middle so the flag line stays ≤ 120 chars; the full prefix is in `--json`.
 
 ### `BIG_CTX` — average context per message > 150k

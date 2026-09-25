@@ -79,7 +79,7 @@ test('BOILERPLATE: an `export NAME=value` setup prefix counts too (numbers norma
   const r = audit(tmpClaudeDir(sessions(5, i => `export PYTHONIOENCODING=utf-8 && python lib/x${i}.py`)));
   const [f] = boilerFlags(r);
   assert.ok(f, JSON.stringify(r.flags));
-  assert.equal(f.groups[0].prefix, 'export PYTHONIOENCODING=utf-N');
+  assert.equal(f.groups[0].prefix, 'export PYTHONIOENCODING=<value>'); // literal value: may be a secret
 });
 
 test('BOILERPLATE: not a setup prefix — a plain command first, a lone assignment, a path-valued variable', () => {
