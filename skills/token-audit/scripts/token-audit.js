@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // token-audit — spend + usage audit over local Claude Code transcripts.
-// Node, no deps.  Usage: node token-audit.js [--days N] [--top N] [--json] [--claude-dir DIR]
+// Node, no deps.  Usage: node token-audit.js [--days N] [--top N] [--json] [--no-detail] [--claude-dir DIR]
 // Tests: `node --test` from the repo root (fixtures in tests/fixtures/).
 //
 // Costs are LIST-PRICE EQUIVALENTS (Claude API $/MTok). On Pro/Max nothing is
@@ -20,6 +20,7 @@ const DAYS = flagVal('--days', 14);
 const TOP = flagVal('--top', 8);
 const JSON_OUT = argv.includes('--json');
 const ALL = argv.includes('--all');
+const DETAIL = !argv.includes('--no-detail');
 
 // `--project <path> --json` (or any other flag right after --project) must
 // not take that following flag as the path value — flagStr()/flagVal() would
@@ -125,6 +126,27 @@ function walk(dir, out = []) {
   return out;
 }
 
+// Subagent task text. Source order (decision + reason in REFERENCE.md,
+// "Subagent task text"):
+//   1. agent-*.meta.json `description` — written by Claude Code next to each
+//      subagent transcript; it is the parent's Agent tool_use `description`,
+//      a short label the spawner chose, so no need to scan the parent file.
+//   2. first non-empty line of the subagent's first user prompt (older
+//      transcripts / metas without a description).
+//   3. null → the report falls back to the agent id.
+function subagentMetaTask(jsonlFile) {
+  const meta = readJson(jsonlFile.replace(/\.jsonl$/, '.meta.json'));
+  const d = meta && typeof meta.description === 'string' ? meta.description.trim() : '';
+  return d || null;
+}
+function promptText(message) {
+  const c = message && message.content;
+  const text = typeof c === 'string' ? c
+    : Array.isArray(c) ? ((c.find(p => p && p.type === 'text' && p.text) || {}).text || '') : '';
+  const line = text.split('\n').map(l => l.trim()).find(Boolean);
+  return line || null;
+}
+
 // One API response is written as several JSONL lines (thinking / text /
 // tool_use) sharing one message.id — one turn, priced once. Earlier lines carry
 // a partial usage (output_tokens still streaming), so the line with the largest
@@ -142,6 +164,7 @@ async function collect() {
   const rows = [];
   const byId = new Map();
   const unpriced = [];
+  const tasks = new Map(); // subagent sessionKey → task text (see subagentMetaTask)
   for (const f of walk(SCOPE_ROOT)) {
     const dir = path.dirname(f);
     const isSub = path.basename(dir) === 'subagents';
@@ -151,11 +174,14 @@ async function collect() {
     const project = path.basename(isSub ? path.dirname(path.dirname(dir)) : dir);
     const parent = isSub ? path.basename(path.dirname(dir)) : null;
     const sid = path.basename(f, '.jsonl');
+    const metaTask = isSub ? subagentMetaTask(f) : null;
+    let firstPrompt = null;
     const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
     for await (const line of rl) {
       if (!line.trim()) continue;
       let j;
       try { j = JSON.parse(line); } catch { continue; }
+      if (isSub && firstPrompt === null && j.type === 'user') firstPrompt = promptText(j.message);
       const u = j.message && j.message.usage;
       if (!u) continue;
       const modelName = j.message.model || '(unknown)';
@@ -178,18 +204,19 @@ async function collect() {
       const inp = u.input_tokens || 0;
 
       const cost = (inp * p[0] + w5 * p[1] + w1h * p[2] + read * p[3] + out * p[4]) / 1e6;
-      const row = { ts, sid, project, isSub, parent, family, cost, ctx: read + ccTotal, out };
+      const row = { ts, sid, project, isSub, parent, family, model: modelName, cost, ctx: read + ccTotal, out };
       const id = j.message.id;
       const seen = id && byId.get(id);
       if (!seen) {
         if (id) byId.set(id, row); // no id → can't dedupe, count the line as is
         rows.push(row);
       } else if (out > seen.out) {
-        Object.assign(seen, { family, cost, ctx: row.ctx, out });
+        Object.assign(seen, { family, model: modelName, cost, ctx: row.ctx, out });
       }
     }
+    if (isSub) tasks.set(sessionKey({ isSub, parent, sid }), metaTask || firstPrompt || null);
   }
-  return { rows, unpriced };
+  return { rows, unpriced, tasks };
 }
 
 // Aggregates raw unpriced rows into { model, rows, tokens } entries, keeping
@@ -217,6 +244,7 @@ function summarize(rows) {
   const byFamily = {};
   const byChain = { main: 0, sub: 0 };
   const sessions = new Map();
+  const modelCost = new Map(); // session → { modelString: cost }
   let cost = 0, ctx = 0;
 
   for (const r of rows) {
@@ -230,6 +258,7 @@ function summarize(rows) {
       s = { sid: r.sid, project: r.project, isSub: r.isSub, parent: r.parent, cost: 0, msgs: 0, ctx: 0,
             ctxMax: 0, first: r.ts || Infinity, last: r.ts || 0, opus: 0 };
       sessions.set(key, s);
+      modelCost.set(s, {});
     }
     s.cost += r.cost;
     s.msgs++;
@@ -237,9 +266,17 @@ function summarize(rows) {
     if (r.ctx > s.ctxMax) s.ctxMax = r.ctx;
     if (r.ts) { s.first = Math.min(s.first, r.ts); s.last = Math.max(s.last, r.ts); }
     if (r.family === 'Opus') s.opus += r.cost;
+    const mc = modelCost.get(s);
+    mc[r.model] = (mc[r.model] || 0) + r.cost;
   }
 
   const list = [...sessions.values()].sort((a, b) => b.cost - a.cost);
+  // A session's `model` = the model string that cost it the most (a session
+  // can switch models mid-way; the dominant one is what the reader needs).
+  for (const s of list) {
+    const mc = modelCost.get(s);
+    s.model = Object.keys(mc).sort((a, b) => mc[b] - mc[a])[0];
+  }
   const msgs = rows.length;
   const msgCounts = list.map(s => s.msgs).sort((a, b) => a - b);
   const pick = q => msgCounts.length ? msgCounts[Math.min(msgCounts.length - 1, Math.floor(q * msgCounts.length))] : 0;
@@ -421,6 +458,48 @@ const money = n => '$' + n.toFixed(n < 1 ? 3 : n < 10 ? 2 : n < 100 ? 1 : 0);
 const k = n => (n / 1e3).toFixed(0) + 'k';
 const pct = n => (100 * n).toFixed(1) + '%';
 const date = ms => new Date(ms).toISOString().slice(0, 10);
+// Model string as shown in tables: `claude-opus-5-5-20260101` → `opus-5-5`.
+const shortModel = m => String(m || '?').replace(/^claude-/, '').replace(/-\d{8}$/, '');
+// One line, at most n code points (never splits a surrogate pair); a cut
+// string ends in `…` so truncation is visible.
+function fit(text, n) {
+  const chars = [...String(text).replace(/\s+/g, ' ').trim()];
+  return chars.length <= n ? chars.join('') : chars.slice(0, n - 1).join('').trimEnd() + '…';
+}
+
+// ------------------------------------------------------------------ detail
+// DETAIL = drill-down printed below the summary (off with --no-detail).
+// Data and layout are split so each later section (work units, distribution
+// line, cost by activity) adds one field in detail() + one renderer in
+// DETAIL_SECTIONS. No blank lines between sections: the whole block has a
+// line budget (see REFERENCE "DETAIL"). Every line ≤ 120 chars.
+const TOP_SUBAGENTS = 10;
+const TASK_WIDTH = 70;
+
+function detail(cur, tasks) {
+  const topSubagents = cur.sessions.filter(s => s.isSub).slice(0, TOP_SUBAGENTS).map(s => ({
+    sid: s.sid, parent: s.parent, project: s.project, task: tasks.get(sessionKey(s)) || null,
+    model: s.model, turns: s.msgs, peakCtx: s.ctxMax, cost: s.cost,
+  }));
+  return { topSubagents };
+}
+
+const DETAIL_SECTIONS = [
+  // Top subagents by cost. Columns: 2+7+2+5+2+5+2+10+2+8+2+70 = 117 chars max.
+  d => d.topSubagents.length ? [
+    `TOP ${TOP_SUBAGENTS} SUBAGENTS (this window, by cost)`,
+    `  ${'cost'.padStart(7)}  ${'turns'.padStart(5)}  ${'peak'.padStart(5)}  ${'model'.padEnd(10)}  ` +
+      `${'parent'.padEnd(8)}  task`,
+    ...d.topSubagents.map(a =>
+      `  ${money(a.cost).padStart(7)}  ${String(a.turns).padStart(5)}  ${k(a.peakCtx).padStart(5)}  ` +
+      `${fit(shortModel(a.model), 10).padEnd(10)}  ${String(a.parent).slice(0, 8).padEnd(8)}  ` +
+      fit(a.task || a.sid, TASK_WIDTH)),
+  ] : ['TOP SUBAGENTS  none in this window'],
+];
+
+function renderDetail(d) {
+  return ['DETAIL', ...DETAIL_SECTIONS.flatMap(section => section(d))];
+}
 
 async function main() {
   if (!fs.existsSync(ROOT)) {
@@ -432,7 +511,7 @@ async function main() {
       (PROJECT_ARG !== undefined ? ` (--project ${PROJECT_ARG})` : ` (cwd ${process.cwd()})`));
     process.exit(1);
   }
-  const { rows, unpriced: unprizedRows } = await collect();
+  const { rows, unpriced: unprizedRows, tasks } = await collect();
   if (!rows.length && !unprizedRows.length) {
     console.error('no transcripts found in ' + ROOT);
     process.exit(1);
@@ -457,12 +536,14 @@ async function main() {
   const secFl = securityFlags(cfg);
 
   const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: SCOPE_PROJECT };
+  const det = DETAIL ? detail(cur, tasks) : null;
 
   if (JSON_OUT) {
     const trim = s => ({ ...s, sessions: s.sessions.slice(0, TOP) });
     console.log(JSON.stringify({ windowDays: DAYS, scope, cur: trim(cur), prev: trim(prev),
       all: { cost: all.cost, msgs: all.msgs, sessions: all.sessions.length },
-      weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced }, null, 2));
+      weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced,
+      ...(det ? { detail: det } : {}) }, null, 2));
     return;
   }
 
@@ -527,6 +608,11 @@ async function main() {
     for (const f of secFl) console.log(`  ${f.id.padEnd(14)} ${f.text}`);
   } else {
     console.log('  none');
+  }
+
+  if (det) {
+    console.log('');
+    for (const l of renderDetail(det)) console.log(l);
   }
 }
 

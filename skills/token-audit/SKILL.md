@@ -21,7 +21,8 @@ Measure first, advise second. Every number comes from the script — never guess
 node <skill-dir>/scripts/token-audit.js --days 14
 ```
 `<skill-dir>` = `${CLAUDE_PLUGIN_ROOT}/skills/token-audit` if plugin, else this
-folder. `--top N` sessions (def 8) · `--json`. ~30-60s. Read-only.
+folder. `--top N` sessions (def 8) · `--json` · `--no-detail` (drop the DETAIL block below
+the summary: top subagents by cost with their task text). ~30-60s. Read-only.
 
 Scope defaults to the **current project** (cwd mapped to its `projects/` folder name).
 `--project <path>` audits a different project; `--all` audits every project (habits differ

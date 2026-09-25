@@ -197,6 +197,35 @@ Anchor for trend questions. 283 sessions, 63 910 transcript lines, 198 MB.
 | worst single session (14 days open) | 26.4 % of spend |
 | median session length | 61 messages (p90 182, max 1775) |
 
+## DETAIL block
+
+Printed by default **below** the summary (after SECURITY); `--no-detail` turns it off.
+Same data under `detail` in `--json`. Fixed-width, every line ≤ 120 chars, no blank lines
+between sections (the whole block has a line budget: ≤ 30, later ≤ 40 lines). Sections, in order:
+
+- **TOP 10 SUBAGENTS** (this window, by cost): cost, turns (deduped), peak ctx, model (the
+  model string that cost the session most, `claude-` and date suffix stripped), parent session
+  id (8 chars), task (≤ 70 chars, whitespace collapsed, cut with `…`). `--json`:
+  `detail.topSubagents[]` = `{ sid, parent, project, task, model, turns, peakCtx, cost }`.
+  Main sessions are not listed here; `task` is `null` when no source had text (row shows the
+  agent id instead).
+
+### Subagent task text — source
+
+**Decided**: `agent-*.meta.json` `description` first; fallback = first non-empty line of the
+subagent's first `user` message (string content, or the first `text` part of an array);
+last resort = agent id.
+
+**Reason** (measured on 642 real subagent transcripts, 2026-09-25): Claude Code writes an
+`agent-<id>.meta.json` next to every `agent-<id>.jsonl` (`{ agentType, description,
+toolUseId, model, … }`). Its `description` is exactly the parent's `Agent` tool_use
+`input.description` (verified via `toolUseId`), so it gives the parent's label without
+scanning the parent transcript. It is short and author-chosen ("Re-review slice 4 fix"),
+whereas the first prompt line is usually boilerplate ("Repo C:\Users\… Read-only task, do not
+commit", "You are reviewer C for …"), which says where, not what. 640/642 metas had a
+description; 11 transcripts start with an `attachment` line, not the prompt, hence "first
+`user` message", not "first line".
+
 ## Config keys the script reads
 
 | file | key | why |
@@ -224,6 +253,7 @@ active, and counting those inflates `PLUGIN_BLOAT`.
 | `--claude-dir DIR` | `~/.claude` | read transcripts + settings from DIR instead (tests use fixture dirs) |
 | `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |
 | `--all` | off | scope to every project instead of just one (pre-Slice-6 behaviour) |
+| `--no-detail` | off | drop the DETAIL block (text) and the `detail` key (`--json`): summary only |
 
 **Default scope is the current working directory's project**, mapped the same way. `--project`
 overrides it; `--all` scans every project under `<claude-dir>/projects`. Only one project's
