@@ -228,7 +228,8 @@ test('BOILERPLATE: printed prefix drops the user\'s own name (value layer), text
   const env = { ...process.env, HOME: home, USERPROFILE: home, GIT_CONFIG_GLOBAL: path.join(tmp, 'gitconfig'),
     GIT_CONFIG_NOSYSTEM: '1' };
   const dir = tmpClaudeDir(sessions(5, () => 'NOTE=$(grep -c Quux notes.txt) && echo done'));
-  const run = (...a) => execFileSync(process.execPath, [require.resolve('../plugin/skills/token-audit/scripts/token-audit.js'),
+  const script = require.resolve('../plugin/skills/token-audit/scripts/token-audit.js');
+  const run = (...a) => execFileSync(process.execPath, [script,
     '--claude-dir', dir, '--all', '--days', '36500', ...a], { encoding: 'utf8', env, cwd: tmp });
   const [f] = boilerFlags(JSON.parse(run('--json')));
   assert.ok(f);

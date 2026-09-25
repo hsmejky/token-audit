@@ -7,13 +7,13 @@ const { audit, auditText, tmpClaudeDir, turn, turns } = require('./harness');
 //   <project>/<session-uuid>/subagents/agent-*.jsonl  — its subagent transcripts
 test('subagent project = real project, not the session uuid', () => {
   const dir = tmpClaudeDir({
-    'projects/C--Users-jdoe-demo-proj/3ac91e04-uuid.jsonl': turn({ id: 'main-1' }),
-    'projects/C--Users-jdoe-demo-proj/3ac91e04-uuid/subagents/agent-a1.jsonl': turn({ id: 'sub-1' }),
+    'projects/C--Users-zq-demo-proj/3ac91e04-uuid.jsonl': turn({ id: 'main-1' }),
+    'projects/C--Users-zq-demo-proj/3ac91e04-uuid/subagents/agent-a1.jsonl': turn({ id: 'sub-1' }),
   });
   const r = audit(dir);
   const byId = Object.fromEntries(r.cur.sessions.map(s => [s.sid, s]));
-  assert.equal(byId['3ac91e04-uuid'].project, 'C--Users-jdoe-demo-proj');
-  assert.equal(byId['agent-a1'].project, 'C--Users-jdoe-demo-proj',
+  assert.equal(byId['3ac91e04-uuid'].project, 'C--Users-zq-demo-proj');
+  assert.equal(byId['agent-a1'].project, 'C--Users-zq-demo-proj',
     'subagent project must be the real project, not the session-uuid folder');
 });
 
@@ -56,11 +56,11 @@ test('same subagent id under two different parents stays two sessions, not merge
 
 test('TOP SESSIONS text report shows the project name for a subagent, not the session uuid', () => {
   const dir = tmpClaudeDir({
-    'projects/C--Users-jdoe-demo-proj/3ac91e04-uuid/subagents/agent-a1.jsonl': turn({ id: 'sub-1' }),
+    'projects/C--Users-zq-demo-proj/3ac91e04-uuid/subagents/agent-a1.jsonl': turn({ id: 'sub-1' }),
   });
   const out = auditText(dir);
   const topLine = out.split('\n').find(l => l.includes('agent-a1'));
   assert.ok(topLine, 'expected a TOP SESSIONS line for the subagent');
-  assert.ok(topLine.includes('C--Users-jdoe-demo-proj'), `expected project name, got: ${topLine}`);
+  assert.ok(topLine.includes('C--Users-zq-demo-proj'), `expected project name, got: ${topLine}`);
   assert.ok(!topLine.includes('3ac91e04-uuid'), `must not show the session uuid as project: ${topLine}`);
 });

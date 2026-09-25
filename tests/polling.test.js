@@ -387,7 +387,8 @@ for (const [what, cmd, leak] of genericLeaks) {
 }
 
 test('POLLING: redactPaths generic layer keeps http(s) URLs, a=b, key:value, -o=json', () => {
-  for (const cmd of ['curl -s https://api.github.com/repos/o/r/pulls/1', 'echo a=b', 'echo key:value', 'echo -o=json']) {
+  const cmds = ['curl -s https://api.github.com/repos/o/r/pulls/1', 'echo a=b', 'echo key:value', 'echo -o=json'];
+  for (const cmd of cmds) {
     assert.equal(redactPaths(cmd, NO_ID), cmd);
   }
 });

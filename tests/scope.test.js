@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { audit, auditCwd, auditRaw, tmpClaudeDir, tmpDir, turn } = require('./harness');
-const { projectFolder } = require('../plugin/skills/token-audit/scripts/token-audit.js');
+// Printed project names are identity-redacted (Slice 29): a tmp cwd under the real home
+// shows as its redactPaths() form, so compare against that.
+const { projectFolder, redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Real on-disk convention (~/.claude/projects/<folder>/): the folder name is
 // the absolute, resolved path Claude Code was launched from, with every
@@ -82,10 +84,10 @@ test('default scope (no --project/--all) is the cwd\'s project only', () => {
   });
   const r = auditCwd(dir, cwd);
   assert.equal(r.scope.mode, 'project');
-  assert.equal(r.scope.project, folder);
+  assert.equal(r.scope.project, redactPaths(folder));
   assert.equal(r.cur.sessions.length, 1);
   assert.equal(r.cur.sessions[0].sid, 's1');
-  assert.equal(r.cur.sessions[0].project, folder);
+  assert.equal(r.cur.sessions[0].project, redactPaths(folder));
 });
 
 // Same cross-platform-fixed-point trick as above: pick an already-native-absolute
@@ -165,7 +167,7 @@ test('--project "." scopes to the cwd project, not every project', () => {
   });
   const r = auditCwd(dir, cwd, '--project', '.');
   assert.equal(r.scope.mode, 'project');
-  assert.equal(r.scope.project, folder);
+  assert.equal(r.scope.project, redactPaths(folder));
   assert.equal(r.cur.sessions.length, 1);
 });
 

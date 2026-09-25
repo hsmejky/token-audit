@@ -265,11 +265,20 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   split on whitespace/`.`/`_`/`-` (home `C:\Users\Petr Svarc` → `Petr`, `Svarc`). A term
   counts only if it is ≥ 3 chars and not a generic account name (`user`, `admin`, `root`,
   `runner`, …), and matches only as a whole word (`Petr` doesn't touch `January`), so short
-  or common names don't over-redact. Pattern rules catch *any* user's path; the value
+  or common names don't over-redact. Accents are folded on both sides (NFD, combining marks
+  dropped), so `Svarc` also redacts `Švarc` in NFC or NFD form and an accented git name
+  redacts its plain spelling; letters without a decomposition (`ł`, `ø`) are not folded.
+  Pattern rules catch *any* user's path; the value
   layer catches *this* user's name in shapes no pattern foresaw. Both are best-effort, not
   a guarantee for every possible shell construct. Only the printed key is redacted —
   grouping uses the raw key. The key is cut in the middle (`head…tail`) so the line stays
   ≤ 120 chars and both the program and e.g. `…/check-runs` stay visible.
+- **Same redaction on every printed field** (all three layers): the scope and TOP SESSIONS /
+  work-unit / subagent project folders (`C--Users-<user>-<user>-proj` — still tells projects
+  apart), subagent task text, model names (UNPRICED rows and warning, CONFIG `model=` and
+  `effortLevel` per-model entries), plugin and MCP server names, and the stderr errors
+  (`no transcripts at …`, `no project …`), in the text report and `--json` alike. Grouping,
+  session keys and JSON property names stay raw; only the printed copies change.
 - **Heredoc bodies are hashed raw** (commandKey step 1): a poll script re-run verbatim
   groups; the same script with a different PR number inside the body is a different key.
   Accepted: within one wait the body is identical (same PR), which is what a run counts.

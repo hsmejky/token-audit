@@ -785,8 +785,9 @@ const WIN_USERS_PATH =
 // which becomes `C:<path>`), and
 // inside a quoted string (`"see /c/Users/Petr Svarc/x"`) — the name segment stops
 // at the next `/` or a quote, so the closing quote survives.
-const FWD_USERS_PATH =
-  /(^|[\s=(`'"<>@]|:(?!\/\/))\/(?:mnt\/)?(?:[A-Za-z]\/)?(?:users|home)\/(?:\\ |[^\/|;&()<>'"`])+(?:\/[^\s`'"|;&()<>]*)*/gi;
+const FWD_USERS_PATH = new RegExp(
+  /(^|[\s=(`'"<>@]|:(?!\/\/))\/(?:mnt\/)?(?:[A-Za-z]\/)?(?:users|home)\//.source +
+  /(?:\\ |[^\/|;&()<>'"`])+(?:\/[^\s`'"|;&()<>]*)*/.source, 'gi');
 const TILDE_PATH = /(^|[\s=(`'"<>@:])~[\w.-]*(?:[\\/][^\s`'"|;&()<>]*)?/g;
 const ABS_PATH = /(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()<>]+[\\/][^\s`'"|;&()<>]*/g;
 // Value layer: whatever the patterns above miss, the current user's own name is
@@ -797,6 +798,8 @@ const ABS_PATH = /(^|[\s=(`'"<>@]|:(?!\/\/))(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()
 // whole and split into parts on whitespace/`.`/`_`/`-`. A term is used only when
 // ≥ ID_MIN_LEN chars and not a generic account name (ID_GENERIC), and matches only
 // as a whole word (not inside `January`), so short or common names don't over-redact.
+// Accents are folded on both sides (NFD, combining marks dropped): `Svarc` also
+// redacts `Švarc` in NFC or NFD form, and an accented git name redacts its plain spelling.
 const ID_MIN_LEN = 3;
 const ID_GENERIC = new Set(['user', 'users', 'home', 'root', 'admin', 'administrator',
   'public', 'default', 'guest', 'owner', 'runner', 'ubuntu']);
@@ -806,7 +809,7 @@ function identityPattern({ username = '', home = '', name = '' } = {}) {
   const terms = new Set();
   for (const s of [username, base, name]) {
     for (const t of [s, ...String(s).split(/[\s._-]+/)]) {
-      const w = String(t).trim().toLowerCase();
+      const w = foldText(String(t)).trim().toLowerCase();
       if (w.length >= ID_MIN_LEN && !ID_GENERIC.has(w)) terms.add(w);
     }
   }
@@ -814,6 +817,32 @@ function identityPattern({ username = '', home = '', name = '' } = {}) {
   const alt = [...terms].sort((a, b) => b.length - a.length)
     .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
   return new RegExp(`(?<!${ID_EDGE})(?:${alt})(?!${ID_EDGE})`, 'giu');
+}
+const foldText = t => t.normalize('NFD').replace(/\p{M}/gu, '');
+// Accent-folded copy u of s and pos[k] = index in s that u[k] comes from
+// (pos[u.length] = s.length), so a match on u maps back onto s. One pass per code point.
+function foldAccents(s) {
+  let u = '';
+  const pos = [];
+  for (let i = 0; i < s.length;) {
+    const n = s.codePointAt(i) > 0xffff ? 2 : 1;
+    const f = foldText(s.slice(i, i + n));
+    for (let j = 0; j < f.length; j++) pos.push(i);
+    u += f;
+    i += n;
+  }
+  pos.push(s.length);
+  return { u, pos };
+}
+function redactIdentity(s, id) {
+  if (/^[\x00-\x7f]*$/.test(s)) return s.replace(id, '<user>');
+  const { u, pos } = foldAccents(s);
+  let out = '', at = 0;
+  for (const m of u.matchAll(id)) {
+    out += s.slice(at, pos[m.index]) + '<user>';
+    at = pos[m.index + m[0].length];
+  }
+  return out + s.slice(at);
 }
 // The machine's identity, read once on first use (git only if a key is redacted).
 let machineIdentity = null;
@@ -1062,7 +1091,7 @@ function redactPaths(key, identity = currentIdentity()) {
     .replace(FWD_USERS_PATH, '$1<path>')
     .replace(TILDE_PATH, '$1<path>')
     .replace(ABS_PATH, '$1<path>');
-  return id ? out.replace(id, '<user>') : out;
+  return id ? redactIdentity(out, id) : out;
 }
 // Polling runs in this window: Bash/PowerShell calls of a POLL_CATEGORIES
 // category, grouped per session (sessionKey) by commandKey; a group of
@@ -1229,7 +1258,8 @@ function securityFlags(cfg) {
   const out = [];
   const add = (id, text) => out.push({ id, text });
   if (cfg.cleanupPeriodDays == null) {
-    add('NO_RETENTION', 'cleanupPeriodDays unset — no cleanup runs, transcripts (customer code included) sit in plaintext indefinitely');
+    add('NO_RETENTION', 'cleanupPeriodDays unset — no cleanup runs, ' +
+      'transcripts (customer code included) sit in plaintext indefinitely');
   }
   return out;
 }
@@ -1421,33 +1451,52 @@ function renderDetail(d) {
   return ['DETAIL', ...DETAIL_SECTIONS.flatMap(section => section(d))];
 }
 
+// ------------------------------------------------------------ redacted view
+// Every printed field that can carry a path or the user's identity (scope, project
+// folders, subagent task text, model / plugin / MCP server names) goes through
+// redactPaths(), in text and --json alike (Slice 29). Grouping and keys ran on the
+// raw values; only the copies that get printed are rewritten.
+const shown = new Map();
+const show = v => {
+  if (typeof v !== 'string') return v;
+  if (!shown.has(v)) shown.set(v, redactPaths(v));
+  return shown.get(v);
+};
+const showSessions = sum => ({ ...sum,
+  sessions: sum.sessions.map(s => ({ ...s, project: show(s.project), model: show(s.model) })) });
+const showConfig = c => ({ ...c, model: show(c.model),
+  modelEffort: c.modelEffort.map(m => ({ ...m, model: show(m.model) })),
+  plugins: c.plugins.map(p => ({ ...p, name: show(p.name) })),
+  mcpServers: c.mcpServers.map(m => ({ ...m, name: show(m.name) })) });
+const showDetail = d => d && { ...d,
+  topSubagents: d.topSubagents.map(a => ({ ...a, project: show(a.project), task: show(a.task), model: show(a.model) })),
+  units: d.units.map(u => ({ ...u, project: show(u.project) })) };
+const fail = msg => { console.error(show(msg)); process.exit(1); };
+
 async function main() {
   if (!fs.existsSync(ROOT)) {
-    console.error('no transcripts at ' + ROOT);
-    process.exit(1);
+    fail('no transcripts at ' + ROOT);
   }
   if (SCOPE_PROJECT && !fs.existsSync(SCOPE_ROOT)) {
-    console.error(`no project '${SCOPE_PROJECT}' under ${ROOT}` +
+    fail(`no project '${SCOPE_PROJECT}' under ${ROOT}` +
       (PROJECT_ARG !== undefined ? ` (--project ${PROJECT_ARG})` : ` (cwd ${process.cwd()})`));
-    process.exit(1);
   }
   const { rows, unpriced: unprizedRows, tasks } = await collect();
   if (!rows.length && !unprizedRows.length) {
-    console.error('no transcripts found in ' + ROOT);
-    process.exit(1);
+    fail('no transcripts found in ' + ROOT);
   }
 
   const now = Date.now();
   const curFrom = now - DAYS * DAY;
   const prevFrom = now - 2 * DAYS * DAY;
   const curRows = rows.filter(r => r.ts >= curFrom);
-  const cur = summarize(curRows);
-  const prev = summarize(rows.filter(r => r.ts >= prevFrom && r.ts < curFrom));
+  const cur = showSessions(summarize(curRows));
+  const prev = showSessions(summarize(rows.filter(r => r.ts >= prevFrom && r.ts < curFrom)));
   const all = summarize(rows);
   // Windowed the same as SPEND (cur), not all-time — otherwise UNPRICED prints
   // all-history totals under a header that says "this window".
-  const unpriced = aggregateUnpriced(unprizedRows, curFrom);
-  const cfg = config();
+  const unpriced = aggregateUnpriced(unprizedRows, curFrom).map(u => ({ ...u, model: show(u.model) }));
+  const cfg = showConfig(config());
   // spans measured over full history, not clipped to the window. Keyed by
   // (parent, sid) same as summarize() — a bare sid would collide across
   // parents for a repeated subagent id.
@@ -1456,8 +1505,8 @@ async function main() {
   const fl = flags(cur, prev, cfg, span, polling(curRows), boilerplate(curRows));
   const secFl = securityFlags(cfg);
 
-  const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: SCOPE_PROJECT };
-  const det = DETAIL ? detail(cur, tasks, all, curRows) : null;
+  const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: show(SCOPE_PROJECT) };
+  const det = DETAIL ? showDetail(detail(cur, tasks, all, curRows)) : null;
 
   if (JSON_OUT) {
     const trim = s => ({ ...s, sessions: s.sessions.slice(0, TOP) });
@@ -1468,7 +1517,7 @@ async function main() {
     return;
   }
 
-  console.log(`TOKEN AUDIT   scope ${SCOPE_PROJECT ? SCOPE_PROJECT : 'all projects'}   ` +
+  console.log(`TOKEN AUDIT   scope ${scope.project || 'all projects'}   ` +
     `window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`);
   console.log('');
   console.log(`SPEND        ${money(cur.cost)}   prev window ${money(prev.cost)}` +
@@ -1481,8 +1530,9 @@ async function main() {
     const totTok = unpriced.reduce((a, u) => a + u.tokens, 0);
     console.log(`UNPRICED     ${unpriced.length} model(s), ${(totTok / 1e6).toFixed(2)}M tokens not in pricing table`);
     for (const u of unpriced) {
-      console.log(`  ${u.model.padEnd(28)} rows=${String(u.rows).padStart(6)}  tokens=${(u.tokens / 1e6).toFixed(2)}M`);
-      const name = fit(redactPaths(u.model), 40);
+      console.log(`  ${fit(u.model, 28).padEnd(28)} rows=${String(u.rows).padStart(6)}  ` +
+        `tokens=${(u.tokens / 1e6).toFixed(2)}M`);
+      const name = fit(u.model, 40);
       console.log(`  WARNING: unknown model '${name}' -- add its price to PRICES + REFERENCE.md`);
     }
   }
@@ -1525,7 +1575,7 @@ async function main() {
     console.log(`  mcp servers=${cfg.mcpServers.length}   ` +
       `est. prefix ≈${(cfg.mcpPrefixTokens / 1e3).toFixed(1)}k tok/request`);
     for (const s of cfg.mcpServers)
-      console.log(`    ${redactPaths(s.name).padEnd(30)} ${s.scope}`);
+      console.log(`    ${s.name.padEnd(30)} ${s.scope}`);
   }
   console.log('');
 
