@@ -647,9 +647,14 @@ Under `--all` (no single scoped project), only `user`-scope servers are listed �
 
 **Location decided at implementation time**: checked a real `~/.claude.json` —
 `mcpServers` lives there, at the top level and per-project, never in `settings.json`.
-The script reads it from `<claude-dir>.json`, the sibling of whatever `--claude-dir`
-points at, so `--claude-dir DIR` and its `DIR.json` move together (tests use fixture
-dirs the same way they already fixture `settings.json` inside `--claude-dir`).
+Where the script reads that file from tracks how the Claude dir itself was resolved
+(Slice 23): under the default (`~/.claude`) or an explicit `--claude-dir DIR`, it reads
+the sibling `<claude-dir>.json` (`DIR.json`, matching real Claude Code's default
+`~/.claude` + `~/.claude.json` layout, and the convention fixtures already use — tests
+fixture `DIR.json` the same way they already fixture `settings.json` inside `DIR`).
+Under `CLAUDE_CONFIG_DIR`, it reads `<claude-dir>/.claude.json` (inside the dir) instead
+— that matches real Claude Code, which moves `.claude.json` inside the relocated dir
+rather than leaving it beside it.
 
 **Weight estimate**: MCP tool *definitions* (name, JSON-schema, description per tool)
 are fetched live over the MCP protocol when a session connects — they are not in any
@@ -673,6 +678,11 @@ typical MCP tool schema), clearly presented as an estimate, not a measurement.
 | `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\jdoe\demo-proj` → `C--Users-jdoe-demo-proj`; `/Users/jdoe/demo-proj` → `-Users-jdoe-demo-proj`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |
 | `--all` | off | scope to every project instead of just one (pre-Slice-6 behaviour) |
 | `--no-detail` | off | drop the DETAIL block (text) and the `detail` key (`--json`): summary only |
+
+**`--claude-dir` precedence (Slice 23)**: an explicit `--claude-dir DIR` flag wins if given;
+else the `CLAUDE_CONFIG_DIR` env var if set (real Claude Code's own relocation variable);
+else `~/.claude` (the default). This also decides where the MCP user-config file is read
+from — see "MCP servers" above.
 
 **Default scope is the current working directory's project**, mapped the same way. `--project`
 overrides it; `--all` scans every project under `<claude-dir>/projects`. Only one project's

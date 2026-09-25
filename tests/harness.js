@@ -66,6 +66,22 @@ function auditRaw(claudeDir, args) {
     { encoding: 'utf8' });
 }
 
+// Full control over both argv and env, for Slice 23's --claude-dir /
+// CLAUDE_CONFIG_DIR precedence tests. Starts from a copy of the real
+// process.env with CLAUDE_CONFIG_DIR, HOME and USERPROFILE all deleted first
+// (so neither the dev machine's real CLAUDE_CONFIG_DIR nor its real home
+// directory can leak into a test), then applies `env` on top — so a test
+// controls exactly what the script sees regardless of host OS. Returns
+// stdout; throws (with .status/.stderr) on a non-zero exit.
+function auditEnv(env, args) {
+  const childEnv = { ...process.env };
+  delete childEnv.CLAUDE_CONFIG_DIR;
+  delete childEnv.HOME;
+  delete childEnv.USERPROFILE;
+  Object.assign(childEnv, env);
+  return execFileSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env: childEnv });
+}
+
 // Creates a real, empty directory for tests that need an actual filesystem
 // path to spawn the script with as cwd (see auditCwd). Auto-cleaned on exit,
 // same as tmpClaudeDir.
@@ -118,5 +134,5 @@ function tmpUserConfig(claudeDir, obj) {
 }
 
 module.exports = {
-  audit, auditText, auditCwd, auditRaw, fixture, tmpClaudeDir, tmpDir, tmpUserConfig, turn, turns,
+  audit, auditText, auditCwd, auditRaw, auditEnv, fixture, tmpClaudeDir, tmpDir, tmpUserConfig, turn, turns,
 };

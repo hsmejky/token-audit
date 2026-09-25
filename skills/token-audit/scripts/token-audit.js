@@ -40,7 +40,23 @@ if (PROJECT_ARG === null) {
 }
 
 const HOME = process.env.USERPROFILE || process.env.HOME;
-const CLAUDE = path.resolve(flagStr('--claude-dir', path.join(HOME, '.claude')));
+
+// --claude-dir precedence (Slice 23): explicit flag wins, then
+// CLAUDE_CONFIG_DIR (the real Claude Code env var that relocates ~/.claude),
+// then ~/.claude as the default. claudeDirSource feeds the MCP user-config
+// lookup below — real Claude Code keeps `.claude.json` INSIDE the relocated
+// dir when CLAUDE_CONFIG_DIR is set, not beside it like the ~/.claude
+// default.
+const claudeDirFlag = flagStr('--claude-dir', undefined);
+let claudeDirSource, claudeDirRaw;
+if (claudeDirFlag !== undefined) {
+  claudeDirRaw = claudeDirFlag; claudeDirSource = 'flag';
+} else if (process.env.CLAUDE_CONFIG_DIR) {
+  claudeDirRaw = process.env.CLAUDE_CONFIG_DIR; claudeDirSource = 'env';
+} else {
+  claudeDirRaw = path.join(HOME, '.claude'); claudeDirSource = 'default';
+}
+const CLAUDE = path.resolve(claudeDirRaw);
 const ROOT = path.join(CLAUDE, 'projects');
 
 // ------------------------------------------------------------------- scope
@@ -601,8 +617,7 @@ const MCP_SERVER_TOKENS = 800;
 
 // Configured MCP servers for the scoped project, from the three places Claude
 // Code stores them (design.md Q9 / plan.md Slice 14):
-//   - user scope:    `<claude-dir>.json` (sibling of --claude-dir, mirroring
-//                     the real `~/.claude/` + `~/.claude.json` layout) ->
+//   - user scope:    the user-config file (USER_CONFIG_PATH below) ->
 //                     top-level `mcpServers` (NOT settings.json — checked
 //                     against a real `~/.claude.json` at implementation time;
 //                     settings.json has no mcpServers key in practice)
@@ -614,10 +629,19 @@ const MCP_SERVER_TOKENS = 800;
 //                     the repo, shared with the team)
 // scopeDir is SCOPE_DIR (null under --all — no single project to check, so
 // only user scope applies).
+//
+// USER_CONFIG_PATH (Slice 23): real Claude Code keeps `.claude.json` beside
+// `~/.claude` by default, but MOVES it INSIDE the dir when CLAUDE_CONFIG_DIR
+// relocates ~/.claude (verified against a real CLAUDE_CONFIG_DIR install).
+// --claude-dir is this script's own test/scoping override, not a real Claude
+// Code flag, so it keeps the sibling convention its fixtures already use
+// (tests/harness.js tmpUserConfig) rather than the CLAUDE_CONFIG_DIR rule.
+const USER_CONFIG_PATH = claudeDirSource === 'env' ? path.join(CLAUDE, '.claude.json') : CLAUDE + '.json';
+
 function mcpConfig(scopeDir) {
   const servers = [];
   const add = (scope, name) => servers.push({ scope, name });
-  const userConfig = readJson(CLAUDE + '.json') || {};
+  const userConfig = readJson(USER_CONFIG_PATH) || {};
 
   for (const name of Object.keys(userConfig.mcpServers || {})) add('user', name);
 
