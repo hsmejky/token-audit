@@ -422,10 +422,16 @@ function markCommands(key) {
   const out = [];
   let i = 0;
   while (i < s.length) {
-    // Two literal marker chars, not a regex scan — same O(n) shape as the old
-    // single-marker indexOf, no per-iteration slicing.
-    const a = s.indexOf(CMD, i), b = s.indexOf(CMD_PIPE, i);
-    const mark = a < 0 ? b : b < 0 ? a : Math.min(a, b);
+    // Single linear scan for the next marker char (CMD or CMD_PIPE). Two separate
+    // `indexOf` calls (one per marker) each re-scan to the end of the string whenever
+    // THEIR marker is absent from the remainder — e.g. all-`;` input has no CMD_PIPE, so
+    // indexOf(CMD_PIPE, i) scans to the end on every iteration, i²-many chars total
+    // (O(n²): measured 'a;'×80k 77ms → 1411ms, 'a|'×80k 62ms → 1392ms). Checking both
+    // marker chars in one forward pass per boundary keeps this O(n) — Slice 15 fix.
+    let mark = -1;
+    for (let j = i; j < s.length; j++) {
+      if (s[j] === CMD || s[j] === CMD_PIPE) { mark = j; break; }
+    }
     if (mark < 0) { out.push(s.slice(i)); break; }
     const markChar = s[mark];
     out.push(s.slice(i, mark), markChar);
@@ -434,7 +440,10 @@ function markCommands(key) {
       WRAP_RE.lastIndex = i;
       const wm = WRAP_RE.exec(s);
       if (!wm || s[WRAP_RE.lastIndex] === CMD || s[WRAP_RE.lastIndex] === CMD_PIPE) break;
-      out.push(wm[0], CMD);
+      // Re-emit the SAME marker the wrapper's boundary got (Slice 15 fix): a wrapper
+      // right after a pipe (`| timeout 5 tail`, `| xargs grep foo`) must stay CMD_PIPE
+      // so the wrapped command is still read as piped-into filter, not a fresh command.
+      out.push(wm[0], markChar);
       i = WRAP_RE.lastIndex;
     }
   }

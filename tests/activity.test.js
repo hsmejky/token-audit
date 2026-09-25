@@ -251,6 +251,12 @@ test('activityCategory: one example per category, first matching rule wins', () 
     // plain CMD marker, so these piped filters fall through to `script run` instead.
     [sh('python x.py 2>&1 | tail -20'), 'script run'],
     [sh('node build.mjs | head -30'), 'script run'],
+    // BLOCKER fix (re-review): a WRAPPER word (timeout/xargs/…) right after a `|` used to
+    // re-mark that boundary with plain CMD instead of re-emitting CMD_PIPE, so a wrapped
+    // filter after a pipe (`| timeout 5 tail`, `| xargs grep foo`) wrongly won `read`
+    // instead of falling through to `script run` like an unwrapped piped filter does.
+    [sh('python x.py | timeout 5 tail'), 'script run'],
+    [sh('python x.py | xargs grep foo'), 'script run'],
     // `;` (not `|`) keeps the plain CMD marker, so a `;`-chained read stays `read` even
     // with a script run alongside — accepted (user decision), unlike the piped case above.
     [sh('ls; python x.py'), 'read'],
@@ -382,9 +388,35 @@ test('activityCategory: 50k nested `(…)` in a command key processes well under
   const command = '('.repeat(50000) + 'echo hi' + ')'.repeat(50000);
   const t0 = Date.now();
   activityCategory('Bash', { command });
-  // 3s, not the AC's literal 1s: generous headroom against GC/scheduling noise on a loaded
-  // machine while still failing hard on the old ~10s quadratic code (new code: ~150ms typical).
-  assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0}ms`);
+  // 1500ms: tighter than the old 3000ms (which missed the markCommands() pass-2
+  // dual-indexOf regression entirely — re-review finding), still generous headroom over
+  // fixed-code timing (~450-980ms observed, varies with machine load under a full test
+  // run) so it isn't flaky, and still fails hard on the old ~10s quadratic code. The
+  // dual-indexOf regression itself (this exact bug) is now pinned tightly below by the
+  // dedicated `a;`/`a|` x80k tests, which are far less noisy (trivial command, no other
+  // regex machinery involved).
+  assert.ok(Date.now() - t0 < 1500, `took ${Date.now() - t0}ms`);
+});
+
+// BLOCKER fix (re-review, real data): markCommands()'s pass 2 used to look up the next
+// marker with `s.indexOf(CMD, i)` / `s.indexOf(CMD_PIPE, i)` every iteration. When one of
+// the two markers never occurs in the remainder, that indexOf call scans to the end of the
+// string EVERY time — O(n) work per boundary, O(n²) overall. Measured vs 5561717:
+// 'a;'×80k 77ms → 1411ms, 'a|'×80k 62ms → 1392ms. A single combined forward scan for
+// either marker restores O(n). 500ms is well above the ~80-90ms fixed-code time but far
+// below the >1300ms regressed time, so this fails hard on a reintroduction of the bug.
+test('activityCategory: `a;` x80k (all CMD, no CMD_PIPE) processes in < 500ms (was ~1.4s, quadratic)', () => {
+  const command = 'a;'.repeat(80000);
+  const t0 = Date.now();
+  activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0}ms`);
+});
+
+test('activityCategory: `a|` x80k (all CMD_PIPE after first CMD) processes in < 500ms (was ~1.4s, quadratic)', () => {
+  const command = 'a|'.repeat(80000);
+  const t0 = Date.now();
+  activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0}ms`);
 });
 
 test('activityCategory: `time ` x8000 (chained WRAPPED words) processes in < 100ms (was ~0.9s)', () => {
