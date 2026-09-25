@@ -690,7 +690,10 @@ A "message" / "msg" is one API response (one turn), deduplicated by `message.id`
 several transcript lines of one response count once, priced with the final (largest)
 `output_tokens`, since earlier lines carry a partial streaming usage. Lines without a
 `message.id` are counted one by one. An id that recurs in another file (resumed
-subagent) stays with the session where it was first seen.
+subagent) is credited to whichever occurrence has the earliest timestamp for that id,
+not whichever file the scan reaches first — files are walked in path-sorted order, and
+a later-sorted file can hold the earlier real occurrence. A missing/unparsed timestamp
+never outranks a real one, and an exact tie keeps whichever occurrence was seen first.
 
 A subagent session's identity is `(parent, sid)`, not `sid` alone — the same subagent
 id can recur under two different parent sessions, and those are two distinct sessions;

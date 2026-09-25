@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, fixture, tmpClaudeDir, turns } = require('./harness');
+const { audit, fixture, tmpClaudeDir, turn, turns } = require('./harness');
 
 test('lines sharing one message.id count as one turn, priced once', () => {
   const r = audit(fixture('multiline-message'));
@@ -42,4 +42,45 @@ test('an id recurring in another file is one response, kept with its first sessi
   assert.equal(r.all.msgs, 3);
   const msgs = Object.fromEntries(r.cur.sessions.map(s => [s.sid, s.msgs]));
   assert.deepEqual(msgs, { first: 2, resumed: 1 });
+});
+
+test('a shared id is credited to the session with the earliest timestamp, not path order', () => {
+  const dir = tmpClaudeDir({
+    // 'a-first' sorts before 'b-later' by path, but b-later's occurrence of
+    // the shared id has the earlier timestamp — it must win the credit.
+    'projects/p/a-first.jsonl': turn({ id: 'shared-1', ts: '2026-09-01T10:05:00.000Z' }),
+    'projects/p/b-later.jsonl': turn({ id: 'shared-1', ts: '2026-09-01T10:00:00.000Z' }),
+  });
+  const r = audit(dir);
+  assert.equal(r.all.msgs, 1);
+  const msgs = Object.fromEntries(r.cur.sessions.map(s => [s.sid, s.msgs]));
+  assert.deepEqual(msgs, { 'b-later': 1 });
+});
+
+test('reattribution moves the shared turn but leaves total cost/tokens unchanged', () => {
+  const usage = { input_tokens: 1000, output_tokens: 500 };
+  const dir = tmpClaudeDir({
+    'projects/p/a-first.jsonl': turn({ id: 'shared-2', ts: '2026-09-01T10:05:00.000Z', usage }),
+    'projects/p/b-later.jsonl': [
+      ...turn({ id: 'shared-2', ts: '2026-09-01T10:00:00.000Z', usage }),
+      ...turn({ id: 'own-turn', ts: '2026-09-01T10:01:00.000Z', usage }),
+    ],
+  });
+  const r = audit(dir);
+  assert.equal(r.all.msgs, 2); // shared-2 once + own-turn, never 3
+  const totalCost = r.cur.sessions.reduce((sum, s) => sum + s.cost, 0);
+  assert.equal(totalCost.toFixed(6), r.cur.cost.toFixed(6));
+  // b-later now holds both turns (the shared one it earliest-timestamps, plus its own).
+  const msgs = Object.fromEntries(r.cur.sessions.map(s => [s.sid, s.msgs]));
+  assert.deepEqual(msgs, { 'b-later': 2 });
+});
+
+test('a duplicate occurrence with no parseable timestamp never outranks a real one', () => {
+  const dir = tmpClaudeDir({
+    'projects/p/a-first.jsonl': turn({ id: 'shared-3', ts: '2026-09-01T10:00:00.000Z' }),
+    'projects/p/b-later.jsonl': turn({ id: 'shared-3', ts: 'not-a-date' }),
+  });
+  const r = audit(dir);
+  const msgs = Object.fromEntries(r.cur.sessions.map(s => [s.sid, s.msgs]));
+  assert.deepEqual(msgs, { 'a-first': 1 });
 });

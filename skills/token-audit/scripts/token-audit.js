@@ -365,7 +365,9 @@ function promptText(message) {
 // tool_use) sharing one message.id — one turn, priced once. Earlier lines carry
 // a partial usage (output_tokens still streaming), so the line with the largest
 // output wins. An id recurring in another file is still the same response; it
-// stays with the session where it was first seen.
+// is credited to whichever occurrence has the earliest timestamp for that id
+// (not whichever file the path-sorted walk reaches first — see the dedupe
+// merge below).
 // Unknown models (e.g. a new family the pricing table hasn't caught up with
 // yet) are counted here instead of being silently dropped: rows seen and raw
 // token volume (input + cache write + cache read + output), keyed by the
@@ -425,8 +427,18 @@ async function collect() {
       if (!seen) {
         if (id) byId.set(id, row); // no id → can't dedupe, count the line as is
         rows.push(row);
-      } else if (out > seen.out) {
-        Object.assign(seen, { family, model: modelName, cost, ctx: row.ctx, out });
+      } else {
+        if (out > seen.out) {
+          Object.assign(seen, { family, model: modelName, cost, ctx: row.ctx, out });
+        }
+        // Credit the turn to whichever occurrence has the earliest timestamp,
+        // not whichever file the (path-sorted) walk reached first. A missing
+        // or unparsed timestamp (ts = 0) never outranks a real one, and an
+        // exact tie keeps whichever occurrence already holds attribution
+        // (i.e. degrades to path order on ties).
+        if (row.ts && (!seen.ts || row.ts < seen.ts)) {
+          Object.assign(seen, { ts: row.ts, sid, project, isSub, parent });
+        }
       }
       // Each line of a turn carries one content part; the turn's tool calls
       // are the union over its lines (a repeated tool_use id counts once).
