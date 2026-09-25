@@ -126,8 +126,8 @@ test('POLLING: waits, status checks, log tails and other repeated commands do fi
 });
 
 // Slice 15 HITL busy-polls, real data: `echo waiting-N`/`echo idle-check-N`, `tasklist`,
-// `Get-Process` — added to POLLERS so a repeated busy-poll counts as wait/poll instead of
-// falling to `other`/`read`. Kept in their own lower-priority rule (below git) — see
+// `Get-Process` — added to BUSY_POLLERS so a repeated busy-poll counts as wait/poll instead
+// of falling to `other`/`read`. Kept in their own lower-priority rule (below git) — see
 // "POLLING: git wins over a bare busy-poll" below for why.
 test('POLLING: new Slice 15 busy-poll commands (echo waiting/idle, tasklist, Get-Process) fire on their own', () => {
   for (const cmd of [
@@ -147,6 +147,29 @@ test('POLLING: new Slice 15 busy-poll commands (echo waiting/idle, tasklist, Get
 // exclusion, not just the threshold, is what keeps it from firing.
 test('POLLING: `python x.py` repeated 10x (script run) does not fire — script run is not a poll category', () => {
   const r = audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(10, 't', () => 'python x.py') }));
+  assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
+});
+
+// Slice 15 fix (re-review, BLOCKER): before the CMD_PIPE fix, `python x.py 2>&1 | tail -20`
+// classified as `read` (the read rule's READERS alt matched the piped-in `tail`, and read is
+// checked before script run) — `read` IS a POLL_CATEGORIES member, so 10 piped re-runs of the
+// same script while iterating used to fire POLLING as a false positive. Now the whole compound
+// is `script run` (READERS only matches a `|`-free command start), which is excluded from
+// POLL_CATEGORIES, same as the bare `python x.py` case above.
+test('POLLING: piped script re-run (`python x.py 2>&1 | tail -N`) x10 does not fire', () => {
+  const r = audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(10, 't', i => `python x.py 2>&1 | tail -${i % 9 + 1}`),
+  }));
+  assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
+});
+
+// Slice 15 fix (re-review): a compound of real work (`git status`) plus a Slice 15 busy-poll
+// addition (`Get-Process`) must not fire POLLING — `git status; Get-Process` classifies as
+// `git` (real work wins, see activity.test.js), and `git` is not a POLL_CATEGORIES member.
+test('POLLING: `git status; Get-Process` repeated Nx does not fire', () => {
+  const r = audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': bashTurns(12, 't', () => 'git status; Get-Process'),
+  }));
   assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
 });
 

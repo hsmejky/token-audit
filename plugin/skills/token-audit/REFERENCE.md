@@ -600,15 +600,21 @@ real data and on the fixture that fires every section at once (`tests/summary-bu
   cost nothing), and `span N wk (M with data)` — N = calendar weeks from the first to the last
   week with data, M = weeks that had any rows. With one week of data it prints `week of <date>
   only` and no change. The full per-week table is `--json`'s `weeks`. CONFIG: see "CONFIG — one
-  line" below. **ALL-TIME is main sessions only (Slice 15 HITL)** — same population as
-  `SESSIONS` above it (`mainSessions`, `!isSub`), not every session ever seen. Before, it
-  summed `all.cost`/`all.msgs`/`all.sessions.length`, which include subagent sessions and
-  turns — the dollar figure and message count didn't match the session count next to them
-  (a subagent's cost/turns were folded in, but its session wasn't one of the ones "over"
-  which that cost was spent). `--json`'s `all: { cost, msgs, sessions }` follows the same
-  fix (main sessions only); `all.cost`/`all.msgs`/`all.sessions` internally (`workUnits()`,
-  `LONG_AGENT` spans) still use every session, including subagents — only the exposed
-  ALL-TIME figure changed.
+  line" below. **ALL-TIME mixes two populations on purpose (Slice 15 HITL, re-review
+  decision):** `sessions`/`msgs` are main sessions only — same population as `SESSIONS`
+  above it (`mainSessions`, `!isSub`) — but `cost` is all-time spend **including
+  subagents** (`all.cost`, every row ever seen). Deliberate: `SPEND` (the window total,
+  which already includes subagent cost) must never exceed `ALL-TIME`, and all-time
+  history is always a superset of the window, so `ALL-TIME`’s cost has to cover the
+  same subagent spend `SPEND` does — main-only cost would let a window with heavy
+  subagent spend show `SPEND` > `ALL-TIME`. Keeping `sessions`/`msgs` main-only means
+  "N sessions" next to `ALL-TIME` still means N *main* sessions, matching `SESSIONS`’
+  count/median/p90 — a subagent never counts as one of the sessions the figure is
+  "over". `--json`’s `all: { cost, msgs, sessions }` follows the same split (cost
+  all-inclusive, msgs/sessions main-only); `all.cost`/`all.msgs`/`all.sessions` (the raw
+  `summarize()` fields, not this trimmed `all` json object) still use every session
+  including subagents internally (`workUnits()`, `LONG_AGENT` spans) — only the exposed
+  ALL-TIME figure is this deliberate mix.
 - **FLAGS** — as many as fit (`fitFlags()`; typically 4-5) + one `… +N more: IDs` line for the
   rest (see "Summary cap and ranking"); **SECURITY** in full.
 
@@ -684,8 +690,8 @@ and `timeout 600 python -m pytest | tail` is a test run. Priority order and what
 | 8 | git | `git …` |
 | 9 | wait/poll — busy-poll (Slice 15) | `echo waiting-*`/`echo idle-*`, `tasklist`, `Get-Process`, checked below git and test/lint/build — real work wins a compound like `git status; Get-Process` (review finding: these used to live in row 5's high-priority rule, so that compound fell to wait/poll instead of git) |
 | 10 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
-| 11 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
-| 12 | script run (Slice 15) | a bare interpreter run (`python[^\s‣]*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start — below test/lint/build, git, screenshot/image, edit **and read** (all of which win first: `python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot). Moved below edit/read after a review finding (real data): a compound Bash call mixing a `python - <<EOF … EOF` heredoc segment with a real edit/read segment (e.g. a `cat`/`sed -i` elsewhere in the same call) used to classify as `script run` — `.find()` over `ACTIVITY_RULES` picks the first *rule* with a match anywhere in the subject, not the first *segment* in the command, and `script run` ran before edit/read. Measured: read 32.1%→27.4%, edit 12.2%→9.6%, `script run` 13.6% instead of the ≈6.4% the table above expects (driven by ≈503 read + ≈284 edit calls, mostly `python - <<EOF` scripts). With `script run` last, it only ever claims turns edit/read didn't already recognize — i.e. it only takes share from `other`, as designed |
+| 11 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` — **only when reached directly** (a new top-level command: start of string, or after `;`/`&&`/`\|\|`/newline/`(`). A reader reached only by piping another command's output into it (`python x.py 2>&1 \| tail -20`) does NOT count as read (BLOCKER fix, re-review finding): `markCommands()` marks a `\|`-opened boundary with a distinct marker (`CMD_PIPE`, vs. plain `CMD` for every other boundary) and this rule's `READERS` alternative matches only the plain marker, so `\| tail`/`\| head`/`\| grep`/`\| sort`/`\| wc`/`\| less` filters fall through to whatever rule the piped-FROM command matches (usually `script run`, below). Every other rule still matches through either marker (`ANY_CMD`), so e.g. `cat file \| git apply` is still `git` — only `read`'s READERS branch is narrowed. `ls; python x.py` (semicolon, not pipe) is unaffected and still reads as `read`. |
+| 12 | script run (Slice 15) | a bare interpreter run (`python[^\s‣‥]*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start (`CMD` or `CMD_PIPE`) — below test/lint/build, git, screenshot/image, edit **and read** (all of which win first: `python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot). Moved below edit/read after a review finding (real data): a compound Bash call mixing a `python - <<EOF … EOF` heredoc segment with a real edit/read segment (e.g. a `cat`/`sed -i` elsewhere in the same call) used to classify as `script run` — `.find()` over `ACTIVITY_RULES` picks the first *rule* with a match anywhere in the subject, not the first *segment* in the command, and `script run` ran before edit/read. With `script run` last, it only ever claims turns edit/read didn't already recognize — i.e. it takes share from `other`, plus (after the `CMD_PIPE` fix above) the false `read` share that piped script re-runs (`python x.py \| tail`) used to get. **Measured** (`--all --days 3650`, real local history, after both fixes): read 29.3%, script run 16.0%, edit 15.2%, test/lint/build 13.6%, git 10.5%, reply 7.0%, wait/poll 2.3%, other 0.5% — `other` stays a small residual, as designed. |
 | – | other | no rule matched at all |
 | – | reply (Slice 15) | the turn made no tool call (final answer, plan, question to the user) |
 
@@ -734,7 +740,7 @@ Decisions not fixed by design.md (judgment calls):
   re-runs and harness bookkeeping wearing a single "uncategorized" label. `script run` sits
   below test/lint/build, git, screenshot/image, edit and read in `ACTIVITY_RULES` (checked
   above it, they win — see table row 12 above for the edit/read review finding); its
-  file-extension alternative is written `[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`,
+  file-extension alternative is written `[^\s${CMD}${CMD_PIPE}]*\.(?:m?js|py|sh|ps1)\b`,
   not `\S+\.(?:m?js|py|sh|ps1)\b` — the latter, anchored at every `CMD` boundary (e.g. every
   `(` of 50k nested parens, none of them whitespace), backtracks per anchor across the rest
   of the string, O(n²) or worse (Slice 30's exact bug class); excluding `CMD` from the
@@ -742,7 +748,7 @@ Decisions not fixed by design.md (judgment calls):
   above. Its bare-interpreter alternative had the same flaw for `python`: `python\S*` is
   unbounded, so many adjacent `‣python` command starts with no whitespace between them (e.g.
   40k reps) forced one giant greedy match that then backtracked a char at a time hunting for
-  the trailing `(?: |$)` — O(n²), ≈21s measured. Fixed to `python[^\s${CMD}]*`, same bound as
+  the trailing `(?: |$)` — O(n²), ≈21s measured. Fixed to `python[^\s${CMD}${CMD_PIPE}]*`, same bound as
   the file-extension alternative above (review finding, re-tune pass). A sibling, still-open
   instance of the identical flaw lives in `SHOT_EXEC` (the `screenshot/image` row above,
   which is checked *before* `script run` and so masks this one on the same adversarial
@@ -778,7 +784,12 @@ of demo-proj spend, screenshots ≈ 2.6%. Measured with the finished script (dem
   alone): all-history 0.28%, demo-proj 0.76%, token-audit 0.66% — comfortably under the
   "~1%" target on every cut, on both projects. The rest of the old `other` moved to
   `reply` (≈7–10%), `script run` (≈2–14% depending on project), `harness` (≈1–5%) and a
-  small amount into `wait/poll`'s two new `POLLERS` patterns.
+  small amount into `wait/poll`'s two new `BUSY_POLLERS` patterns. Re-measured after the
+  `CMD_PIPE` read/script-run fix above (`--all --days 3650`, all-history real data, whole
+  local history, no `--project` filter): `other` 0.48%, `read` 29.3%, `script run` 16.0%,
+  `edit` 15.2% — `other` stays comfortably under 1%; the pipe fix moved a further slice
+  of turns from `read` into `script run` (piped script re-runs), on top of the `other` →
+  `script run`/`reply`/`harness` split above.
 
 ### Cost by activity — command key
 

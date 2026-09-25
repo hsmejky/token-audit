@@ -261,6 +261,18 @@ function hashHeredocBodies(s, keep) {
 // run, `grep "a|git"` is not git, `uv run pytest | tail` is a test run.
 // No match → ACTIVITY_OTHER.
 const CMD = '‣';
+// Slice 15 fix (review, real data, BLOCKER): a command boundary opened by a bare `|`
+// (as opposed to `;`, `&&`, `||`, newline or `(`) gets this marker instead of CMD, so
+// the read rule's READERS alt (below) can tell "ls" (a command) from "| tail" (a filter
+// piped onto some other command's output) — same character class otherwise, so every
+// OTHER rule (git, test/lint/build, script run, …) still matches through ANY_CMD and
+// behaves exactly as if pipes and other separators were the same marker.
+const CMD_PIPE = '‥';
+const ANY_CMD = `[${CMD}${CMD_PIPE}]`;
+// The two marker chars, for use *inside* an existing `[^...]` exclusion class (a bare-word
+// alternative like SCRIPT_INTERP/SCRIPT_FILE/SHOT_EXEC/SHOT_TARGET/RUNNERS below) — not a
+// class of its own, so no surrounding `[...]`.
+const NOT_CMD = String.raw`${CMD}${CMD_PIPE}`;
 // Interpreter options allowed before `-m` (numbers already N'd by commandKey):
 // `-X val` / `-W val` (take a value; the value can't itself start with `-`,
 // so `-x -m` is never swallowed as `-X`'s value — it falls through to the
@@ -310,18 +322,19 @@ const HARNESS_TOOLS = String.raw`Skill|ToolSearch|AskUserQuestion|TaskStop|TaskC
 // `python[^\s CMD]*`, not `python\S*`: an unbounded `\S*` crosses CMD markers into the
 // next command, so 40k chained `${CMD}python` segments with no whitespace between them
 // force one giant \S* match that then backtracks one char at a time hunting for
-// `(?: |$)` — O(n^2), ~21s on real data. Bounding the class at CMD stops each attempt
-// at the very next command boundary, same fix as SCRIPT_FILE above.
-const SCRIPT_INTERP = String.raw`python[^\s${CMD}]*|py|node|deno|bun|tsx|ts-node|sh|bash|pwsh|powershell`;
-// Bare-file alternative's target, bounded like SHOT_TARGET above: `[^\s${CMD}]*`, not
-// `\S+` — a `\S+` anchored at every CMD (e.g. every `(` of 50k nested parens, none of
+// `(?: |$)` — O(n^2), ~21s on real data. Bounding the class at CMD (both marker chars,
+// CMD and CMD_PIPE — Slice 15 fix, see their definitions above) stops each attempt at
+// the very next command boundary, same fix as SCRIPT_FILE above.
+const SCRIPT_INTERP = String.raw`python[^\s${NOT_CMD}]*|py|node|deno|bun|tsx|ts-node|sh|bash|pwsh|powershell`;
+// Bare-file alternative's target, bounded like SHOT_TARGET above: `[^\s${NOT_CMD}]*`,
+// not `\S+` — a `\S+` anchored at every CMD (e.g. every `(` of 50k nested parens, none of
 // them whitespace) backtracks per anchor across the rest of the string, O(n^2)/worse;
-// excluding CMD too stops each attempt at the very next command boundary.
-const SCRIPT_FILE = String.raw`[^\s${CMD}]*\.(?:m?js|py|sh|ps1)\b`;
+// excluding both marker chars too stops each attempt at the very next command boundary.
+const SCRIPT_FILE = String.raw`[^\s${NOT_CMD}]*\.(?:m?js|py|sh|ps1)\b`;
 // `-{1,2}[\w]…`, not `-{1,2}[\w-]…`: a flag's leading dashes and its name must not both
 // be able to absorb `-`, or a repeated `--a --a --a …` has many ways to split the same
 // run of dashes between the two and the engine tries them all (exponential; Slice 30).
-const RUNNERS = String.raw`(?:pnpm|npm|yarn|bun)(?: -{1,2}\w[\w-]*(?:[ =][^\s${CMD}-]\S*)?)*(?: run| exec)? ` +
+const RUNNERS = String.raw`(?:pnpm|npm|yarn|bun)(?: -{1,2}\w[\w-]*(?:[ =][^\s${NOT_CMD}-]\S*)?)*(?: run| exec)? ` +
   String.raw`(?:test|lint|build|typecheck|vitest|jest|eslint|prettier|tsc|playwright test)`;
 const CHECKERS = String.raw`vitest|jest|pytest|unittest|ruff|mypy|eslint|prettier|tsc|playwright test|` +
   String.raw`node --test|make|cargo (?:test|build|check|clippy|nextest)|go (?:test|build|vet)`;
@@ -332,33 +345,41 @@ const IMAGE = String.raw`^Read .*\.(?:png|jpe?g|gif|webp|bmp)$`;
 // linear even over a long non-matching command — the old `[^CMD]*?` scan
 // overlapped with the target's own `[^\s CMD]*` char class, which meant
 // O(n^2) backtracking on e.g. `node ` + 200k non-matching chars.
-const SHOT_EXEC = String.raw`(?:node|python\S*|bun|deno|tsx|ts-node|bash|sh|pwsh)(?:\s+[^\s${CMD}]+)*?\s+`;
-const SHOT_TARGET = String.raw`[^\s${CMD}]*(?:screenshot[\w.-]*\.(?:m?js|ts|py|sh)\b|\.screenshot\()`;
-const SHOT_RUN = String.raw`${CMD}(?:${SHOT_EXEC})?${SHOT_TARGET}`;
+const SHOT_EXEC = String.raw`(?:node|python\S*|bun|deno|tsx|ts-node|bash|sh|pwsh)(?:\s+[^\s${NOT_CMD}]+)*?\s+`;
+const SHOT_TARGET = String.raw`[^\s${NOT_CMD}]*(?:screenshot[\w.-]*\.(?:m?js|ts|py|sh)\b|\.screenshot\()`;
+const SHOT_RUN = String.raw`${ANY_CMD}(?:${SHOT_EXEC})?${SHOT_TARGET}`;
 const rx = (strings, ...vals) => new RegExp(String.raw(strings, ...vals), 'i');
 const ACTIVITY_RULES = [
   [rx`^(?:Agent|Task|SendMessage) `, 'agent spawn'],
   [rx`^(?:${HARNESS_TOOLS}) `, 'harness'],
   [rx`^(?:WebFetch|WebSearch) `, 'web'],
   [rx`${IMAGE}|^\S*screenshot\S* |${SHOT_RUN}`, 'screenshot/image'],
-  [rx`^(?:Monitor|TaskOutput|BashOutput) |${CMD}(?:${POLLERS})\b|check-runs|actions/runs`, 'wait/poll'],
-  [rx`api\.github\.com|${CMD}gh `, 'github'],
-  [rx`${CMD}(?:${RUNNERS}|${CHECKERS})\b`, 'test/lint/build'],
-  [rx`${CMD}git\b`, 'git'],
-  [rx`${CMD}(?:${BUSY_POLLERS})\b`, 'wait/poll'],
-  [rx`^(?:Edit|Write|MultiEdit|NotebookEdit) |${CMD}(?:sed -i|cat >|tee )`, 'edit'],
+  [rx`^(?:Monitor|TaskOutput|BashOutput) |${ANY_CMD}(?:${POLLERS})\b|check-runs|actions/runs`, 'wait/poll'],
+  [rx`api\.github\.com|${ANY_CMD}gh `, 'github'],
+  [rx`${ANY_CMD}(?:${RUNNERS}|${CHECKERS})\b`, 'test/lint/build'],
+  [rx`${ANY_CMD}git\b`, 'git'],
+  [rx`${ANY_CMD}(?:${BUSY_POLLERS})\b`, 'wait/poll'],
+  [rx`^(?:Edit|Write|MultiEdit|NotebookEdit) |${ANY_CMD}(?:sed -i|cat >|tee )`, 'edit'],
+  // Slice 15 fix (review, real data, BLOCKER): READERS uses the strict CMD marker, not
+  // ANY_CMD — a reader word reached only via a `|` filter (`… | tail -20`) is a filter
+  // on some other command's output, not a read of its own, so it must NOT count as
+  // `read`; that CMD_PIPE-marked occurrence simply doesn't match this branch and falls
+  // through to `script run` (or whatever the piped-from command is). `ls; python x.py`
+  // still stays `read`: `;` keeps the plain CMD marker, unaffected by this change.
   [rx`^(?:Read|Grep|Glob) |${CMD}(?:${READERS})\b`, 'read'],
   // Slice 15 fix (review, real data): `script run` below edit/read, not above. A
   // `python - <<EOF … EOF` heredoc editing a file, or `python -c "…"` reading one,
   // is edit/read work, not "run a script" — but SCRIPT_INTERP's bare `python[^\s CMD]*`
   // also matches the interpreter token at the front of those, so when this rule ran
-  // BEFORE edit/read it stole those turns: on real data, edit 12.2%->9.6%, read
-  // 32.1%->27.4%, script run 13.6% (vs. ~6.4% expected from the Slice 15 proposal),
-  // driven almost entirely by 503 `python - <<EOF` read calls + 284 edit calls. Moving
-  // this rule after edit/read means it only claims turns edit/read didn't already
-  // recognize (e.g. `python foo.py`, `node x.mjs` with no heredoc/`-c` payload) —
-  // i.e. `script run` now only takes share from `other`, matching the proposal.
-  [rx`${CMD}(?:${SCRIPT_INTERP})(?: |$)|${CMD}${SCRIPT_FILE}`, 'script run'],
+  // BEFORE edit/read it stole those turns. Moving this rule after edit/read means it
+  // only claims turns edit/read didn't already recognize (e.g. `python foo.py`,
+  // `node x.mjs` with no heredoc/`-c` payload, or a piped `python foo.py | tail -20`,
+  // now that READERS above no longer steals the `tail` half of that pipeline) — i.e.
+  // `script run` only takes share from `other` (and, after the CMD_PIPE fix, from the
+  // false `read` share piped script re-runs used to get). Measured (`--all --days
+  // 3650`, real data): read 29.3%, script run 16.0%, edit 15.2%, other 0.5% — see
+  // REFERENCE.md's activity table section.
+  [rx`${ANY_CMD}(?:${SCRIPT_INTERP})(?: |$)|${ANY_CMD}${SCRIPT_FILE}`, 'script run'],
 ];
 const ACTIVITY_OTHER = 'other';
 // A turn with no tool_use at all (final answer, plan, question to the user) — Slice 15
@@ -384,28 +405,36 @@ const WRAP_RE = new RegExp(String.raw`(?:${WRAPPERS}) `, 'iy');
 //     `(?!${CMD})` — it is already a command boundary, so re-marking it would duplicate CMD.
 function markCommands(key) {
   const at = [0];
-  shellScan(key, (i, sep) => at.push(i + sep.length));
+  // Slice 15 fix: remember which marker each boundary gets — CMD_PIPE for a bare `|`,
+  // CMD for every other separator (`;`, `&&`, `||`, newline, `(`) — so a piped-into
+  // filter (`| tail`) is distinguishable from a real new command (`; tail`).
+  const markers = [CMD];
+  shellScan(key, (i, sep) => { at.push(i + sep.length); markers.push(sep === '|' ? CMD_PIPE : CMD); });
   const pieces = [];
   for (let k = 0; k < at.length; k++) {
     const start = at[k];
     const end = k + 1 < at.length ? at[k + 1] : key.length;
     const seg = key.slice(start, end);
-    pieces.push(CMD, k === 0 ? seg : seg.replace(/^\s+/, ''));
+    pieces.push(markers[k], k === 0 ? seg : seg.replace(/^\s+/, ''));
   }
   const s = pieces.join('');
 
   const out = [];
   let i = 0;
   while (i < s.length) {
-    const mark = s.indexOf(CMD, i);
+    // Two literal marker chars, not a regex scan — same O(n) shape as the old
+    // single-marker indexOf, no per-iteration slicing.
+    const a = s.indexOf(CMD, i), b = s.indexOf(CMD_PIPE, i);
+    const mark = a < 0 ? b : b < 0 ? a : Math.min(a, b);
     if (mark < 0) { out.push(s.slice(i)); break; }
-    out.push(s.slice(i, mark), CMD);
+    const markChar = s[mark];
+    out.push(s.slice(i, mark), markChar);
     i = mark + 1;
     for (;;) {
       WRAP_RE.lastIndex = i;
-      const m = WRAP_RE.exec(s);
-      if (!m || s[WRAP_RE.lastIndex] === CMD) break;
-      out.push(m[0], CMD);
+      const wm = WRAP_RE.exec(s);
+      if (!wm || s[WRAP_RE.lastIndex] === CMD || s[WRAP_RE.lastIndex] === CMD_PIPE) break;
+      out.push(wm[0], CMD);
       i = WRAP_RE.lastIndex;
     }
   }
@@ -1901,10 +1930,13 @@ async function main() {
   const cur = showSessions(summarize(curRows));
   const prev = showSessions(summarize(rows.filter(r => r.ts >= prevFrom && r.ts < curFrom)));
   const all = summarize(rows);
-  // ALL-TIME (summary line + --json `all`) is main sessions only, same population as
-  // SESSIONS (all.mainSessions) — see the ALL-TIME line below for why this isn't just
-  // all.cost/all.msgs.
-  const allMainCost = all.mainSessions.reduce((a, s) => a + s.cost, 0);
+  // ALL-TIME (summary line + --json `all`) mixes two populations on purpose (Slice 15
+  // HITL, re-review decision): `cost` is all.cost — every row incl. subagents, over all
+  // history — so the invariant SPEND (cur.cost, which also includes subagents) ≤
+  // ALL-TIME cost always holds; `sessions`/`msgs` stay main-sessions-only, the same
+  // population SESSIONS' count/median/p90 uses, so "N sessions" never counts a subagent
+  // as a session. Don't swap these: main-only cost would let a window's subagent spend
+  // exceed the all-time total; all-inclusive sessions/msgs would no longer match SESSIONS.
   const allMainMsgs = all.mainSessions.reduce((a, s) => a + s.msgs, 0);
   // Windowed the same as SPEND (cur), not all-time — otherwise UNPRICED prints
   // all-history totals under a header that says "this window".
@@ -1929,10 +1961,11 @@ async function main() {
     // redacted/summarized fields).
     const trim = ({ mainSessions, ...s }) => ({ ...s, sessions: s.sessions.slice(0, TOP) });
     console.log(JSON.stringify({ windowDays: DAYS, scope, cur: trim(cur), prev: trim(prev),
-      // main sessions only (allMainCost/allMainMsgs/all.mainSessions.length) — matches
-      // the ALL-TIME summary line, not all.cost/all.msgs/all.sessions (those include
-      // subagents; still used internally by cur/prev/detail, not exposed here).
-      all: { cost: allMainCost, msgs: allMainMsgs, sessions: all.mainSessions.length },
+      // Matches the ALL-TIME summary line: `cost` is all-time spend incl. subagents
+      // (all.cost); `msgs`/`sessions` count main sessions only (all.mainSessions), not
+      // all.msgs/all.sessions (raw msgs/sessions internally used by cur/prev/detail
+      // include subagents and are intentionally not exposed here).
+      all: { cost: all.cost, msgs: allMainMsgs, sessions: all.mainSessions.length },
       weeks: weeks(rows), config: cfg, flags: fl, securityFlags: secFl, unpriced,
       ...(det ? { detail: det } : {}) }, null, 2));
     return;
@@ -1974,11 +2007,10 @@ async function main() {
     // LONG_AGENT's / DETAIL's "Subagent distribution" territory.
     `SESSIONS     ${cur.mainSessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
       `≥${LONG_SESSION_TURNS} msgs: ${cur.mainSessions.filter(s => s.msgs >= LONG_SESSION_TURNS).length}`,
-    // Slice 15 HITL: ALL-TIME counts main sessions only (all.mainSessions), same
-    // population as SESSIONS above — all.cost/all.msgs/all.sessions include subagents
-    // (needed elsewhere: DETAIL's WORK UNITS, LONG_AGENT spans), so cost/messages here
-    // are re-summed over main sessions rather than reusing those all-history totals.
-    `ALL-TIME     ${money(allMainCost)} over ${all.mainSessions.length} sessions, ${allMainMsgs} messages`,
+    // Slice 15 HITL (re-review decision): cost is all-time incl. subagents (all.cost,
+    // so SPEND ≤ ALL-TIME always holds); sessions/messages stay main-only, matching
+    // SESSIONS above (all.mainSessions) — see the comment where allMainMsgs is built.
+    `ALL-TIME     ${money(all.cost)} over ${all.mainSessions.length} sessions, ${allMainMsgs} messages`,
     // Slice 28 (design.md Q3, HITL decision): TOP SESSIONS dropped from the summary —
     // it overlapped WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
     // overrun sources on real --all data. Still in --json as cur.sessions (trimmed to

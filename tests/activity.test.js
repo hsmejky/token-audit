@@ -207,7 +207,9 @@ test('activityCategory: one example per category, first matching rule wins', () 
     // the high-priority wait/poll rule, above git) — git is the real work here, not a wait.
     [sh('git status; Get-Process'), 'git'],
     [sh('git status && tasklist'), 'git'],
-    // ...but standalone (no git alongside), the busy-poll still wins over test/lint/build etc.
+    // ...but standalone (nothing higher-priority alongside), the busy-poll rule fires on
+    // its own — it sits below git/test-lint-build in ACTIVITY_RULES, so it only wins when
+    // nothing above it matches, not "over" them.
     [sh('Get-Process'), 'wait/poll'],
     [sh('tasklist'), 'wait/poll'],
     [['Monitor', { command: 'x' }], 'wait/poll'],
@@ -243,6 +245,15 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [sh('python - <<\'EOF\'\nprint(1)\nEOF\ncat out.py'), 'read'],
     // …but a bare script run with no edit/read segment alongside still wins.
     [sh('python x.py'), 'script run'],
+    // BLOCKER fix (re-review, real data): a piped filter (tail/head/grep/sort/wc/less…)
+    // attached to a script run must not steal the turn into `read` — `markCommands()`
+    // marks a `|`-opened boundary with CMD_PIPE (not CMD), and READERS only matches the
+    // plain CMD marker, so these piped filters fall through to `script run` instead.
+    [sh('python x.py 2>&1 | tail -20'), 'script run'],
+    [sh('node build.mjs | head -30'), 'script run'],
+    // `;` (not `|`) keeps the plain CMD marker, so a `;`-chained read stays `read` even
+    // with a script run alongside — accepted (user decision), unlike the piped case above.
+    [sh('ls; python x.py'), 'read'],
     [['AskUserQuestion', {}], 'harness'],
     // runners behind wrappers; the runner outranks trailing pipe helpers
     [sh('python -m pytest tests/ -q 2>&1 | tail -20'), 'test/lint/build'],
