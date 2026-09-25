@@ -605,14 +605,14 @@ not duplicated here.
 > **Supersedes the pre-Slice-2 baseline.** The first full measurement (2026-08-04 →
 > 2026-09-15, 283 sessions, 63 910 transcript lines) counted every transcript line as a
 > message; one API response is written as several lines (thinking / text / tool_use)
-> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.8× (all-time
-> recount on this machine when the dedupe fix landed, Slice 2, 2026-09-25: 118 574 lines →
-> 63 083 turns, $24.1k → $12.9k deduped; the rise to $13 546 above is newer history, not a
-> method change).
+> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.8×.
+> All-time recount on this machine when the dedupe fix landed, Slice 2, 2026-09-25:
+> 118 574 lines → 63 083 turns, $24.1k → $12.9k deduped; the rise to $13 546 above is
+> newer history, not a method change.
 > The old baseline reported 86.5 % Opus share,
 > 79.6 % / 20.4 % main/subagent split, sessions ≥ 250 msgs at 57.5 % of spend — do not
 > read a trend into old-baseline vs. this table; the dedupe fix and threshold re-tune
-> (Slice 2) both moved the numbers.
+> (Slices 2 and 15) both moved the numbers.
 
 ## Summary layout (Slice 28)
 
