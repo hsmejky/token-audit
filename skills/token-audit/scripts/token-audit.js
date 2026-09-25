@@ -405,6 +405,10 @@ function config() {
 
 // ------------------------------------------------------------------- flags
 const DAY = 86400e3;
+// LONG_AGENT thresholds (design.md Q5) — provisional, Slice 15 re-tunes both
+// on real data. Named constants so re-tuning is a one-line change.
+const LONG_AGENT_TURNS = 150; // "over N turns" -> strictly greater than N
+const LONG_AGENT_CTX = 300e3; // "peak context > 300k" -> strictly greater than
 function flags(cur, prev, cfg, span) {
   const out = [];
   const add = (id, text) => out.push({ id, text });
@@ -418,6 +422,16 @@ function flags(cur, prev, cfg, span) {
   const long = cur.sessions.filter(s => s.msgs >= 250);
   if (long.length) {
     add('LONG_SESSION', `${long.length} session(s) ≥250 msgs = ${(100 * cur.longShare).toFixed(0)}% of spend`);
+  }
+  // Subagents over LONG_AGENT_TURNS turns or with a peak context over
+  // LONG_AGENT_CTX — the main lever design.md Q5 identifies. Share is of
+  // this window's total spend (cur.cost), same meaning as LONG_SESSION's share.
+  const longAgents = cur.sessions.filter(s =>
+    s.isSub && (s.msgs > LONG_AGENT_TURNS || s.ctxMax > LONG_AGENT_CTX));
+  if (longAgents.length) {
+    const share = cur.cost ? longAgents.reduce((a, s) => a + s.cost, 0) / cur.cost : 0;
+    add('LONG_AGENT', `${longAgents.length} subagent(s) over ${LONG_AGENT_TURNS} turns or ` +
+      `${(LONG_AGENT_CTX / 1e3).toFixed(0)}k peak ctx = ${(100 * share).toFixed(0)}% of spend`);
   }
   if (cur.avgCtx > 150e3) {
     add('BIG_CTX', `avg context/message ${(cur.avgCtx / 1e3).toFixed(0)}k (threshold 150k)`);

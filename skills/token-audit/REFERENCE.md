@@ -92,6 +92,45 @@ session costs ~400k of context; the same review in a fresh session with the md l
 costs ~20k — 20× cheaper, and more objective, because it cannot see its own earlier
 reasoning.
 
+### `LONG_AGENT` — subagents over 150 turns or 300k peak context
+
+A subagent is just another session — the same "context re-sent every turn" mechanism as
+`MULTIDAY`/`LONG_SESSION` applies to it too, but a fat implementer subagent is easy to miss
+because it lives inside a work unit, not at the top of TOP SESSIONS. The script prints how
+many subagents cross either threshold and their combined share of window spend. Thresholds
+(`LONG_AGENT_TURNS` = 150, `LONG_AGENT_CTX` = 300k, named constants in the script) are
+provisional — Slice 15 re-tunes both on real data.
+
+**Do:**
+- Give the agent a hard `maxTurns` in its `.claude/agents/*.md` frontmatter. A limit hit
+  returns a partial result instead of silently running the context up forever.
+- One sub-task per agent → commit → short report → stop. Hand off through git (commits +
+  report), not through carried conversation context.
+- Send review findings to a **fresh** fix agent, never `SendMessage` back into the fat
+  implementer — a fresh agent re-reads the diff instead of re-walking its own history.
+- After `maxTurns` is hit, start a **new** agent with the report plus `git log`, rather than
+  resuming — resuming carries the full prior history straight back in.
+
+### `LONG_AGENT` — judgment calls
+
+design.md Q5 says "over N turns or peak context > 300k" but leaves three details unstated;
+decided at implementation time (Slice 10):
+
+**Decided**: both comparisons are strict `>` (151 turns fires, 150 does not; 300 001 ctx fires,
+300 000 does not) — "over N" and "> 300k" both read as strictly-greater in the design text, and
+this matches how every other turn-count flag in the script (`LONG_SESSION` uses `>=`, chosen
+there instead because "250" was stated as the threshold itself, not "over 250") is phrased in
+its own source.
+
+**Decided**: "share of spend" is the flagged subagents' combined cost as a fraction of the
+**current window's total spend** (`cur.cost`, main + subagent), not just the subagent chain's
+own total — same denominator `LONG_SESSION` uses for `longShare`, so the two flags read the
+same way ("X% of everything spent this window").
+
+**Decided**: `LONG_AGENT` is checked in `flags()` immediately after `LONG_SESSION`, and its
+REFERENCE entry sits in the same position — both are "a session ran too long" flags, one for
+main sessions, one for subagents, so they read together.
+
 ### `BIG_CTX` — average context per message > 150k
 
 Threshold, not a cliff: nothing bills extra, but it means most turns are dragging
