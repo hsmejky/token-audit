@@ -79,15 +79,15 @@ every run just from these, drowning out a real new-model warning. A `<synthetic>
 with non-zero usage (unexpected, but not ruled out) is not excluded — it still goes
 through the normal UNPRICED + warning path below.
 
-The text report lists the `UNPRICED` models (at most 3 rows + `… +N more`, Slice 28 cap)
-followed by one `WARNING` line naming the unpriced model(s) (up to a 120-char budget; once
-that's used up it names as many as fit then points at "see rows above / --json" for the rest,
-Slice 28 review) and saying to add each price to `PRICES` + this table (`--json` lists every
-model and doesn't need a separate field — the model already being listed under `unpriced` is
-the signal). By construction every `UNPRICED` entry is a model `rateFor` doesn't have an exact
-row for, so the warning fires for exactly the same set as the one AC asked to be covered: "every
-model present in real data either matches an exact known row or shows up in the
-UNPRICED list (text: top 3, --json: all)" holds automatically, not by separate bookkeeping.
+The text report prints `UNPRICED` as **one line** (Slice 28, HITL decision D):
+`UNPRICED     <n> model(s) <tokens>M tok: <model>, <model>, +N more (--json) -- add prices to
+PRICES + REFERENCE.md`. It names as many models as fit the 120-char line (each fit to 40
+chars) and ends the list in one `+N more (--json)` marker when they don't all fit; `--json`
+lists every model and doesn't need a separate field — the model already being listed under
+`unpriced` is the signal. By construction every `UNPRICED` entry is a model `rateFor` doesn't
+have an exact row for, so the line covers exactly the set the AC asked for: "every model present
+in real data either matches an exact known row or shows up in the UNPRICED list (text: what
+fits one line, --json: all)" holds automatically, not by separate bookkeeping.
 
 `UNPRICED` is windowed the same as `SPEND` — only rows with `ts >= curFrom` (the
 `--days` window) are counted, not all-time. It used to ignore `--days` entirely and
@@ -98,11 +98,35 @@ which misrepresented an all-time total as this-window activity.
 
 Each flag the script prints maps to exactly one entry. Quote the script's number.
 
-**Summary cap (Slice 28)**: the summary's `FLAGS` block shows only the top `FLAGS_SUMMARY_CAP`
-(4) flags by dollar amount (a flag with no natural dollar figure — `BIG_CTX`, `PLUGIN_BLOAT`,
-`CLEAN` — sorts last). The rest print under a second `FLAGS (continued, …)` block in DETAIL
-(capped the same way as the MCP/UNPRICED/plugin lists, `… +N more`), or `--json` only under
-`--no-detail`. `--json`'s `flags` array is unranked and always has every flag.
+**Summary cap and ranking (Slice 28, HITL Q-B/Q-C)**: the summary's `FLAGS` block shows the
+top `FLAGS_SUMMARY_CAP` (4) flags in this order (`rankFlags()`):
+
+| tier | flags | sorted by |
+|---|---|---|
+| 0 — extra cost defined | `REGRESSION`, `POLLING`, `BOILERPLATE` | `amount` desc |
+| 1 — design.md Q5's main lever | `LONG_AGENT` | — |
+| 2 — session habits | `LONG_SESSION`, `MULTIDAY` | `amount` desc (tie-break) |
+| 3 — spend mix | `OPUS_HEAVY`, `CONCENTRATION` | `amount` desc (tie-break) |
+| 4 — no dollar figure | `BIG_CTX`, `PLUGIN_BLOAT` | id |
+| 5 | `CLEAN` | — |
+
+Tier 0 holds the flags whose saving design.md defines: `REGRESSION`'s `amount` is the extra
+cost vs the previous window's cost/message, `cur.cost − prev.costPerMsg × cur.msgs` (clamped
+≥ 0); `POLLING`/`BOILERPLATE`'s is the cost of those turns (the saving's upper bound, see
+below). design.md defines no saveable part for `OPUS_HEAVY` (its `amount` is all Opus spend)
+or `CONCENTRATION` (top-5 session spend), nor for `LONG_AGENT`/`LONG_SESSION`/`MULTIDAY`
+(their flagged spend), so those rank by the fixed tier and use `amount` only as a tie-break
+inside a tier — a large Opus bill never outranks a smaller extra-cost flag. Ties fall back to
+the id.
+
+The rest are named on one line, `  … +3 more: PLUGIN_BLOAT, BIG_CTX, MULTIDAY (DETAIL / --json)`
+(`(--json)` under `--no-detail`, or when DETAIL has no room left; the id list ends in `, …` if
+it would pass 120 chars), and print in full under `FLAGS (continued, ranked, N total)` at the
+end of DETAIL. That block counts against DETAIL's 40-line budget: it shows the flags that fit
+(a wrapped flag counts all its lines) and names the rest on a `… +N more: IDs (--json)` line;
+with no room for even one flag it is left out. `--json`'s `flags` array is unranked and always
+has every flag; since Slice 28 each entry also carries `amount` (the dollar figure above, 0 for
+`BIG_CTX`/`PLUGIN_BLOAT`/`CLEAN`) next to `id`/`text`.
 
 ### `MULTIDAY` — sessions spanning more than a day
 
@@ -130,7 +154,7 @@ reasoning.
 
 A subagent is just another session — the same "context re-sent every turn" mechanism as
 `MULTIDAY`/`LONG_SESSION` applies to it too, but a fat implementer subagent is easy to miss
-because it lives inside a work unit, not at the top of TOP SESSIONS. The script prints how
+because it lives inside a work unit, not among the top main sessions. The script prints how
 many subagents cross either threshold and their combined share of window spend. Thresholds
 (`LONG_AGENT_TURNS` = 150, `LONG_AGENT_CTX` = 300k, named constants in the script) are
 provisional, to be re-tuned on real data.
@@ -289,10 +313,10 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   a guarantee for every possible shell construct. Only the printed key is redacted —
   grouping uses the raw key. The key is cut in the middle (`head…tail`) so the line stays
   ≤ 120 chars and both the program and e.g. `…/check-runs` stay visible.
-- **Same redaction on every printed field** (all three layers): the scope and TOP SESSIONS /
-  work-unit / subagent project folders (`C--Users-<user>-<user>-proj` — still tells projects
-  apart), subagent task text, model names (UNPRICED rows and warning, CONFIG `model=` and
-  `effortLevel` per-model entries), plugin and MCP server names, and the stderr errors
+- **Same redaction on every printed field** (all three layers): the scope and session
+  (`--json` `cur.sessions`) / work-unit / subagent project folders (`C--Users-<user>-<user>-proj`
+  — still tells projects apart), subagent task text, model names (UNPRICED line, CONFIG `model=`
+  and `effort=` per-model entries), plugin and MCP server names, and the stderr errors
   (`no transcripts at …`, `no project …`), in the text report and `--json` alike. Grouping,
   session keys and JSON property names stay raw; only the printed copies change.
 - **Heredoc bodies are hashed raw** (commandKey step 1): a poll script re-run verbatim
@@ -406,7 +430,8 @@ long-running feature, one habit of not clearing.
 Habit is sliding back. This is the flag worth acting on even when absolute numbers
 look fine.
 
-**Do:** name the regression explicitly and check the WEEKS table for when it started.
+**Do:** name the regression explicitly and check the `TREND` line (full per-week table:
+`--json`'s `weeks`) for when it started.
 
 ### `OPUS_HEAVY` — Opus > 90 % of spend
 
@@ -489,13 +514,34 @@ Anchor for trend questions. 283 sessions, 63 910 transcript lines, 198 MB.
 | worst single session (14 days open) | 26.4 % of spend |
 | median session length | 61 messages (p90 182, max 1775) |
 
+## Summary layout (Slice 28)
+
+The summary (everything above DETAIL, incl. the blank line before it) stays ≤ 24 lines on
+real data and on the fixture that fires every section at once (`tests/summary-budget.test.js`):
+
+- **SPEND** — the total, then the model families on **one** line (`Opus $… x%   Fable $… y%`,
+  largest first, `+N more (--json)` if they don't fit), then main vs subagents.
+- **UNPRICED** — one line (see "Unknown models" above).
+- **PER MESSAGE / SESSIONS / ALL-TIME / TREND / CONFIG** — one line each. `TREND` spans the
+  whole history: first week → last week cost/message, the % change (`n/a` when the first week
+  cost nothing), and `span N wk (M with data)` — N = calendar weeks from the first to the last
+  week with data, M = weeks that had any rows. With one week of data it prints `week of <date>
+  only` and no change. The full per-week table is `--json`'s `weeks`. CONFIG: see "CONFIG — one
+  line" below.
+- **FLAGS** — top 4 + one `… +N more: IDs` line (see "Summary cap and ranking"); **SECURITY**
+  in full.
+
+TOP SESSIONS is no longer printed (DETAIL's WORK UNITS / TOP SUBAGENTS cover it; `--json`
+keeps `cur.sessions`/`prev.sessions`).
+
 ## DETAIL block
 
 Printed by default **below** the summary (after SECURITY); `--no-detail` turns it off.
 Same data under `detail` in `--json`. Fixed-width, every line ≤ 120 chars, no blank lines
 between sections (the whole block has a line budget: ≤ 40 lines; 36 when every section is
 full). Sections, in order, plus one optional trailing `FLAGS (continued, …)` block (Slice 28)
-when the summary's FLAGS cap (`FLAGS_SUMMARY_CAP`) moved any flags here:
+when the summary's FLAGS cap (`FLAGS_SUMMARY_CAP`) moved any flags here — it gets only the
+lines left of the 40 (`DETAIL_MAX_LINES`), see "Summary cap and ranking" above:
 
 - **TOP 10 WORK UNITS** (this window, parent + subagents): each main (non-subagent) session
   rolled up with the subagents it spawned (`sub.parent === main.sid`), sorted by unit cost desc.
@@ -503,7 +549,7 @@ when the summary's FLAGS cap (`FLAGS_SUMMARY_CAP`) moved any flags here:
   (main + subs), sub % (`subCost / cost`), #ag (subagent count), turns (total msgs across every
   session in the unit — main + all its subagents), peak (largest single context hit by any
   session in the unit), span (full-history first-seen → last-seen across every session in the
-  unit, not clipped to the window — same convention as the per-session span in TOP SESSIONS),
+  unit, not clipped to the window — same convention as the `MULTIDAY` flag's span),
   project. A main session with no subagents still forms its own unit (sub 0%). A subagent whose
   parent main session has no priced turns in this window still rolls up under its parent id as
   an orphan unit (mainCost 0). Span for such an orphan unit only counts the sessions that are
@@ -650,7 +696,7 @@ example: "agent A ran 288 turns — is that normal?"), which only works if it is
 full population, not the 10 rows the reader is already looking at (those would show a distribution
 dominated by the leaderboard itself, converging to roughly the top-10's own median as list size
 shrinks). This mirrors the summary's SESSIONS median/p90, which is likewise computed over all
-sessions, not just TOP SESSIONS. Not yet reconciled against design.md's own text — see "Open
+sessions, not just the top ones. Not yet reconciled against design.md's own text — see "Open
 questions" in design.md.
 
 ### Subagent task text — source
@@ -706,32 +752,45 @@ run only when building the text report, on a `JSON.stringify()` of the
 already-redacted structure at that point — see `showAny()`/`textOf()` in
 token-audit.js.
 
-### CONFIG `effortLevel` line — wraps once per-model settings exist (Slice 20)
+### CONFIG — one line (Slice 28, HITL decision D)
 
-With no `modelSettings` (or one root-only value), `effortLevel=` stays inline on the
-`model=`/`cleanupPeriodDays=` line, as before. Once any `modelSettings.<model>.effortLevel`
-is set, a single `effortLevel=a=x, b=y, c=z, default=w` line runs past 120 chars with as few
-as 3 models — so it moves to its own `effortLevel:` line (with `default=<level>` when the
-root fallback is also set), followed by one indented line per model
-(`    <model>=<level>`), same list style as the `plugins=`/`mcp servers=` rows below it.
+CONFIG prints one ≤ 120-char line, right under `TREND`:
+`CONFIG       model=<model> effort=<root>,<model>:<level>,… plugins=N mcp=N prefix≈N.Nk
+retention=N`.
+
+- `effort=` lists the root `effortLevel` (the default for models without their own entry)
+  first, then each `modelSettings.<model>.effortLevel` as `<model>:<level>` with the `claude-`
+  prefix dropped, comma-separated; `unset` when neither is set. `effort=` is fit first; entries
+  that don't fit end in one `+N` marker. `model=` gets what's left (12–30 chars).
+- `mcp=` (MCP server count) is left out when no server is configured; `prefix≈` is the fixed
+  tokens/request that plugin agent/skill definitions plus MCP tool definitions add.
+- `retention=` (`cleanupPeriodDays`) is left out while unset — SECURITY's `NO_RETENTION`
+  already says so.
+- Per-plugin rows, MCP server names/scopes, agent/skill counts and the separate token
+  estimates are no longer printed (DETAIL has no room left): `--json`'s `config` has all of
+  them. Every value is `show()`n (redacted/sanitized) before and `fit()` at print time
+  (Slice 20/29), so a hostile value can't add a line or pass 120 chars.
+
+Replaces the Slice 20 layout (own `effortLevel:` line plus one `    <model>=<level>` line per
+model, and one row per heavy plugin / MCP server).
 
 ### FLAGS/SECURITY text — wraps instead of truncating (Slice 20)
 
 A flag's `text` can be a fixed advisory message (e.g. `NO_RETENTION`'s "transcripts …
 sit in plaintext indefinitely", 109 chars) that alone exceeds `FLAG_TEXT_WIDTH` (103 —
-`120` minus the 17-char `  <id padded to 14> ` gutter). Unlike TOP SESSIONS/task text,
+`120` minus the 17-char `  <id padded to 14> ` gutter). Unlike task text,
 this is advice, not a label, so it is never cut with `…`; instead it word-wraps onto
 continuation lines indented 17 spaces to align under the first line's text. POLLING and
 BOILERPLATE lines are unaffected — their variable part is already bounded to
 `FLAG_TEXT_WIDTH` by `fitMiddle`/`fitPrefix` before printing.
 
-### MCP servers — CONFIG's `mcp servers=` line
+### MCP servers — CONFIG's `mcp=` field
 
-Slice 14. CONFIG lists the MCP servers configured for the scoped project, tagged
-`user` / `project` / `mcp.json` for which of the 3 sources above declared it. Slice 28:
-at most 3 server rows (one line each) + one `… +N more (full list in --json)` line — the
-same cap used for the UNPRICED models list and the per-plugin rows under `plugins=`;
-`--json` keeps all. No line at all when nothing is configured (keeps the summary short).
+Slice 14. `--json`'s `config.mcpServers` lists the MCP servers configured for the scoped
+project, tagged `user` / `project` / `mcp.json` for which of the 3 sources above declared it.
+Since Slice 28 (HITL decision D) the text report only counts them (`mcp=N` on the one CONFIG
+line, their estimated tool-definition tokens folded into `prefix≈`); no `mcp=` at all when
+nothing is configured.
 Under `--all` (no single scoped project), only `user`-scope servers are listed —
 `project` and `mcp.json` need one project directory to check.
 
