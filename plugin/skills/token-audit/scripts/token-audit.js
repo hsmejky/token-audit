@@ -269,18 +269,25 @@ const CMD = '‣';
 // …), or a `py`-launcher version selector (`-3`, `-3.N`, already N'd to
 // `-N`/`-N.N`). The three alternatives are kept disjoint: the single-letter
 // alt excludes N (it would otherwise also match `-N`, e.g. `-3` → `-N` —
-// that overlap is what made `-3 ` × 24 backtrack exponentially). Deliberately
-// avoids inline regex-modifier groups (a newer syntax for toggling flags
-// like case-insensitivity mid-pattern) — unsupported before Node 23, throws
-// `SyntaxError: Invalid group` on older engines, e.g. Node 22 LTS, crashing
-// the whole script.
-const PY_OPT = String.raw`(?:-[XW] (?!-)\S+|-(?!N)[A-Za-z]|-N(?:\.N)?)`;
+// that overlap is what made `-3 ` × 24 backtrack exponentially) and excludes
+// `m` (the WRAPPERS alt below ends in a mandatory literal ` -m`, so without
+// this exclusion every `-m` in a repeated `-m -m -m …` run could be parsed
+// either as a PY_OPT or as the terminal `-m`, and the engine tried every
+// split — that ambiguity is what made `python -m ` × 10k backtrack
+// exponentially; Slice 30). Deliberately avoids inline regex-modifier groups
+// (a newer syntax for toggling flags like case-insensitivity mid-pattern) —
+// unsupported before Node 23, throws `SyntaxError: Invalid group` on older
+// engines, e.g. Node 22 LTS, crashing the whole script.
+const PY_OPT = String.raw`(?:-[XW] (?!-)\S+|-(?!N|m)[A-Za-z]|-N(?:\.N)?)`;
 const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)*|timeout(?: -\S+)* \S+|` +
   String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)?(?: ${PY_OPT})* -m|py(?: ${PY_OPT})* -m|uv run|poetry run|` +
   String.raw`npx(?: -y| --yes)?|bunx|(?:pnpm|yarn) (?:dlx|exec)|npm exec`;
 // Word lists the rules share (regex alternations).
 const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`;
-const RUNNERS = String.raw`(?:pnpm|npm|yarn|bun)(?: -{1,2}[\w-]+(?:[ =][^\s${CMD}-]\S*)?)*(?: run| exec)? ` +
+// `-{1,2}[\w]…`, not `-{1,2}[\w-]…`: a flag's leading dashes and its name must not both
+// be able to absorb `-`, or a repeated `--a --a --a …` has many ways to split the same
+// run of dashes between the two and the engine tries them all (exponential; Slice 30).
+const RUNNERS = String.raw`(?:pnpm|npm|yarn|bun)(?: -{1,2}\w[\w-]*(?:[ =][^\s${CMD}-]\S*)?)*(?: run| exec)? ` +
   String.raw`(?:test|lint|build|typecheck|vitest|jest|eslint|prettier|tsc|playwright test)`;
 const CHECKERS = String.raw`vitest|jest|pytest|unittest|ruff|mypy|eslint|prettier|tsc|playwright test|` +
   String.raw`node --test|make|cargo (?:test|build|check|clippy|nextest)|go (?:test|build|vet)`;
@@ -308,14 +315,51 @@ const ACTIVITY_RULES = [
 ];
 const ACTIVITY_OTHER = 'other';
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
-const WRAPPED = new RegExp(String.raw`${CMD}(${WRAPPERS}) (?!${CMD})`, 'gi');
-// Key → the same text with CMD before every command start (see above).
+// Sticky (sticks to lastIndex, no scanning forward to find a match) so a chain of wrapper
+// words is consumed word-by-word in markCommands() without slicing the remaining string.
+const WRAP_RE = new RegExp(String.raw`(?:${WRAPPERS}) `, 'iy');
+// Key → the same text with CMD before every command start (see above). Two linear passes:
+//  1. insert CMD at each shellScan() boundary by building an array of pieces and joining
+//     once. The old code did this with a `reduce` that re-sliced the WHOLE string at every
+//     boundary (`t.slice(0, i) + CMD + t.slice(i)`) — O(n) work per boundary, quadratic on
+//     e.g. 50k nested `(…)` (~50k boundaries, ~10 s). Building pieces and joining once is
+//     O(n) total.
+//  2. swallow each wrapper-word chain (`time time … cmd`) in one left-to-right scan with a
+//     sticky regex anchored right after each CMD. The old code was a `.replace(WRAPPED, …)`
+//     fixed-point loop: each pass finds only the FIRST wrapper in a chain (the rest aren't
+//     yet preceded by a fresh CMD), so it re-scanned the whole string once per chained
+//     wrapper word — quadratic on e.g. 8000 chained `time ` (~0.9 s). A wrapper match whose
+//     end already abuts an existing CMD (from step 1, or a shorter alternative the sticky
+//     regex could also have matched) is left unmarked, same as the old lookahead
+//     `(?!${CMD})` — it is already a command boundary, so re-marking it would duplicate CMD.
 function markCommands(key) {
   const at = [0];
   shellScan(key, (i, sep) => at.push(i + sep.length));
-  let s = at.reverse().reduce((t, i) => `${t.slice(0, i)}${CMD}${t.slice(i).trimStart()}`, key);
-  for (let prev; prev !== s;) { prev = s; s = s.replace(WRAPPED, `${CMD}$1 ${CMD}`); }
-  return s;
+  const pieces = [];
+  for (let k = 0; k < at.length; k++) {
+    const start = at[k];
+    const end = k + 1 < at.length ? at[k + 1] : key.length;
+    const seg = key.slice(start, end);
+    pieces.push(CMD, k === 0 ? seg : seg.replace(/^\s+/, ''));
+  }
+  const s = pieces.join('');
+
+  const out = [];
+  let i = 0;
+  while (i < s.length) {
+    const mark = s.indexOf(CMD, i);
+    if (mark < 0) { out.push(s.slice(i)); break; }
+    out.push(s.slice(i, mark), CMD);
+    i = mark + 1;
+    for (;;) {
+      WRAP_RE.lastIndex = i;
+      const m = WRAP_RE.exec(s);
+      if (!m || s[WRAP_RE.lastIndex] === CMD) break;
+      out.push(m[0], CMD);
+      i = WRAP_RE.lastIndex;
+    }
+  }
+  return out.join('');
 }
 // One tool_use content part → { id, tool, key } as stored on a turn.
 function toolCall(part) {

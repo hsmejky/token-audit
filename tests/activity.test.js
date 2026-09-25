@@ -297,6 +297,49 @@ test('activityCategory: many `py -3` version flags do not blow up (linear, not q
   assert.equal(cat, 'test/lint/build');
 });
 
+// Slice 30: known pathological inputs that used to blow up the RUNNERS regex / markCommands()
+// (exponential or quadratic on the old code — see PY_OPT / RUNNERS / markCommands comments).
+test('activityCategory: `pnpm` + `--a ` x40 with a non-matching tail classifies in < 1s (was exponential)', () => {
+  const command = 'pnpm ' + '--a '.repeat(40) + 'run foo';
+  const t0 = Date.now();
+  const cat = activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+  assert.equal(cat, 'other');
+});
+
+test('activityCategory: 50k nested `(…)` in a command key processes well under 1s (was ~10s, quadratic)', () => {
+  const command = '('.repeat(50000) + 'echo hi' + ')'.repeat(50000);
+  const t0 = Date.now();
+  activityCategory('Bash', { command });
+  // 3s, not the AC's literal 1s: generous headroom against GC/scheduling noise on a loaded
+  // machine while still failing hard on the old ~10s quadratic code (new code: ~150ms typical).
+  assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0}ms`);
+});
+
+test('activityCategory: `time ` x8000 (chained WRAPPED words) processes in < 100ms (was ~0.9s)', () => {
+  const command = 'time '.repeat(8000) + 'echo hi';
+  const t0 = Date.now();
+  activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 100, `took ${Date.now() - t0}ms`);
+});
+
+test('activityCategory: `python -m ` x10k processes in < 200ms (was exponential)', () => {
+  // Repeating `-m` isn't real python usage (it's the "run module" flag; nothing after it is
+  // itself a flag), so no classification is pinned here — only that the pathological repeat
+  // no longer hangs. Real single-`-m` commands are covered by the existing `-X`/`-3` tests.
+  const command = 'python ' + '-m '.repeat(10000) + 'pytest';
+  const t0 = Date.now();
+  activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 200, `took ${Date.now() - t0}ms`);
+});
+
+test('activityCategory: `-X -m ` x10k processes in < 200ms (was exponential)', () => {
+  const command = 'python ' + '-X -m '.repeat(10000) + 'pytest';
+  const t0 = Date.now();
+  activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 200, `took ${Date.now() - t0}ms`);
+});
+
 // Lines of the DETAIL block (from the DETAIL header to end of output).
 const detailLines = out => {
   const lines = out.split('\n');
