@@ -230,8 +230,10 @@ function hashHeredocBodies(s, keep) {
 const CMD = '‣';
 // Interpreter options allowed before `-m` (numbers already N'd by commandKey):
 // `-X val` / `-W val` (take a value), any other single-letter flag (`-u`, `-B`,
-// `-O`, …), or a `py`-launcher version selector (`-3`, `-3.N`).
-const PY_OPT = String.raw`(?:-X \S+|-W \S+|-[A-Za-z]|-N(?:\.N)?)`;
+// `-O`, …), or a `py`-launcher version selector (`-3`, `-3.N`). The two flag
+// alternatives are kept disjoint (single-letter excludes X/W) so they never
+// overlap on `-X` — without that, `-X -X -X …` backtracks exponentially.
+const PY_OPT = String.raw`(?:-X \S+|-W \S+|-(?!X|W)[A-Za-z]|-N(?:\.N)?)`;
 const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)*|timeout(?: -\S+)* \S+|` +
   String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)?(?: ${PY_OPT})* -m|py(?: ${PY_OPT})* -m|uv run|poetry run|` +
   String.raw`npx(?: -y| --yes)?|bunx|(?:pnpm|yarn) (?:dlx|exec)|npm exec`;

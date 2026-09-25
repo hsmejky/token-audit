@@ -265,6 +265,22 @@ test('activityCategory: a long non-matching command after `node ` does not blow 
   assert.equal(cat, 'other');
 });
 
+test('activityCategory: many `-X` interpreter options before -m do not blow up (linear, not quadratic)', () => {
+  const command = 'python ' + '-X '.repeat(40) + '-m pytest';
+  const t0 = Date.now();
+  const cat = activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 1000, 'should classify 40 `-X` flags in well under 1s');
+  assert.equal(cat, 'test/lint/build');
+});
+
+test('activityCategory: many `-X val` interpreter options before -m do not blow up (linear)', () => {
+  const command = 'python ' + '-X val '.repeat(40) + '-m pytest';
+  const t0 = Date.now();
+  const cat = activityCategory('Bash', { command });
+  assert.ok(Date.now() - t0 < 1000, 'should classify 40 `-X val` flags in well under 1s');
+  assert.equal(cat, 'test/lint/build');
+});
+
 // Lines of the DETAIL block (from the DETAIL header to end of output).
 const detailLines = out => {
   const lines = out.split('\n');
