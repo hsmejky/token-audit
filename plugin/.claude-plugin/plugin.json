@@ -6,6 +6,7 @@
   "author": {
     "name": "Jan Smejkal"
   },
+  "license": "MIT",
   "skills": [
     "./skills/token-audit"
   ]
