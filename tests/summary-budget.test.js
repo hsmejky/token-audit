@@ -203,3 +203,40 @@ test('CONFIG: 5 plugins over the 200-tok row threshold print 3 rows + one "+2 mo
   assert.equal(moreLine(cfg, 2, '    ').length, 1, cfg.join('\n'));
   assert.equal(audit(dir).config.plugins.length, 5);
 });
+
+// Slice 28 (HITL Q-B): REGRESSION's amount is the extra cost vs the previous
+// window's cost/message: cur.cost - prev.costPerMsg * cur.msgs (clamped >= 0).
+test('--json flags: REGRESSION amount = extra cost vs previous cost/msg', () => {
+  const r = audit(everySection(), '--days', '7');
+  const reg = r.flags.find(x => x.id === 'REGRESSION');
+  const want = Math.max(0, r.cur.cost - r.prev.costPerMsg * r.cur.msgs);
+  assert.ok(Math.abs(reg.amount - want) < 1e-9, `${reg.amount} vs ${want}`);
+  assert.ok(reg.amount < r.cur.cost, 'extra cost, not the whole window cost');
+});
+
+// Slice 28 (HITL Q-B/Q-C): summary shows the top 4 in rank order; the rest are
+// named on one "+N more" line pointing at DETAIL (or --json under --no-detail).
+const flagRows = lines => section(lines, /^FLAGS$/).slice(1).filter(l => /^ {2}[A-Z_]+ /.test(l))
+  .map(l => l.trim().split(/\s+/)[0]);
+test('summary FLAGS: top 4 by rank, "+N more" names the rest (DETAIL / --json vs --json)', () => {
+  const dir = everySection();
+  const r = audit(dir, '--days', '7');
+  const tier0 = r.flags.filter(x => ['REGRESSION', 'POLLING', 'BOILERPLATE'].includes(x.id))
+    .sort((a, b) => b.amount - a.amount).map(x => x.id);
+  const want = [...tier0, 'LONG_AGENT'];
+  const moved = ['LONG_SESSION', 'MULTIDAY', 'OPUS_HEAVY', 'CONCENTRATION', 'BIG_CTX', 'PLUGIN_BLOAT'];
+  const sum = summaryLines(auditText(dir, '--days', '7'));
+  assert.deepEqual(flagRows(sum), want, sum.join('\n'));
+  const more = `  … +6 more: ${moved.join(', ')}`;
+  assert.ok(sum.includes(`${more} (DETAIL / --json)`), sum.join('\n'));
+  const compact = auditText(dir, '--days', '7', '--no-detail').split('\n');
+  assert.ok(compact.includes(`${more} (--json)`), compact.join('\n'));
+});
+
+// Review finding 1 (ff55682): FLAGS (continued) counts against DETAIL's 40 lines.
+test('DETAIL incl. FLAGS (continued) stays <= 40 lines when every section fires', () => {
+  const lines = auditText(everySection(), '--days', '7').replace(/\n$/, '').split('\n');
+  const detail = lines.slice(lines.indexOf('DETAIL'));
+  assert.ok(detail.length <= 40, `DETAIL is ${detail.length} lines:\n${detail.join('\n')}`);
+  assert.ok(detail.some(l => l.startsWith('FLAGS (continued')), detail.join('\n'));
+});

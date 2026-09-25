@@ -1235,10 +1235,11 @@ function boilerplate(rows) {
       cost: g.cost, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions || (a.prefix < b.prefix ? -1 : 1)) };
 }
-// `amount` is the dollar figure each flag represents (0 when a flag has no
-// natural dollar amount, e.g. a ratio/threshold signal) — Slice 28 uses it to
-// rank flags for the summary's top-N cap (see FLAGS_SUMMARY_CAP in main()).
-// It never prints; `text` (unchanged) is still the only thing shown.
+// `amount` is the dollar figure each flag represents, used by rankFlags() for
+// the summary's top-N cap (Slice 28). REGRESSION: extra cost vs the previous
+// window's cost/message; POLLING/BOILERPLATE: cost of those turns (the saving's
+// upper bound, REFERENCE.md); the rest: the flagged spend (0 when a flag has no
+// dollar figure). Not printed in text; --json carries it.
 function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
   const out = [];
   const add = (id, text, amount = 0) => out.push({ id, text, amount });
@@ -1291,8 +1292,9 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
       cur.sessions.slice(0, 5).reduce((a, s) => a + s.cost, 0));
   }
   if (prev && prev.costPerMsg > 0 && cur.costPerMsg > prev.costPerMsg * 1.25) {
+    // amount = extra cost vs the previous window's cost/message (Slice 28 HITL Q-B).
     add('REGRESSION', `cost/message +${(100 * (cur.costPerMsg / prev.costPerMsg - 1)).toFixed(0)}% vs previous window`,
-      cur.cost);
+      Math.max(0, cur.cost - prev.costPerMsg * cur.msgs));
   }
   if (cur.opusShare > 0.9) {
     add('OPUS_HEAVY', `Opus = ${(100 * cur.opusShare).toFixed(0)}% of spend — no model-per-phase split visible`,
@@ -1424,26 +1426,85 @@ function wrapWords(text, width) {
 // across lines (breaking copy-paste) if that guarantee is ever violated, so these two
 // print unmodified whenever they're within budget; wrapWords() only kicks in as a
 // safety net if one somehow arrives too long, same as any other flag.
-function printFlagLine(f) {
-  if ((f.id === 'POLLING' || f.id === 'BOILERPLATE') && [...f.text].length <= FLAG_TEXT_WIDTH) {
-    console.log(`  ${f.id.padEnd(14)} ${f.text}`);
-    return;
-  }
+function flagLines(f) {
+  if ((f.id === 'POLLING' || f.id === 'BOILERPLATE') && [...f.text].length <= FLAG_TEXT_WIDTH)
+    return [`  ${f.id.padEnd(14)} ${f.text}`];
   const lines = wrapWords(f.text, FLAG_TEXT_WIDTH);
-  console.log(`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`);
-  for (let i = 1; i < lines.length; i++) console.log(`${' '.repeat(17)}${lines[i]}`);
+  return [`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`, ...lines.slice(1).map(l => `${' '.repeat(17)}${l}`)];
+}
+function printFlagLine(f) {
+  for (const l of flagLines(f)) console.log(l);
 }
 // Slice 28: a summary list whose length is set by the machine's config/data
-// (unknown models, heavy plugins, MCP servers) prints at most SUMMARY_LIST_CAP
-// rows + one `… +N more` line, so it can't grow the ≤ 24-line summary without
-// bound. --json keeps every entry.
+// prints at most SUMMARY_LIST_CAP rows + one "… +N more" line. --json keeps all.
 const SUMMARY_LIST_CAP = 3;
-// Slice 28 (design.md Q3, HITL decision): FLAGS in the summary keeps only the
-// top FLAGS_SUMMARY_CAP by dollar amount; the rest move to DETAIL (own
-// SUMMARY_LIST_CAP-style cap there) or, with --no-detail, --json only. Tuned so
-// the fixture that fires every section at once (tests/summary-budget.test.js)
-// stays within the summary's 24-line budget.
+// Slice 28 (design.md Q3, HITL): the summary shows the top FLAGS_SUMMARY_CAP
+// flags in rankFlags() order plus one "+N more: IDs" line; the rest continue in
+// DETAIL (inside DETAIL_MAX_LINES) and always in --json.
 const FLAGS_SUMMARY_CAP = 4;
+const DETAIL_MAX_LINES = 40;
+// Slice 28 (design.md Q5, HITL Q-B): rank by extra cost where design.md defines
+// one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE
+// (cost of those turns) share tier 0, by $ — then a fixed priority for flags
+// whose $ is only the flagged spend, $ as tie-break inside a tier: LONG_AGENT
+// (Q5's main lever) > LONG_SESSION, MULTIDAY > OPUS_HEAVY, CONCENTRATION >
+// BIG_CTX, PLUGIN_BLOAT (no $) > CLEAN; id last, for a stable order.
+const FLAG_TIER = { REGRESSION: 0, POLLING: 0, BOILERPLATE: 0, LONG_AGENT: 1, LONG_SESSION: 2, MULTIDAY: 2,
+  OPUS_HEAVY: 3, CONCENTRATION: 3, BIG_CTX: 4, PLUGIN_BLOAT: 4, CLEAN: 5 };
+const flagTier = f => FLAG_TIER[f.id] ?? 4;
+function rankFlags(fl) {
+  return fl.slice().sort((a, b) => flagTier(a) - flagTier(b) || (b.amount || 0) - (a.amount || 0) ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+// One "  … +N more: ID, ID (where)" line; the ID list is cut with ", …" to stay ≤ 120.
+function moreIdsLine(moved, where) {
+  if (!moved.length) return null;
+  const head = `  … +${moved.length} more: `, tail = ` (${where})`;
+  const budget = 120 - [...head].length - [...tail].length;
+  const ids = moved.map(f => f.id);
+  let list = ids.join(', ');
+  if ([...list].length > budget) {
+    const kept = [];
+    for (const id of ids) {
+      if ([...[...kept, id, '…'].join(', ')].length > budget) break;
+      kept.push(id);
+    }
+    list = [...kept, '…'].join(', ');
+  }
+  return head + list + tail;
+}
+const flagsMoreLine = (moved, inDetail) => moreIdsLine(moved, inDetail ? 'DETAIL / --json' : '--json');
+// FLAGS (continued) block for DETAIL, never more than `room` lines (review of
+// ff55682, finding 1: it counts against DETAIL_MAX_LINES). Flags that don't fit
+// are named on a "+N more: IDs (--json)" line; no room for even one flag -> [].
+function continuedFlagLines(moved, room) {
+  const out = [`FLAGS (continued, ranked, ${moved.length} total)`];
+  let shown = 0;
+  for (const f of moved) {
+    const ls = flagLines(f);
+    const need = ls.length + (shown + 1 < moved.length ? 1 : 0);
+    if (out.length + need > room) break;
+    out.push(...ls);
+    shown++;
+  }
+  if (!shown) return [];
+  if (shown < moved.length) out.push(moreIdsLine(moved.slice(shown), '--json'));
+  return out;
+}
+// TREND (Slice 28): one line for the whole history. "span N wk" = calendar weeks
+// from the first to the last week with data; "(M with data)" = weeks with rows.
+function trendLine(wks) {
+  if (!wks.length) return 'TREND        no data';
+  const first = wks[0], last = wks[wks.length - 1];
+  if (wks.length === 1)
+    return `TREND        week of ${first.week} only  ${money(first.costPerMsg)}/msg   full table in --json`;
+  const delta = first.costPerMsg > 0
+    ? `${last.costPerMsg >= first.costPerMsg ? '+' : ''}${(100 * (last.costPerMsg / first.costPerMsg - 1)).toFixed(0)}%`
+    : 'n/a';
+  const span = Math.round((Date.parse(last.week) - Date.parse(first.week)) / (7 * DAY)) + 1;
+  return `TREND        ${first.week} ${money(first.costPerMsg)}/msg → ${last.week} ${money(last.costPerMsg)}/msg ` +
+    `${delta}   span ${span} wk (${wks.length} with data)   full table in --json`;
+}
 function printCapped(items, printRow, indent) {
   for (const it of items.slice(0, SUMMARY_LIST_CAP)) printRow(it);
   if (items.length > SUMMARY_LIST_CAP)
@@ -1784,20 +1845,7 @@ async function main() {
   // --top, unchanged). WEEKS (a full per-week table, unbounded with history length)
   // is replaced by one TREND line spanning all history; --json keeps the full table
   // under `weeks`.
-  {
-    const wks = weeks(rows);
-    if (wks.length) {
-      const first = wks[0], last = wks[wks.length - 1];
-      const delta = (wks.length > 1 && first.costPerMsg > 0)
-        ? `  ${last.costPerMsg >= first.costPerMsg ? '+' : ''}` +
-          `${(100 * (last.costPerMsg / first.costPerMsg - 1)).toFixed(0)}%`
-        : '';
-      console.log(`TREND        ${wks.length} week(s)  ${first.week} ${money(first.costPerMsg)}/msg → ` +
-        `${last.week} ${money(last.costPerMsg)}/msg${delta}   full table in --json`);
-    } else {
-      console.log('TREND        no data');
-    }
-  }
+  console.log(trendLine(weeks(rows)));
   console.log('');
 
   console.log('CONFIG');
@@ -1845,18 +1893,16 @@ async function main() {
   }
   console.log('');
 
-  // Slice 28 (design.md Q3, HITL decision): summary FLAGS is capped to the top
-  // FLAGS_SUMMARY_CAP by dollar amount (flags() attaches `amount`; a flag with no
-  // natural dollar figure sorts last, e.g. BIG_CTX/PLUGIN_BLOAT/CLEAN). The rest
-  // move to DETAIL under their own capped list (DETAIL_FLAGS_CAP), never silently
-  // dropped — --json's `flags` always carries every flag, unranked, unchanged.
+  // Slice 28 (design.md Q3/Q5, HITL Q-B/Q-C): top FLAGS_SUMMARY_CAP in rank
+  // order; the rest continue in DETAIL within its line budget. --json's
+  // `flags` always carries every flag (unranked).
   console.log('FLAGS');
-  const rankedFlags = fl.slice().sort((a, b) => b.amount - a.amount);
-  const flagsShown = rankedFlags.slice(0, FLAGS_SUMMARY_CAP);
+  const rankedFlags = rankFlags(fl);
   const flagsMoved = rankedFlags.slice(FLAGS_SUMMARY_CAP);
-  for (const f of flagsShown) printFlagLine(f);
-  if (flagsMoved.length)
-    console.log(`  … +${flagsMoved.length} more (${det ? 'see DETAIL / --json' : 'full list in --json'})`);
+  const detLines = det ? renderDetail(det) : [];
+  const contFlags = det ? continuedFlagLines(flagsMoved, DETAIL_MAX_LINES - detLines.length) : [];
+  for (const f of rankedFlags.slice(0, FLAGS_SUMMARY_CAP)) printFlagLine(f);
+  if (flagsMoved.length) console.log(flagsMoreLine(flagsMoved, contFlags.length > 0));
   console.log('');
 
   console.log('SECURITY (confidentiality, not cost)');
@@ -1868,15 +1914,12 @@ async function main() {
 
   if (det) {
     console.log('');
-    for (const l of renderDetail(det)) console.log(l);
-    if (flagsMoved.length) {
-      console.log(`FLAGS (continued, by $ amount, ${flagsMoved.length} total)`);
-      printCapped(flagsMoved, printFlagLine, '  ');
-    }
+    for (const l of [...detLines, ...contFlags]) console.log(l);
   }
 }
 
 if (require.main === module) main();
 module.exports = {
   projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, printFlagLine,
+  rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine,
 };
