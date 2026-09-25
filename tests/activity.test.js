@@ -134,6 +134,21 @@ test('turn without tool_use -> other; text-only lines of a tool turn do not dilu
   assert.equal(act.reduce((a, c) => a + c.turns, 0), 2, 'turns sum to deduped turn count');
 });
 
+test('avg ctx of a category weights each turn by its share of the turn: Σ(w·ctx) / Σw', () => {
+  const ctx = n => ({ input_tokens: 1e6, cache_read_input_tokens: n, output_tokens: 0 });
+  const dir = tmpClaudeDir({
+    'projects/p/s1.jsonl': [
+      ...toolTurn('m1', [['Bash', { command: 'git status' }], ['Read', { file_path: 'a' }]], { usage: ctx(100000) }),
+      ...toolTurn('m2', [['Bash', { command: 'git diff' }]], { usage: ctx(10000) }),
+    ],
+  });
+  const cats = byCat(audit(dir).detail.activity);
+  // git: w 0.5 @ 100k + w 1 @ 10k -> 60k / 1.5 = 40k (not 110k / 1.5)
+  assert.equal(cats.git.turns, 1.5);
+  assert.equal(Math.round(cats.git.avgCtx), 40000);
+  assert.equal(Math.round(cats.read.avgCtx), 100000);
+});
+
 test('activityCategory: one example per category, first matching rule wins', () => {
   const sh = command => ['Bash', { command }];
   const cases = [
@@ -170,6 +185,24 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [['WebSearch', { query: 'y' }], 'web'],
     [sh('python - <<\'PY\'\nimport io\nPY'), 'other'],
     [['AskUserQuestion', {}], 'other'],
+    // runners behind wrappers; the runner outranks trailing pipe helpers
+    [sh('python -m pytest tests/ -q 2>&1 | tail -20'), 'test/lint/build'],
+    [sh('timeout 600 python3 -m pytest -x'), 'test/lint/build'],
+    [sh('uv run pytest -k foo | grep -E "passed|failed"'), 'test/lint/build'],
+    [sh('pnpm --filter web test'), 'test/lint/build'],
+    [sh('cargo test --all 2>&1 | head -50'), 'test/lint/build'],
+    [sh('npx vitest run'), 'test/lint/build'],
+    // separators inside quotes are not command starts
+    [sh('grep -E "error|git" log'), 'read'],
+    [sh('rg "foo;gh api" src'), 'read'],
+    // screenshot = running a screenshot script, not touching the file
+    [sh('cat scripts/screenshot.mjs'), 'read'],
+    [sh('git log -- scripts/screenshot.mjs'), 'git'],
+    [['Write', { file_path: 'scripts/screenshot.mjs' }], 'edit'],
+    [sh('grep -n "page.screenshot(" src/a.ts'), 'read'],
+    [sh('./scripts/screenshot.sh out.png'), 'screenshot/image'],
+    [sh('timeout 60 node scripts/screenshot.mjs a.html'), 'screenshot/image'],
+    [sh('curl -s https://api.github.com/repos/o/r/actions/runs/123/jobs'), 'wait/poll'],
     [['NewToolWeNeverSaw', {}], 'other'],
   ];
   const got = cases.map(([[tool, input]]) => activityCategory(tool, input));

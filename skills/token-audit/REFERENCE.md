@@ -275,18 +275,22 @@ full). Sections, in order:
 **One table** in the script, `ACTIVITY_RULES` (regex → category), **first match wins**, so
 table order is priority. Adding a category = one entry. Each regex runs over the call's
 *subject*: `<tool name> <key>`, where key = the normalized command (below) for `Bash` /
-`PowerShell`, and `input.file_path` for other tools. Shell words are matched only at the start
-of a command segment (after `&&`, `||`, `|`, `;`, `do`, `then`, `(`), so `cat foo.test.ts`
-is a read, not a test run. Priority order and what each catches:
+`PowerShell`, and `input.file_path` for other tools. Shell words are matched only at a
+*command start*, which `markCommands()` marks in the key: each top-level segment, each
+`(…)` / `$(…)` body, and the command behind a wrapper — `do`, `then`, `else`, `{`, `!`,
+`time`, `nice`, `env [X=y]`, `timeout [opts] N`, `xargs`, `python[N] -m`, `py -m`, `uv run`,
+`poetry run`, `npx`, `bunx`, `pnpm/yarn dlx|exec`, `npm exec`. Never inside quotes or
+backticks. So `cat foo.test.ts` is a read, `grep -E "error|git" log` is a read (not git),
+and `timeout 600 python -m pytest | tail` is a test run. Priority order and what each catches:
 
 | # | category | tool / command |
 |---|---|---|
 | 1 | agent spawn | `Agent`, `Task`, `SendMessage` |
 | 2 | web | `WebFetch`, `WebSearch` |
-| 3 | screenshot/image | `Read` of a .png/.jpg/.gif/.webp/.bmp; any tool named `*screenshot*` (MCP); a `screenshot*.mjs/js/ts/py/sh` script; `.screenshot(` |
+| 3 | screenshot/image | `Read` of a .png/.jpg/.gif/.webp/.bmp; any tool named `*screenshot*` (MCP); a `screenshot*.mjs/js/ts/py/sh` script *run* (at a command start, directly or via `node`/`python`/`bun`/`deno`/`tsx`/`bash`/`sh`/`pwsh`); `.screenshot(` in such an interpreter's command |
 | 4 | wait/poll | `Monitor`, `TaskOutput`, `BashOutput`; `sleep`, `Start-Sleep`, `gh pr checks`, `gh run watch/view`; any `check-runs` / `actions/runs` URL |
 | 5 | github | `api.github.com`, `gh …` |
-| 6 | test/lint/build | `pnpm/npm/yarn/npx/bun [run/exec] test/lint/build/typecheck/…`, `vitest`, `jest`, `pytest`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make` |
+| 6 | test/lint/build | `pnpm/npm/yarn/bun [--opts] [run/exec] test/lint/build/typecheck/…` (e.g. `pnpm --filter x test`), `vitest`, `jest`, `pytest`, `unittest`, `ruff`, `mypy`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make`, `cargo test/build/check/clippy/nextest`, `go test/build/vet` |
 | 7 | git | `git …` |
 | 8 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
 | 9 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` |
@@ -300,6 +304,13 @@ Decisions not fixed by design.md (judgment calls):
   is the repeat detector.
 - **Compound commands take the highest-priority category**, not a split: `pnpm test && git
   commit` is one call → test/lint/build. Splitting is per *tool call*, not per shell segment.
+  So a runner outranks the pipe helpers after it: `python -m pytest … | tail` is a test run.
+- **Wrappers are looked through, a closed list.** Real transcripts had ≈ 4.5k pytest calls
+  behind `python -m` / `timeout` / `uv run` or piped to `tail` that fell to read/other.
+  `pnpm`/`npm`/`yarn` are *not* generic wrappers (`pnpm test` vs the shell's `test -f`);
+  their options are skipped only in front of a known script name.
+- **Screenshot = running a screenshot script**, not touching it: `cat` / `git log --` / `Write`
+  of `scripts/screenshot.mjs` are read / git / edit.
 - **Turn with no `tool_use` → `other`.** A text-only or thinking-only turn (final answer,
   plan, question to the user) has no tool to attribute it to. `other` keeps totals whole
   (turns and cost sum to the window's totals); a separate "text" category was not in the Q9

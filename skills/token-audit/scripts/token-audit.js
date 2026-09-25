@@ -201,22 +201,33 @@ function hashHeredocBodies(s, keep) {
 // `curl …/check-runs` is wait/poll before it is GitHub. Adding a category =
 // one line. Each rule's regex runs over the call's subject: `<Tool> <key>`,
 // key = commandKey() for Bash/PowerShell, file_path for other tools (so a
-// Read of a .png can count as image). `CMD` anchors a word at the start of a
-// shell command segment (after the tool name, a separator, `do`/`then`, `(`),
-// so `cat foo.test.ts` is not a test run. No match → ACTIVITY_OTHER.
-const CMD = String.raw`(?:^(?:Bash|PowerShell) |(?:&&|\|\||[|;]|\bdo|\bthen) |\()`;
+// Read of a .png can count as image). In a shell key every command start is
+// marked with `CMD` (‣): each segment, each `(…)` / `$(…)` body, and after a
+// wrapper (`do`, `timeout N`, `python -m`, `uv run`, `npx`, …; see
+// markCommands()) — never inside quotes. So `cat foo.test.ts` is not a test
+// run, `grep "a|git"` is not git, `uv run pytest | tail` is a test run.
+// No match → ACTIVITY_OTHER.
+const CMD = '‣';
+const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)*|timeout(?: -\S+)* \S+|` +
+  String.raw`xargs(?: -\S+)*|python(?:N(?:\.N)?)? -m|py -m|uv run|poetry run|npx(?: -y| --yes)?|bunx|` +
+  String.raw`(?:pnpm|yarn) (?:dlx|exec)|npm exec`;
 // Word lists the rules share (regex alternations).
 const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`;
-const RUNNERS = String.raw`(?:pnpm|npm|yarn|npx|bun)(?: run| exec)? ` +
+const RUNNERS = String.raw`(?:pnpm|npm|yarn|bun)(?: -{1,2}[\w-]+(?:[ =][^\s${CMD}-]\S*)?)*(?: run| exec)? ` +
   String.raw`(?:test|lint|build|typecheck|vitest|jest|eslint|prettier|tsc|playwright test)`;
-const CHECKERS = String.raw`vitest|jest|pytest|eslint|prettier|tsc|playwright test|node --test|make`;
+const CHECKERS = String.raw`vitest|jest|pytest|unittest|ruff|mypy|eslint|prettier|tsc|playwright test|` +
+  String.raw`node --test|make|cargo (?:test|build|check|clippy|nextest)|go (?:test|build|vet)`;
 const READERS = String.raw`cat|sed -n|grep|rg|head|tail|ls|find|wc|awk|Get-Content`;
 const IMAGE = String.raw`^Read .*\.(?:png|jpe?g|gif|webp|bmp)$`;
+// A screenshot script *run* (by an interpreter or directly), not a read / edit / git of it.
+const SHOT_EXEC = String.raw`(?:node|python\S*|bun|deno|tsx|ts-node|bash|sh|pwsh)\s[^${CMD}]*?`;
+const SHOT_RUN = String.raw`${CMD}(?:${SHOT_EXEC})?[^\s${CMD}]*screenshot[\w.-]*\.(?:m?js|ts|py|sh)\b|` +
+  String.raw`${CMD}${SHOT_EXEC}\.screenshot\(`;
 const rx = (strings, ...vals) => new RegExp(String.raw(strings, ...vals), 'i');
 const ACTIVITY_RULES = [
   [rx`^(?:Agent|Task|SendMessage) `, 'agent spawn'],
   [rx`^(?:WebFetch|WebSearch) `, 'web'],
-  [rx`${IMAGE}|^\S*screenshot\S* |screenshot[\w.-]*\.(?:m?js|ts|py|sh)\b|\.screenshot\(`, 'screenshot/image'],
+  [rx`${IMAGE}|^\S*screenshot\S* |${SHOT_RUN}`, 'screenshot/image'],
   [rx`^(?:Monitor|TaskOutput|BashOutput) |${CMD}(?:${POLLERS})\b|check-runs|actions/runs`, 'wait/poll'],
   [rx`api\.github\.com|${CMD}gh `, 'github'],
   [rx`${CMD}(?:${RUNNERS}|${CHECKERS})\b`, 'test/lint/build'],
@@ -226,6 +237,15 @@ const ACTIVITY_RULES = [
 ];
 const ACTIVITY_OTHER = 'other';
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+const WRAPPED = new RegExp(String.raw`${CMD}(${WRAPPERS}) (?!${CMD})`, 'gi');
+// Key → the same text with CMD before every command start (see above).
+function markCommands(key) {
+  const at = [0];
+  shellScan(key, (i, sep) => at.push(i + sep.length));
+  let s = at.reverse().reduce((t, i) => `${t.slice(0, i)}${CMD}${t.slice(i).trimStart()}`, key);
+  for (let prev; prev !== s;) { prev = s; s = s.replace(WRAPPED, `${CMD}$1 ${CMD}`); }
+  return s;
+}
 // One tool_use content part → { id, tool, key } as stored on a turn.
 function toolCall(part) {
   const input = part.input || {};
@@ -233,7 +253,7 @@ function toolCall(part) {
   return { id: part.id, tool: String(part.name), key };
 }
 function categorize(call) {
-  const subject = `${call.tool} ${call.key}`;
+  const subject = `${call.tool} ${SHELL_TOOLS.has(call.tool) ? markCommands(call.key) : call.key}`;
   const rule = ACTIVITY_RULES.find(([re]) => re.test(subject));
   return rule ? rule[1] : ACTIVITY_OTHER;
 }
