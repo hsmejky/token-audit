@@ -179,17 +179,29 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   `<`, `@`, or `:` not immediately followed by `//` (redirects, `@file` args, `NAME=$VAR:/…`,
   `scp host:/…`) — still needs two path separators after the trigger, so an http(s) URL
   (`//` with nothing between) stays readable. `~` / `~user` need only one separator. A
-  `file://` URL is redacted despite the `//`, since it names a local file. A `C:\Users\<name>`
-  or `c:\users\<name>` path (root word case-insensitive, also matches `\Home\`) is redacted
-  whole even when the name contains a literal or backslash-escaped space, quoted or not
-  (`C:\Users\Petr Svarc\x`, `C:\Users\Petr\ Svarc\x`) — the name segment excludes shell
-  metacharacters, so a following `| tee …` isn't swallowed. The git-bash/macOS form
-  (`/c/Users/<name>`, `/home/<name>`) gets the same treatment, quoted or not
-  (`"see /c/Users/Petr Svarc/x"`). A bare email (`user@host.tld`) is redacted to `<email>`;
-  the match is anchored to the start of a `[\w.+-]` run so a long unbroken run of such
-  characters (no real email) redacts in linear time instead of quadratic. This is
-  best-effort, not a guarantee for every possible shell construct. The key is cut in the middle (`head…tail`) so the line
-  stays ≤ 120 chars and both the program and e.g. `…/check-runs` stay visible.
+  `file://` URL is redacted despite the `//`, since it names a local file. A Users/home path
+  is redacted whole even when the name contains a literal or backslash-escaped space, quoted
+  or not, in every spelling: `C:\Users\<name>` with single or doubled (string-escaped)
+  backslashes, `/c/Users/<name>` (git-bash), `C:/Users/<name>`, `/mnt/c/Users/<name>` (WSL),
+  `/home/<name>`, `/Users/<name>` (macOS), after the same triggers as above (so
+  `PATH=$PATH:/home/Petr\ Svarc/bin` and `scp host:/home/…` too). The drive letter and the
+  `Users`/`home` root word match case-insensitively (`c:\users`, `C:\USERS`, `/HOME`). The
+  name segment excludes shell metacharacters, so a following `| tee …` isn't swallowed. A
+  bare email (`user@host.tld`) is redacted to `<email>`; the match is anchored to the start
+  of a `[\w.+-]` run so a long unbroken run of such characters (no real email) redacts in
+  linear time instead of quadratic.
+- **Value layer — the current user's name is redacted to `<user>`** wherever it is left in
+  the key, whatever the path shape (`C--Users-Petr-Svarc-proj` project-folder form, a path
+  the patterns above miss) or plain text, any case. Terms: the login name
+  (`os.userInfo()`), the last segment of `os.homedir()` and git `user.name`, each whole and
+  split on whitespace/`.`/`_`/`-` (home `C:\Users\Petr Svarc` → `Petr`, `Svarc`). A term
+  counts only if it is ≥ 3 chars and not a generic account name (`user`, `admin`, `root`,
+  `runner`, …), and matches only as a whole word (`Petr` doesn't touch `January`), so short
+  or common names don't over-redact. Pattern rules catch *any* user's path; the value
+  layer catches *this* user's name in shapes no pattern foresaw. Both are best-effort, not
+  a guarantee for every possible shell construct. Only the printed key is redacted —
+  grouping uses the raw key. The key is cut in the middle (`head…tail`) so the line stays
+  ≤ 120 chars and both the program and e.g. `…/check-runs` stay visible.
 - **Heredoc bodies are hashed raw** (commandKey step 1): a poll script re-run verbatim
   groups; the same script with a different PR number inside the body is a different key.
   Accepted: within one wait the body is identical (same PR), which is what a run counts.
