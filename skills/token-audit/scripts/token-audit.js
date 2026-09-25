@@ -629,7 +629,42 @@ const DAY = 86400e3;
 // on real data. Named constants so re-tuning is a one-line change.
 const LONG_AGENT_TURNS = 150; // "over N turns" -> strictly greater than N
 const LONG_AGENT_CTX = 300e3; // "peak context > 300k" -> strictly greater than
-function flags(cur, prev, cfg, span) {
+// POLLING threshold (design.md Q9) — provisional, Slice 15 re-tunes it.
+const POLL_MIN_CALLS = 20; // same command key >= N calls in one session
+// Categories whose repeat is a wait. A repeated test run, commit or edit is
+// the work itself, not polling (Slice 11 real-data check: those were most of
+// the false positives). See REFERENCE.md "POLLING".
+const POLL_CATEGORIES = new Set(['wait/poll', 'github', 'read', ACTIVITY_OTHER]);
+// Unquoted absolute paths left in a key (`O=/c/Users/me/…`, `{ cd /home/me/p; … }`,
+// `type C:\Users\me\x`) → <path>, so a printed key never carries a user or
+// project name. Needs two separators (`/c/x`, not `//FI`); a URL is kept
+// (its `//` follows `:`, not a word boundary like space, `=`, `(` or a quote).
+const ABS_PATH = /(^|[\s=(`'"])(?:[A-Za-z]:|~)?[\\/][^\s\\/`'"|;&()<>]+[\\/][^\s`'"|;&()<>]*/g;
+const redactPaths = key => key.replace(ABS_PATH, '$1<path>');
+// Polling runs in this window: Bash/PowerShell calls of a POLL_CATEGORIES
+// category, grouped per session (sessionKey) by commandKey; a group of
+// >= POLL_MIN_CALLS calls is a run. cost = 1/n of each n-call turn (as in
+// activity()), share = of window spend; most expensive run first.
+// `groups[].key` is path-redacted. See REFERENCE.md "POLLING".
+function polling(rows) {
+  const groups = new Map();
+  let total = 0;
+  for (const r of rows) {
+    total += r.cost;
+    for (const c of r.calls) {
+      if (!SHELL_TOOLS.has(c.tool) || !POLL_CATEGORIES.has(categorize(c))) continue;
+      const id = sessionKey(r) + '\u0000' + c.key;
+      const g = groups.get(id) || { sid: r.sid, key: redactPaths(c.key), count: 0, cost: 0 };
+      g.count++;
+      g.cost += r.cost / r.calls.length; // 1/n of the turn, as in activity()
+      groups.set(id, g);
+    }
+  }
+  return [...groups.values()].filter(g => g.count >= POLL_MIN_CALLS)
+    .map(g => ({ ...g, share: total ? g.cost / total : 0 }))
+    .sort((a, b) => b.cost - a.cost || b.count - a.count);
+}
+function flags(cur, prev, cfg, span, polls = []) {
   const out = [];
   const add = (id, text) => out.push({ id, text });
 
@@ -652,6 +687,14 @@ function flags(cur, prev, cfg, span) {
     const share = cur.cost ? longAgents.reduce((a, s) => a + s.cost, 0) / cur.cost : 0;
     add('LONG_AGENT', `${longAgents.length} subagent(s) over ${LONG_AGENT_TURNS} turns or ` +
       `${(LONG_AGENT_CTX / 1e3).toFixed(0)}k peak ctx = ${(100 * share).toFixed(0)}% of spend`);
+  }
+  if (polls.length) {
+    const cost = polls.reduce((a, g) => a + g.cost, 0);
+    const share = polls.reduce((a, g) => a + g.share, 0);
+    const head = `${polls.length} run(s) ≥${POLL_MIN_CALLS}×/session = ${money(cost)}, ` +
+      `${(100 * share).toFixed(0)}% of spend; top ${polls[0].count}× `;
+    out.push({ id: 'POLLING', text: head + fitMiddle(polls[0].key, FLAG_TEXT_WIDTH - head.length),
+      groups: polls });
   }
   if (cur.avgCtx > 150e3) {
     add('BIG_CTX', `avg context/message ${(cur.avgCtx / 1e3).toFixed(0)}k (threshold 150k)`);
@@ -707,6 +750,16 @@ function fit(text, n) {
 // activity) adds one field in detail() + one renderer in DETAIL_SECTIONS. No
 // blank lines between sections: the whole block has a line budget (see
 // REFERENCE "DETAIL"). Every line ≤ 120 chars.
+// Like fit(), but cuts the middle: a command key's head (the program) and
+// tail (e.g. the `…/check-runs` endpoint) both carry meaning.
+function fitMiddle(text, n) {
+  const chars = [...String(text).replace(/\s+/g, ' ').trim()];
+  if (chars.length <= n) return chars.join('');
+  const tail = Math.floor((n - 1) / 2);
+  return chars.slice(0, n - 1 - tail).join('') + '…' + chars.slice(chars.length - tail).join('');
+}
+// FLAGS lines are `  <id padded to 14> <text>`; text keeps the line ≤ 120 chars.
+const FLAG_TEXT_WIDTH = 120 - 17;
 const TOP_SUBAGENTS = 10;
 const TASK_WIDTH = 70;
 const TOP_UNITS = 10;
@@ -872,7 +925,7 @@ async function main() {
   // parents for a repeated subagent id.
   const spans = new Map(all.sessions.map(s => [sessionKey(s), s.last - s.first]));
   const span = s => spans.get(sessionKey(s)) || 0;
-  const fl = flags(cur, prev, cfg, span);
+  const fl = flags(cur, prev, cfg, span, polling(curRows));
   const secFl = securityFlags(cfg);
 
   const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: SCOPE_PROJECT };

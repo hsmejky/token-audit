@@ -1,0 +1,165 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { audit, auditText, tmpClaudeDir } = require('./harness');
+
+// plan.md Slice 12 / design.md Q9: POLLING = the same normalized command
+// (commandKey) >= POLL_MIN_CALLS (20, provisional) times in one session.
+// Only commands whose repeat is a wait count (not test/lint/build, git, edit):
+// see REFERENCE.md "POLLING".
+
+// One assistant turn with Bash calls, one JSONL line per tool_use, shared message.id.
+// input_tokens 1M on Opus 5.5 = $4 per turn.
+const USAGE = { input_tokens: 1e6, output_tokens: 0 };
+function bashTurn(id, commands, usage = USAGE) {
+  return commands.map((command, i) => ({
+    type: 'assistant', timestamp: '2026-09-01T10:00:00.000Z',
+    message: { id, model: 'claude-opus-5-5', role: 'assistant', usage,
+      content: [{ type: 'tool_use', id: `${id}-tu${i}`, name: 'Bash', input: { command } }] },
+  }));
+}
+// n one-call turns; cmd(i) gives the i-th command.
+const bashTurns = (n, prefix, cmd, usage) =>
+  Array.from({ length: n }, (_, i) => bashTurn(`${prefix}-${i}`, [cmd(i)], usage)).flat();
+const checkRuns = i => `cd /c/Users/me/proj && curl -s https://api.github.com/repos/o/r/pulls/${100 + i}/check-runs`;
+const CHECK_KEY = 'curl -s https://api.github.com/repos/o/r/pulls/N/check-runs';
+const pollingFlags = r => r.flags.filter(f => f.id === 'POLLING');
+
+test('POLLING: 25 check-runs calls on different PR numbers in one session fire once, count 25', () => {
+  const r = audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(25, 't', checkRuns) }));
+  const fl = pollingFlags(r);
+  assert.equal(fl.length, 1, JSON.stringify(r.flags));
+  assert.equal(fl[0].groups.length, 1);
+  assert.equal(fl[0].groups[0].count, 25);
+  assert.equal(fl[0].groups[0].key, CHECK_KEY);
+});
+
+test('POLLING: exactly 20 calls in one session fire (>= boundary), 19 do not', () => {
+  const at = n => pollingFlags(audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(n, 't', checkRuns) })));
+  assert.equal(at(20).length, 1, '20 calls must fire');
+  assert.equal(at(19).length, 0, '19 calls must not fire');
+});
+
+test('POLLING: 25 calls spread over 5 sessions (5 each) do not fire — the count is per session', () => {
+  const files = {};
+  for (let s = 0; s < 5; s++) files[`projects/p/s${s}.jsonl`] = bashTurns(5, `s${s}`, checkRuns);
+  assert.equal(pollingFlags(audit(tmpClaudeDir(files))).length, 0);
+});
+
+test('POLLING: a subagent session counts on its own, not merged with its parent', () => {
+  const r = audit(tmpClaudeDir({
+    'projects/p/main.jsonl': bashTurns(10, 'm', checkRuns),
+    'projects/p/main/subagents/agent-a.jsonl': bashTurns(10, 'a', checkRuns),
+  }));
+  assert.equal(pollingFlags(r).length, 0);
+});
+
+test('POLLING: two polled commands in one session → one flag, both groups, worst first', () => {
+  const actions = i => `curl -s https://api.github.com/repos/o/r/actions/runs/${900 + i}`;
+  const r = audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': [...bashTurns(21, 'a', actions), ...bashTurns(25, 'c', checkRuns)],
+  }));
+  const fl = pollingFlags(r);
+  assert.equal(fl.length, 1);
+  assert.deepEqual(fl[0].groups.map(g => g.count), [25, 21]);
+});
+
+test('POLLING: flag text has command key, count and cost share; a multi-call turn gives 1/n of its cost', () => {
+  // 24 one-call turns ($4 each) + 1 turn with the poll and one `ls` ($4, half to the poll)
+  // = 25 calls, $98 polling; plus 10 `git status` turns ($40). Window $140 → 70%.
+  const r = audit(tmpClaudeDir({
+    'projects/p/s1.jsonl': [
+      ...bashTurns(24, 't', checkRuns),
+      ...bashTurn('mix', [checkRuns(99), 'ls']),
+      ...bashTurns(10, 'g', () => 'git status'),
+    ],
+  }));
+  const [f] = pollingFlags(r);
+  assert.ok(f, JSON.stringify(r.flags));
+  assert.equal(f.groups[0].count, 25);
+  assert.equal(+f.groups[0].cost.toFixed(6), 98);
+  assert.equal(+f.groups[0].share.toFixed(6), 0.7);
+  assert.match(f.text, /^1 run\(s\) ≥20×\/session = \$98\.0, 70% of spend; top 25× /);
+  assert.ok(f.text.endsWith('check-runs'), f.text);
+  assert.ok(f.text.includes('curl -s https://api.git'), f.text);
+});
+
+test('POLLING: shares add up over several runs; worst = most expensive run', () => {
+  // run A: 30 calls at $1 (250k input) = $30; run B: 20 calls at $4 = $80 → B is worst by
+  // cost though A has more calls. Plus 10 `git status` turns ($40). Window $150:
+  // runs $110 = 73% (B alone would be 53%).
+  const r = audit(tmpClaudeDir({
+    'projects/p/a.jsonl': bashTurns(30, 'a', checkRuns, { input_tokens: 250000, output_tokens: 0 }),
+    'projects/p/b.jsonl': [...bashTurns(20, 'b', () => 'tail -5 /tmp/x.log'), ...bashTurns(10, 'g', () => 'git status')],
+  }));
+  const [f] = pollingFlags(r);
+  assert.deepEqual(f.groups.map(g => g.count), [20, 30]);
+  assert.match(f.text, /^2 run\(s\) ≥20×\/session = \$110, 73% of spend; top 20× tail -N /);
+});
+
+test('POLLING: repeats whose category is the work itself (test/lint/build, git, edit) do not fire', () => {
+  for (const cmd of [
+    i => `cd /c/r && python -m pytest tests/ -q 2>&1 | tail -${i % 9 + 1}`, // TDD loop
+    () => 'git status',
+    i => `sed -i 's/a/b${i}/' src/x.ts`,
+  ]) {
+    const r = audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(25, 't', cmd) }));
+    assert.equal(pollingFlags(r).length, 0, `${cmd(1)} → ${JSON.stringify(r.flags)}`);
+  }
+});
+
+test('POLLING: waits, status checks, log tails and other repeated commands do fire', () => {
+  for (const cmd of [
+    () => 'sleep 30',                                    // wait/poll
+    i => `gh pr view ${i} --json state`,                 // github
+    () => String.raw`tail -5 "C:\tmp\tasks\b5nj.output"`, // read: tailing a background task
+    i => `echo waiting-${i}`,                            // other
+  ]) {
+    const r = audit(tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(25, 't', cmd) }));
+    assert.equal(pollingFlags(r).length, 1, `${cmd(1)} → ${JSON.stringify(r.flags)}`);
+  }
+});
+
+test('POLLING: only shell commands count — 25 Read calls of one file do not fire', () => {
+  const rows = Array.from({ length: 25 }, (_, i) => ({
+    type: 'assistant', timestamp: '2026-09-01T10:00:00.000Z',
+    message: { id: `r-${i}`, model: 'claude-opus-5-5', role: 'assistant', usage: USAGE,
+      content: [{ type: 'tool_use', id: `r-${i}-tu`, name: 'Read', input: { file_path: '/tmp/x.log' } }] },
+  }));
+  assert.equal(pollingFlags(audit(tmpClaudeDir({ 'projects/p/s1.jsonl': rows }))).length, 0);
+});
+
+test('POLLING: no path (user name) is printed — unquoted paths in the key become <path>; line ≤ 120', () => {
+  const cmds = [
+    i => `O=/c/Users/jdoe/AppData/Local/Temp/x/scratchpad; for i in $(seq 1 ${i}); do sleep 30; done`,
+    () => '{ cd /home/jdoe/proj; tail -5 build.log; }',      // cd kept by commandKey inside { }
+    () => '(cd /home/jdoe/proj && tail -5 x.log) 2>&1',   // …and in a group with a redirect
+    () => String.raw`type C:\Users\jdoe\proj\out.log`,
+    () => 'tail -f ~/proj-jdoe/x.log',
+  ];
+  for (const cmd of cmds) {
+    const dir = tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(25, 't', cmd) });
+    const [f] = pollingFlags(audit(dir));
+    assert.ok(f, cmd(1));
+    assert.ok(!/jdoe/.test(f.text) && !/jdoe/.test(f.groups[0].key), `${cmd(1)} → ${f.text}`);
+    assert.match(f.text, /<path>/, f.text);
+    const line = auditText(dir, '--no-detail').split('\n').find(l => l.startsWith('  POLLING'));
+    assert.ok(line && [...line].length <= 120, `${[...(line || '')].length}: ${line}`);
+  }
+});
+
+test('POLLING: a long key is cut in the middle — program and endpoint both stay visible', () => {
+  const cmd = i => `curl -s -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" ` +
+    `https://api.github.com/repos/some-org/some-long-repository-name/commits/${i}abc/check-runs`;
+  const dir = tmpClaudeDir({ 'projects/p/s1.jsonl': bashTurns(25, 't', cmd) });
+  const line = auditText(dir, '--no-detail').split('\n').find(l => l.startsWith('  POLLING'));
+  assert.equal([...line].length, 120, line);
+  assert.match(line, /top 25× curl -s -H .*….*\/check-runs$/, line);
+});
+
+test('POLLING: one subagent id under two parents is two sessions (10 + 10 calls do not fire)', () => {
+  const r = audit(tmpClaudeDir({
+    'projects/p/m1/subagents/agent-a.jsonl': bashTurns(10, 'x', checkRuns),
+    'projects/p/m2/subagents/agent-a.jsonl': bashTurns(10, 'y', checkRuns),
+  }));
+  assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
+});

@@ -128,6 +128,52 @@ same way ("X% of everything spent this window").
 REFERENCE entry sits in the same position — both are "a session ran too long" flags, one for
 main sessions, one for subagents, so they read together.
 
+### `POLLING` — the same command ≥ 20× in one session
+
+Cost = turns × context: every "is it done yet?" check is a full turn that re-sends the
+whole context, so a wait that takes 25 checks costs 25 turns of a long session. The script
+prints the number of polling runs (session × command key with ≥ `POLL_MIN_CALLS` = 20
+calls, a named constant, provisional — Slice 15 re-tunes it), their combined cost and share
+of window spend, and the most expensive run's count and command key. `--json`: the flag
+carries `groups[]` = `{ sid, key, count, cost, share }`, most expensive first.
+
+**Do:** turn the wait into one waiting turn instead of dozens:
+- `gh pr checks --watch` (or `gh run watch`) — blocks until CI finishes, one call, one turn.
+  Replaces curl loops over `check-runs` / `actions/runs`.
+- `Monitor` — let the harness watch the process/log and wake the agent when it changes.
+- `run_in_background` — start the long command in the background and read its output
+  once at the end, instead of `cat`/`tail`-ing the output file every few turns.
+
+Also never burn turns on purpose to wait (`echo waiting-N`, `sleep 30` one call at a time):
+one `sleep`/`until … done` loop inside a single call waits for free.
+
+**Judgment calls** (plan.md says "same normalized command ≥ N times", not which commands):
+
+- **Unit = one Bash/PowerShell call, grouped by `commandKey()` per session** (`sessionKey`:
+  a subagent is its own session, also vs. a same-named agent under another parent). Other
+  tools (`Read`, `TaskOutput`, …) don't count — POLLING is about a *command*.
+- **Only categories where a repeat is a wait count**: `POLL_CATEGORIES` = wait/poll, github,
+  read, other. test/lint/build, git, edit and screenshot are excluded — a repeated test run
+  is a TDD loop, not polling. Why not just wait/poll + github: on real transcripts
+  (2026-09-25, all history) the bulk of real polling was `cat`/`tail` of background-task
+  `.output` files (read), `tasklist` and `echo waiting-N` (other); wait/poll alone caught
+  1 of ~10. Same key ≥ 20 over all categories gave 14 hits, 2 of them pytest loops.
+- **Real-data result with this rule**: 12 runs, ~10 look like real polling (task-output
+  tails, a `sleep` loop, `tasklist`, `echo waiting-N`, a log `grep | tail`). Known false
+  positive: `cat "<file>"` over 44 *different* result files (quoted paths collapse to
+  `<path>`); unclear: 78× `wc -c CLAUDE.md`. A "gap between repeats" rule was tried and
+  dropped: it didn't remove the false positive and cut a real log-polling run.
+- **Cost = 1/n of an n-call turn** (same split as COST BY ACTIVITY), share of window spend.
+- **Printed key is path-redacted**: `commandKey()` leaves some paths in (`O=/c/Users/…`
+  assignments, `{ cd …; }`, `(cd …) 2>&1`, `$(cd …)`, unquoted `C:\…` args), so any unquoted
+  absolute path (two separators, after start/space/`=`/`(`/quote; URLs kept) → `<path>`, in
+  the text and in `groups[].key`. The key is cut in the middle (`head…tail`) so the line
+  stays ≤ 120 chars and both the program and e.g. `…/check-runs` stay visible.
+- **Heredoc bodies are hashed raw** (commandKey step 1): a poll script re-run verbatim
+  groups; the same script with a different PR number inside the body is a different key.
+  Accepted: within one wait the body is identical (same PR), which is what a run counts.
+  No real-data hit was heredoc-driven.
+
 ### `BIG_CTX` — average context per message > 150k
 
 Threshold, not a cliff: nothing bills extra, but it means most turns are dragging
@@ -330,7 +376,7 @@ Decisions not fixed by design.md (judgment calls):
 
 `commandKey(command)` (exported) turns a `Bash` / `PowerShell` command into a key so the same
 command against a different PR number, commit, path or cwd groups together. `POLLING`
-(Slice 12) counts identical keys per session; `BOILERPLATE` (Slice 13) takes a prefix of it.
+counts identical keys per session (wait-type categories only — see its playbook entry); `BOILERPLATE` (Slice 13) takes a prefix of it.
 Steps, in order:
 
 1. Heredoc bodies hashed: the line with `<<TAG` / `<<'TAG'` / `<<-TAG` stays; the body through
