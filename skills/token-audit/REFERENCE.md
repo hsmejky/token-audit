@@ -135,6 +135,13 @@ with the confidentiality rules anyway.
 
 ## Baseline (first full measurement, 2026-08-04 → 2026-09-15)
 
+> **Predates the dedupe fix — not comparable with current output.** This baseline counted
+> every transcript line as a message. One API response is written as several lines
+> (thinking / text / tool_use) sharing one `message.id`, so spend and message counts
+> below are inflated ≈ 1.8× (all-time on this machine: 118 574 lines → 63 083 turns,
+> $24.1k → $12.9k). The script now counts each `message.id` once. Do not read a trend
+> into old baseline vs. new numbers; a fresh baseline replaces this table.
+
 Anchor for trend questions. 283 sessions, 63 910 transcript lines, 198 MB.
 
 | | |
@@ -171,6 +178,13 @@ active, and counting those inflates `PLUGIN_BLOAT`.
 | `--days N` | 14 | window; the previous N days form the comparison window |
 | `--top N` | 8 | sessions listed |
 | `--json` | off | full structured dump incl. per-week and per-plugin detail |
+| `--claude-dir DIR` | `~/.claude` | read transcripts + settings from DIR instead (tests use fixture dirs) |
 
-Exit code 1 with a message when `~/.claude/projects` is missing or holds no priced
+Exit code 1 with a message when `<claude-dir>/projects` is missing or holds no priced
 messages.
+
+A "message" / "msg" is one API response (one turn), deduplicated by `message.id`: the
+several transcript lines of one response count once, priced with the final (largest)
+`output_tokens`, since earlier lines carry a partial streaming usage. Lines without a
+`message.id` are counted one by one. An id that recurs in another file (resumed
+subagent) stays with the session where it was first seen.

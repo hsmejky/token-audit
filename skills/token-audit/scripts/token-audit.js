@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // token-audit — spend + usage audit over local Claude Code transcripts.
-// Node, no deps.  Usage: node token-audit.js [--days N] [--top N] [--json]
+// Node, no deps.  Usage: node token-audit.js [--days N] [--top N] [--json] [--claude-dir DIR]
+// Tests: `node --test` from the repo root (fixtures in tests/fixtures/).
 //
 // Costs are LIST-PRICE EQUIVALENTS (Claude API $/MTok). On Pro/Max nothing is
 // billed per token — the number is a proxy for what eats the plan limit.
@@ -10,16 +11,17 @@ const path = require('path');
 const readline = require('readline');
 
 const argv = process.argv.slice(2);
-const flagVal = (name, def) => {
+const flagStr = (name, def) => {
   const i = argv.indexOf(name);
-  return i >= 0 && argv[i + 1] ? Number(argv[i + 1]) : def;
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
 };
+const flagVal = (name, def) => Number(flagStr(name, def));
 const DAYS = flagVal('--days', 14);
 const TOP = flagVal('--top', 8);
 const JSON_OUT = argv.includes('--json');
 
 const HOME = process.env.USERPROFILE || process.env.HOME;
-const CLAUDE = path.join(HOME, '.claude');
+const CLAUDE = path.resolve(flagStr('--claude-dir', path.join(HOME, '.claude')));
 const ROOT = path.join(CLAUDE, 'projects');
 
 // ---------------------------------------------------------------- pricing
@@ -43,7 +45,8 @@ function rateFor(model) {
 function walk(dir, out = []) {
   let entries;
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    // sorted: readdir order is filesystem-dependent, dedupe "first seen" must not be
+    entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
   } catch {
     return out;
   }
@@ -55,8 +58,14 @@ function walk(dir, out = []) {
   return out;
 }
 
+// One API response is written as several JSONL lines (thinking / text /
+// tool_use) sharing one message.id — one turn, priced once. Earlier lines carry
+// a partial usage (output_tokens still streaming), so the line with the largest
+// output wins. An id recurring in another file is still the same response; it
+// stays with the session where it was first seen.
 async function collect() {
   const rows = [];
+  const byId = new Map();
   for (const f of walk(ROOT)) {
     const dir = path.dirname(f);
     const isSub = path.basename(dir) === 'subagents';
@@ -83,7 +92,15 @@ async function collect() {
 
       const cost = (inp * p[0] + w5 * p[1] + w1h * p[2] + read * p[3] + out * p[4]) / 1e6;
       const ts = Date.parse(j.timestamp || '') || 0;
-      rows.push({ ts, sid, project, isSub, family, cost, ctx: read + ccTotal, out });
+      const row = { ts, sid, project, isSub, family, cost, ctx: read + ccTotal, out };
+      const id = j.message.id;
+      const seen = id && byId.get(id);
+      if (!seen) {
+        if (id) byId.set(id, row); // no id → can't dedupe, count the line as is
+        rows.push(row);
+      } else if (out > seen.out) {
+        Object.assign(seen, { family, cost, ctx: row.ctx, out });
+      }
     }
   }
   return rows;
