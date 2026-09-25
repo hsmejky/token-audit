@@ -552,12 +552,11 @@ regardless of measured cost impact.
 
 ## Measured non-levers
 
-Do not recommend these — they were measured and are noise:
+Do not recommend these — they were measured and are noise, on every project checked so far:
 
 | candidate | actual share of spend |
 |---|---|
 | all tool output (file reads, greps, bash) over full history | **≈ 0.15 %** |
-| subagents (mostly Sonnet) | ≈ 15–20 %, and they are the cheap part |
 | output tokens | ≈ 12 % |
 | `effortLevel` overrides | negligible — `high` is already the default |
 
@@ -565,27 +564,48 @@ Corollary: offloading "read these files and summarise" to a cheaper external mod
 targets 0.15 % of spend. It cannot pay for itself, and for customer code it collides
 with the confidentiality rules anyway.
 
-## Baseline (first full measurement, 2026-08-04 → 2026-09-15)
+**Subagents are a non-lever only when their measured share is small and they run on
+Sonnet — report the number, never assert it (design.md Q6).** The claim held for the
+first project this script measured (below: 20.4 % of spend, pre-dedupe) but not for the
+`demo-proj` project that motivated this rewrite (82 % of spend, mostly Opus — see
+design.md's evidence table) or for this machine's own all-history data today (below:
+35.1 % of spend, 82.7 % of that on Opus). When the measured share is large and/or Opus-
+heavy, subagent count/duration *is* the lever — that's `LONG_AGENT`'s job (subagents
+over 150 turns or 400k peak context; see its playbook above), not this section's.
+Tool-driven turns inside subagents or main sessions (the same command run over and over)
+are also a lever, not noise — `POLLING` and `BOILERPLATE` catch those; only the tool
+*output* (bytes read/produced) measures as noise, not the turns spent producing it.
 
-> **Predates the dedupe fix — not comparable with current output.** This baseline counted
-> every transcript line as a message. One API response is written as several lines
-> (thinking / text / tool_use) sharing one `message.id`, so spend and message counts
-> below are inflated ≈ 1.8× (all-time on this machine: 118 574 lines → 63 083 turns,
-> $24.1k → $12.9k). The script now counts each `message.id` once. Do not read a trend
-> into old baseline vs. new numbers; a fresh baseline replaces this table.
+## Baseline
 
-Anchor for trend questions. 283 sessions, 63 910 transcript lines, 198 MB.
+Anchor for trend questions, computed with the deduped (post-Slice-2) script,
+`--all --days 3650`, all local history through 2026-09-25. 972 sessions total: 196
+main + 776 subagents, spanning 9 weeks with data (2026-07-27 → 2026-09-25).
 
 | | |
 |---|---|
-| total, 6 weeks | ≈ $2 950 list-price equivalent (~$490/week) |
-| Opus share | 86.5 % |
-| main thread vs subagents | 79.6 % / 20.4 % |
-| cache read : write : output (Opus) | 2 358 M : 106 M : 12 M — **55 % of spend is re-reading context** |
-| sessions ≥ 250 msgs (16 of 277) | 57.5 % of spend |
-| top 7 sessions | 50 % of spend |
-| worst single session (14 days open) | 26.4 % of spend |
-| median session length | 61 messages (p90 182, max 1775) |
+| total, all-time | $13 546 list-price equivalent, 9 wk with data |
+| Opus / Fable / Sonnet / Haiku share | 87.5 % / 6.6 % / 5.8 % / 0.0 % |
+| main thread vs subagents | 64.9 % / 35.1 % |
+| subagent model mix (of subagent-only spend) | Opus 82.7 %, Sonnet 16.6 %, Fable 0.7 % |
+| `LONG_SESSION` (≥200 msgs, main only) | 6 of 196 sessions = 54 % of spend |
+| `LONG_AGENT` (>150 turns or >400k peak, subagents) | 83 of 776 = 17 % of spend |
+| `POLLING` (≥10× same command/session) | 34 runs = $193, 1 % of spend |
+| `BOILERPLATE` (≥5 sessions same setup prefix) | 7 prefixes = $188, 1 % of spend |
+| main-thread turn distribution | median 35, p90 121 |
+
+Subagent turn/peak-ctx percentiles (measured the same way, slightly different subagent
+count on a later run since history keeps growing) live in the `LONG_AGENT` section above,
+not duplicated here.
+
+> **Supersedes the pre-Slice-2 baseline.** The first full measurement (2026-08-04 →
+> 2026-09-15, 283 sessions, 63 910 transcript lines) counted every transcript line as a
+> message; one API response is written as several lines (thinking / text / tool_use)
+> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.8× (that
+> window: 118 574 lines → 63 083 turns, $24.1k → $12.9k). It reported 86.5 % Opus share,
+> 79.6 % / 20.4 % main/subagent split, sessions ≥ 250 msgs at 57.5 % of spend — do not
+> read a trend into old-baseline vs. this table; the dedupe fix and threshold re-tune
+> (Slice 15) both moved the numbers.
 
 ## Summary layout (Slice 28)
 
@@ -641,9 +661,12 @@ when the summary's `fitFlags()` guard moved any flags here — it gets only the 
   unit, not clipped to the window — same convention as the `MULTIDAY` flag's span),
   project. A main session with no subagents still forms its own unit (sub 0%). A subagent whose
   parent main session has no priced turns in this window still rolls up under its parent id as
-  an orphan unit (mainCost 0). Span for such an orphan unit only counts the sessions that are
-  actually inside the window (the subagents) — the main session's full history outside the
-  window is not pulled in, unlike the normal "reach back past the window" span convention above.
+  an orphan unit (mainCost 0). Its subagents still get the normal "reach back past the window"
+  full-history span, same as any other unit — `workUnits()` looks up each session's real
+  first/last by id regardless of which unit it rolls into. Only the absent main session's own
+  full history is left out of the span, because a main session with zero rows in this window
+  is never visited by the loop that builds `first`/`last` in the first place (it isn't one of
+  `cur.sessions`), not because subagent history is clipped.
   `--json`: `detail.units[]` =
   `{ key, project, mainCost, subCost, agents, turns, peakCtx, span, cost, subShare }`.
 - **TOP 10 SUBAGENTS** (this window, by cost): cost, turns (deduped), peak ctx, model (the
@@ -969,6 +992,10 @@ BOILERPLATE lines are unaffected — their variable part is already bounded to
 
 Slice 14. `--json`'s `config.mcpServers` lists the MCP servers configured for the scoped
 project, tagged `user` / `project` / `mcp.json` for which of the 3 sources above declared it.
+`config.mcpPrefixTokens` is the estimated tool-definition weight those servers add to the
+prompt prefix (`mcpServers.length * MCP_SERVER_TOKENS`, see "Weight estimate" below) — the
+same number folded into the text report's `prefix≈` figure, exposed on its own for callers
+that want the MCP-only portion split out from plugin agent/skill weight.
 Since Slice 28 (HITL decision D) the text report only counts them (`mcp=N` on the one CONFIG
 line, their estimated tool-definition tokens folded into `prefix≈`); no `mcp=` at all when
 nothing is configured.
@@ -1045,19 +1072,3 @@ never outranks a real one, and an exact tie keeps whichever occurrence was seen 
 A subagent session's identity is `(parent, sid)`, not `sid` alone — the same subagent
 id can recur under two different parent sessions, and those are two distinct sessions;
 main sessions have no parent and keep keying by `sid` alone.
-
-## Packaging (Slice 24)
-
-`claude plugin install` copies the marketplace entry's whole `source` directory tree into
-`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` (confirmed by installing this repo
-into an isolated `CLAUDE_CONFIG_DIR` and inspecting the cache) — nothing outside `source` is
-copied, but everything inside it is, with no `.claudeignore`/allowlist mechanism to exclude
-files within it. Repo root previously *was* the plugin source (`marketplace.json`'s
-`"source": "./"`), so `tests/` and `design/` rode along into every install.
-
-Fix: plugin content (`.claude-plugin/plugin.json`, `skills/`) moved under `plugin/`, and
-`marketplace.json`'s `source` changed to `./plugin`. `marketplace.json` itself stays at the
-repo root (that's what `claude plugin marketplace add` reads), but it is not part of what gets
-installed — only the `source` subtree is. `tests/` and `design/` stay siblings of `plugin/` at
-repo root and are never copied. Verified: fresh install's cache dir contains only
-`.claude-plugin/plugin.json` and `skills/token-audit/**`.

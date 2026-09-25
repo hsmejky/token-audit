@@ -240,8 +240,11 @@ test('WORK UNITS: subagent orphans under parent id when the main session exists 
 test('WORK UNITS: orphan unit span ignores the main session\'s history outside the window', () => {
   // Same orphan setup as above, but pinning `span`: workUnits() only visits
   // `cur.sessions`, so a main session with zero rows in the window is never
-  // folded into first/last — even though `all.sessions` has its real 2020
-  // start. Only the in-window subagent rows count toward span here.
+  // visited and its real 2020 start (in `all.sessions`) never folds into
+  // first/last. The subagent rows that ARE visited still get their own
+  // full-history first/last via the `all.sessions` lookup (not clipped to
+  // the window) — this fixture just has no subagent history outside the
+  // window to demonstrate that with, so the two happen to coincide here.
   const now = Date.now();
   const dir = tmpClaudeDir({
     'projects/p/3ac91e04-uuid.jsonl': turn({ id: 'old-main', ts: '2020-01-01T00:00:00.000Z' }),

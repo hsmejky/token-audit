@@ -89,13 +89,21 @@ Skip it if nothing beat last window. Never invent a win.
 
 **Budget: ≤24 lines** (banner + trend ≈3 of them). Raw script output only if asked.
 
+Below the summary, DETAIL runs by default (`--no-detail` drops it): top 10 work units
+(parent session + its subagents rolled up), top 10 subagents by cost with task text,
+subagent turn/peak-ctx distribution, and a cost-by-activity table (top 6 categories —
+git, test/lint/build, GitHub, read, edit, script run, wait/poll, agent spawn, web,
+screenshot, harness, reply, other). Read it before ranking DO NEXT — it's where the
+subagent/activity evidence for that ranking lives.
+
 ## Hard rules
 
 | rule | why |
 |---|---|
 | list-price ≠ bill | Pro/Max charges nothing per token; number = plan-limit proxy, say once |
 | no flag → no advice | clean window → say so, stop. no generic tips |
-| non-levers: file reads, greps, bash output, subagent count | measured, don't optimize |
+| non-levers: file reads, greps, bash output | measured, don't optimize |
+| subagent count/duration: lever only if measured share is large or Opus-heavy | REFERENCE.md "Measured non-levers" / `LONG_AGENT` |
 | audit itself: 1 script run, 1 reply | no subagents, no manual transcript reads/greps |
 
 ## Cadence
