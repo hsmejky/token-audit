@@ -11,8 +11,19 @@ const { projectFolder } = require('../skills/token-audit/scripts/token-audit.js'
 // Names over 200 chars get truncated to 200 chars + `-<hash>` by Claude Code;
 // this script doesn't reimplement the hash, it matches an existing folder
 // that starts with the 200-char prefix (see below).
+// path.resolve() resolves a bare drive path like 'C:\...' differently per OS: on
+// Windows it's already absolute (no-op); on POSIX it isn't absolute, so it gets
+// joined onto cwd, which is not a fixed value across machines/CI. To test the
+// dash-mapping behavior deterministically on any OS, pick an input this OS's own
+// path.resolve() already treats as absolute (so resolve is a no-op, no cwd
+// dependency), and hand-compute (not path.resolve()-derive) the expected value
+// for each platform, so a regex/mapping regression is still caught either way.
+const WIN = process.platform === 'win32';
+
 test('projectFolder maps a Windows drive path', () => {
-  assert.equal(projectFolder('C:\\Users\\jdoe\\demo-proj'), 'C--Users-jdoe-demo-proj');
+  const input = WIN ? 'C:\\Users\\jdoe\\demo-proj' : '/Users/jdoe/demo-proj';
+  const expected = WIN ? 'C--Users-jdoe-demo-proj' : '-Users-jdoe-demo-proj';
+  assert.equal(projectFolder(input), expected);
 });
 
 test('projectFolder resolves a POSIX-style path against the current OS, then maps separators', () => {
@@ -21,8 +32,9 @@ test('projectFolder resolves a POSIX-style path against the current OS, then map
 });
 
 test('projectFolder maps underscore, dot, and space to dash (not just \\ / :)', () => {
-  const input = 'C:\\Users\\jdoe\\my_proj.v2 test';
-  assert.equal(projectFolder(input), 'C--Users-jdoe-my-proj-v2-test');
+  const input = WIN ? 'C:\\Users\\jdoe\\my_proj.v2 test' : '/Users/jdoe/my_proj.v2 test';
+  const expected = WIN ? 'C--Users-jdoe-my-proj-v2-test' : '-Users-jdoe-my-proj-v2-test';
+  assert.equal(projectFolder(input), expected);
 });
 
 test('projectFolder resolves "." the same as an explicit absolute cwd path', () => {
@@ -76,16 +88,23 @@ test('default scope (no --project/--all) is the cwd\'s project only', () => {
   assert.equal(r.cur.sessions[0].project, folder);
 });
 
+// Same cross-platform-fixed-point trick as above: pick an already-native-absolute
+// --project value per OS, and hand-compute (not path.resolve()-derive) the
+// mapped folder name it must select.
+const [PROJECT_ARG, FOLDER_A, FOLDER_B] = WIN
+  ? ['C:\\fake\\proj-a', 'C--fake-proj-a', 'C--fake-proj-b']
+  : ['/fake/proj-a', '-fake-proj-a', '-fake-proj-b'];
+
 test('--project <path> selects that project, mapping separators to `-`', () => {
   const dir = tmpClaudeDir({
-    'projects/C--fake-proj-a/s1.jsonl': turn({ id: 'a1' }),
-    'projects/C--fake-proj-b/s2.jsonl': turn({ id: 'b1' }),
+    [`projects/${FOLDER_A}/s1.jsonl`]: turn({ id: 'a1' }),
+    [`projects/${FOLDER_B}/s2.jsonl`]: turn({ id: 'b1' }),
   });
-  const r = audit(dir, '--project', 'C:\\fake\\proj-a');
+  const r = audit(dir, '--project', PROJECT_ARG);
   assert.equal(r.scope.mode, 'project');
-  assert.equal(r.scope.project, 'C--fake-proj-a');
+  assert.equal(r.scope.project, FOLDER_A);
   assert.equal(r.cur.sessions.length, 1);
-  assert.equal(r.cur.sessions[0].project, 'C--fake-proj-a');
+  assert.equal(r.cur.sessions[0].project, FOLDER_A);
 });
 
 test('--all includes every project', () => {
@@ -101,11 +120,11 @@ test('--all includes every project', () => {
 
 test('project scope includes that project\'s subagents', () => {
   const dir = tmpClaudeDir({
-    'projects/C--fake-proj-a/sess1.jsonl': turn({ id: 'a1' }),
-    'projects/C--fake-proj-a/sess1/subagents/agent-x.jsonl': turn({ id: 'a1-sub' }),
-    'projects/C--fake-proj-b/sess2.jsonl': turn({ id: 'b1' }),
+    [`projects/${FOLDER_A}/sess1.jsonl`]: turn({ id: 'a1' }),
+    [`projects/${FOLDER_A}/sess1/subagents/agent-x.jsonl`]: turn({ id: 'a1-sub' }),
+    [`projects/${FOLDER_B}/sess2.jsonl`]: turn({ id: 'b1' }),
   });
-  const r = audit(dir, '--project', 'C:\\fake\\proj-a');
+  const r = audit(dir, '--project', PROJECT_ARG);
   const sids = r.cur.sessions.map(s => s.sid).sort();
   assert.deepEqual(sids, ['agent-x', 'sess1']);
 });
