@@ -1,16 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { auditText, tmpClaudeDir, turn } = require('./harness');
-const { printFlagLine } = require('../plugin/skills/token-audit/scripts/token-audit.js');
-
-// Captures what printFlagLine() sends to console.log, one entry per call.
-function captureLines(fn) {
-  const out = [];
-  const orig = console.log;
-  console.log = (...args) => out.push(args.join(' '));
-  try { fn(); } finally { console.log = orig; }
-  return out;
-}
+const { flagLines } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 20 review: NO_RETENTION's advice text (112 chars) is longer than
 // FLAG_TEXT_WIDTH (103), so it must wrap rather than overrun 120 chars — and
@@ -37,34 +28,33 @@ test('NO_RETENTION: cleanupPeriodDays unset wraps onto a 17-space-indented conti
 });
 
 // Slice 20 review: POLLING/BOILERPLATE text is a literal shell command,
-// already fit to width upstream (fitMiddle/fitPrefix) — printFlagLine must
-// print it unchanged (no re-wrap, no space-collapsing), unlike a prose flag
+// already fit to width upstream (fitMiddle/fitPrefix) — flagLines() must
+// render it unchanged (no re-wrap, no space-collapsing), unlike a prose flag
 // like NO_RETENTION which is expected to wrap and normalize whitespace.
-test('printFlagLine: POLLING/BOILERPLATE text prints unchanged, even with internal double spaces', () => {
+test('flagLines: POLLING/BOILERPLATE text renders unchanged, even with internal double spaces', () => {
   const text = 'cmd  --flag   value here';
   for (const id of ['POLLING', 'BOILERPLATE']) {
-    const printed = captureLines(() => printFlagLine({ id, text }));
-    assert.deepEqual(printed, [`  ${id.padEnd(14)} ${text}`],
-      `expected ${id} text printed byte-for-byte unchanged`);
+    assert.deepEqual(flagLines({ id, text }), [`  ${id.padEnd(14)} ${text}`],
+      `expected ${id} text rendered byte-for-byte unchanged`);
   }
 });
 
-test('printFlagLine: a non-command flag still wraps and normalizes whitespace as before', () => {
-  const printed = captureLines(() => printFlagLine({ id: 'NO_RETENTION', text: 'a  b '.repeat(30).trim() }));
-  assert.ok(printed.length > 1, 'expected the long prose text to wrap onto more than one line');
-  assert.ok(!printed[0].includes('  b'), 'expected internal whitespace runs collapsed for a prose flag');
+test('flagLines: a non-command flag still wraps and normalizes whitespace as before', () => {
+  const lines = flagLines({ id: 'NO_RETENTION', text: 'a  b '.repeat(30).trim() });
+  assert.ok(lines.length > 1, 'expected the long prose text to wrap onto more than one line');
+  assert.ok(!lines[0].includes('  b'), 'expected internal whitespace runs collapsed for a prose flag');
 });
 
 // Slice 20 3rd review, finding 6: wrapWords() only broke between words, so a
 // single "word" longer than the wrap width (e.g. an attacker-controlled plugin
 // name with no separators, PLUGIN_BLOAT's "worst: ..." list) rode straight
 // through unwrapped and overran 120 chars. It must now hard-break.
-test('printFlagLine: a single word longer than the wrap width is hard-broken, not left overrunning', () => {
+test('flagLines: a single word longer than the wrap width is hard-broken, not left overrunning', () => {
   const longWord = 'p'.repeat(250);
-  const printed = captureLines(() => printFlagLine({ id: 'PLUGIN_BLOAT', text: `worst: ${longWord}` }));
-  for (const line of printed) {
+  const lines = flagLines({ id: 'PLUGIN_BLOAT', text: `worst: ${longWord}` });
+  for (const line of lines) {
     assert.ok([...line].length <= 120, `line exceeds 120 chars (${[...line].length}): ${line}`);
   }
   // No characters of the long word may be dropped in the process.
-  assert.equal(printed.join('').split('p').length - 1, 250);
+  assert.equal(lines.join('').split('p').length - 1, 250);
 });

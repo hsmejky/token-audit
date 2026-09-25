@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { audit, auditText, tmpClaudeDir, tmpUserConfig } = require('./harness');
-const { fitFlags, flagsMoreLine, continuedFlagLines } =
+const { fitFlags, flagsMoreLine, continuedFlagLines, appendFlagsMore, familyLine, renderDetail } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // plan.md Slice 28 / design.md Q3: the summary (everything above DETAIL) stays
@@ -283,4 +283,69 @@ test('--json flags: POLLING/BOILERPLATE amount = the $ figure printed in their o
     assert.ok(f.amount > 0, `${id}.amount should be > 0, got ${f.amount}`);
     assert.ok(Math.abs(f.amount - want) < 0.01, `${id}: amount ${f.amount} vs text $${want}`);
   }
+});
+
+// Slice 28 re-review, finding 3: end-to-end through main() — a smaller SECURITY
+// block (retention configured, so NO_RETENTION doesn't fire, "SECURITY ...
+// none" is one line) leaves fitFlags() more room than a bigger one
+// (NO_RETENTION's own line), so at least as many FLAGS rows show with
+// retention configured as without, on the same fixture.
+test('summary FLAGS: retention configured (smaller SECURITY) shows at least as many flags as unset', () => {
+  const withRetention = everySection();
+  const settingsPath = path.join(withRetention, 'settings.json');
+  const settings = { ...JSON.parse(fs.readFileSync(settingsPath)), cleanupPeriodDays: 30 };
+  fs.writeFileSync(settingsPath, JSON.stringify(settings));
+  const shown = dir => flagRows(summaryLines(auditText(dir, '--days', '7')));
+  const withRet = shown(withRetention);
+  const withoutRet = shown(everySection());
+  assert.ok(!summaryLines(auditText(withRetention, '--days', '7')).some(l => l.includes('NO_RETENTION')));
+  assert.ok(summaryLines(auditText(everySection(), '--days', '7')).some(l => l.includes('NO_RETENTION')));
+  assert.ok(withRet.length >= withoutRet.length,
+    `retention configured showed ${withRet.length} flags, unset showed ${withoutRet.length}`);
+});
+
+// Slice 28 re-review, finding 3: renderDetail()'s own hard guard (finding 1,
+// review of ff55682) — a synthetic `d` whose WORK UNITS section alone is far
+// past DETAIL_MAX_LINES must be cut down to DETAIL_MAX_LINES - 1 real lines
+// plus the "… DETAIL truncated" marker, never left over budget.
+test('renderDetail(): a section that alone overflows DETAIL_MAX_LINES is cut with a truncation marker', () => {
+  const units = Array.from({ length: 60 }, (_, i) => ({
+    key: `s${i}`, project: 'p', mainCost: 1, subCost: 0, agents: 0, turns: 1, peakCtx: 1000,
+    span: 0, cost: 1, subShare: 0,
+  }));
+  const d = { units, topSubagents: [], distribution: { count: 0 }, activity: [] };
+  const lines = renderDetail(d);
+  assert.equal(lines.length, 40, lines.join('\n'));
+  assert.equal(lines[lines.length - 1], '… DETAIL truncated, full data in --json');
+});
+
+// Slice 28 re-review, finding 3: familyLine(cur) returns null for a window
+// with no byFamily entries (Slice 28 review, finding 3 in the source) — main()
+// must skip the line entirely rather than print a blank one.
+test('familyLine(cur) === null for an empty byFamily map, and main() prints no family line', () => {
+  assert.equal(familyLine({ byFamily: {}, cost: 0 }), null);
+  // A transcript exists (so main() doesn't bail on "no transcripts found"),
+  // but it's 10 years outside the default window, so `cur` (the window) has
+  // no cost and an empty byFamily, while `all` (all-time) still isn't empty.
+  const dir = tmpClaudeDir({ 'projects/p/old.jsonl': t('old', { ts: NOW - 3650 * DAY }) });
+  const sum = summaryLines(auditText(dir, '--days', '7'));
+  const i = sum.findIndex(l => l.startsWith('SPEND'));
+  assert.ok(i !== -1, sum.join('\n'));
+  // The line right after SPEND is the main/subagents split, not a family line
+  // (no "  <ModelName> $" line in between).
+  assert.match(sum[i + 1], /^ {2}main /, sum.join('\n'));
+});
+
+// Slice 28 re-review, finding 6: appendFlagsMore() is the exact function
+// main() calls after fitFlags() to decide the "+N more" marker — exercised
+// here with room=0 (what flagRoom clamps to when preLen + postLen + 1 exceeds
+// SUMMARY_MAX_LINES, an artificially large pre/post main() itself never
+// builds today) to prove the marker still shows instead of a dangling header.
+test('appendFlagsMore(): still names moved flags when flagRoom was clamped to 0 (huge pre/post)', () => {
+  const items = ['A', 'B', 'C'].map(id => ({ id, text: 'x', amount: 1 }));
+  const { rows, moved } = fitFlags(items, 0); // room=0 <=> preLen + postLen + 1 >= SUMMARY_MAX_LINES
+  assert.deepEqual(rows, []);
+  assert.deepEqual(moved, items);
+  const flagRows = appendFlagsMore(rows, moved, false);
+  assert.deepEqual(flagRows, ['  … +3 more: A, B, C (--json)']);
 });

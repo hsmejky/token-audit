@@ -1435,12 +1435,6 @@ function flagLines(f) {
   const lines = wrapWords(f.text, FLAG_TEXT_WIDTH);
   return [`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`, ...lines.slice(1).map(l => `${' '.repeat(17)}${l}`)];
 }
-// Prints one FLAGS/SECURITY row straight to stdout (used by tests exercising
-// flagLines()'s wrapping in isolation); main()'s own report building goes
-// through flagLines() directly so it can budget lines before printing.
-function printFlagLine(f) {
-  for (const l of flagLines(f)) console.log(l);
-}
 // Slice 28 review, finding 1: SUMMARY_MAX_LINES/DETAIL_MAX_LINES are hard guards,
 // not just a hope that the pieces below happen to add up. The summary shows as
 // many flags (in rankFlags() order) as fit the lines left after every fixed
@@ -1482,6 +1476,20 @@ function moreIdsLine(moved, where) {
   return head + list + tail;
 }
 const flagsMoreLine = (moved, inDetail) => moreIdsLine(moved, inDetail ? 'DETAIL / --json' : '--json');
+// Slice 28 review, finding 6: appends the FLAGS "+N more" marker onto `flagRows`
+// (mutating and returning it) whenever flags were moved out of the summary —
+// even if `flagRoom` (SUMMARY_MAX_LINES - preLen - postLen - 1, computed by the
+// caller) was clamped to 0 because pre/post already used the whole
+// SUMMARY_MAX_LINES budget between them. fitFlags() reserves a line for this
+// marker while flags remain whenever room > 0, so this only changes behavior in
+// that room === 0 edge case (not reachable today — SPEND/CONFIG/... and
+// SECURITY are each capped to a handful of fixed lines — but not asserted
+// against either): unconditionally naming what's left is better than a bare
+// "FLAGS" header with nothing under it and no explanation.
+function appendFlagsMore(flagRows, flagsMoved, inDetail) {
+  if (flagsMoved.length) flagRows.push(flagsMoreLine(flagsMoved, inDetail));
+  return flagRows;
+}
 // Shared hard-guard fitter (Slice 28 review, finding 1): fills `ranked` flags,
 // in rank order, into `room` lines via flagLines() (1 line normally, more if a
 // flag's text wraps), reserving a line ahead of time for the eventual "+N more"
@@ -1869,12 +1877,16 @@ async function main() {
   const bannerBudget = Math.max(10, 120 - [...bannerPrefix].length - [...bannerSuffix].length);
   const shownProject = scope.project ? fitMiddle(scope.project, bannerBudget) : 'all projects';
 
+  // Slice 28 review, finding 5: familyLine(cur) is not free (sorts + joinFit()s
+  // byFamily) and its result is used twice below (the line itself, and the
+  // conditional that decides whether to include it) — compute it once.
+  const famLine = familyLine(cur);
   const pre = [
     bannerPrefix + shownProject + bannerSuffix,
     '',
     `SPEND        ${money(cur.cost)}   prev window ${money(prev.cost)}` +
       (prev.cost ? `  ${cur.cost >= prev.cost ? '+' : ''}${(100 * (cur.cost / prev.cost - 1)).toFixed(0)}%` : ''),
-    ...(familyLine(cur) ? [familyLine(cur)] : []),
+    ...(famLine ? [famLine] : []),
     `  main ${money(cur.byChain.main)} (${pct(cur.byChain.main / (cur.cost || 1))})   ` +
       `subagents ${money(cur.byChain.sub)} (${pct(cur.byChain.sub / (cur.cost || 1))})`,
     ...(unpriced.length ? [unpricedLine(unpriced)] : []),
@@ -1899,9 +1911,10 @@ async function main() {
     ...(secFl.length ? secFl.flatMap(flagLines) : ['  none'])];
   const post = ['', ...secLines];
   // The blank line before DETAIL prints only when DETAIL runs, but the room
-  // budget reserves it either way — FLAGS' cap must not depend on --no-detail
-  // (design.md Q-B/Q-C: the summary shows the same ranked flags in both modes,
-  // only the "+N more" line's "(DETAIL / --json)" vs "(--json)" differs).
+  // budget reserves it either way, so FLAGS' cap doesn't depend on --no-detail:
+  // the summary picks the same ranked flags whether or not DETAIL ends up
+  // printing, and only the "+N more" line's "(DETAIL / --json)" vs "(--json)"
+  // suffix differs (see `flagsMoreLine` below).
   const detSeparator = det ? [''] : [];
 
   // Slice 28 (design.md Q3/Q5, HITL Q-B/Q-C): flags in rankFlags() order fill
@@ -1913,9 +1926,7 @@ async function main() {
   const { rows: flagRows, moved: flagsMoved } = fitFlags(rankedFlags, flagRoom);
   const detLines = det ? renderDetail(det) : [];
   const contFlags = det ? continuedFlagLines(flagsMoved, DETAIL_MAX_LINES - detLines.length) : [];
-  // Only spend a line on "+N more" when one is actually left in the budget
-  // (flagRoom === 0 means not even that fits — see fitFlags()'s own room=0 case).
-  if (flagsMoved.length && flagRoom > flagRows.length) flagRows.push(flagsMoreLine(flagsMoved, contFlags.length > 0));
+  appendFlagsMore(flagRows, flagsMoved, contFlags.length > 0);
 
   for (const l of [...pre, ...flagRows, ...post, ...detSeparator]) console.log(l);
 
@@ -1926,7 +1937,8 @@ async function main() {
 
 if (require.main === module) main();
 module.exports = {
-  projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, printFlagLine,
-  rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags,
+  projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes,
+  rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags, appendFlagsMore,
+  familyLine, renderDetail,
   SUMMARY_MAX_LINES, DETAIL_MAX_LINES,
 };
