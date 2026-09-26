@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { audit, auditText, tmpClaudeDir } = require('./harness');
+const { auditWithClock, auditTextWithClock, tmpClaudeDir } = require('./harness');
 
 // README.md's "Sample report" shows the FULL rendered report a user sees after
 // /token-audit — Claude's banner + DO NEXT on top of the script's own text — not just the
@@ -10,47 +10,40 @@ const { audit, auditText, tmpClaudeDir } = require('./harness');
 //
 //   - script-printed (TOKEN AUDIT header line, TREND line, everything from DETAIL down):
 //     literal script output. This test rebuilds the exact fixture below, runs the real
-//     script against it and diffs those lines against README.md verbatim (mod the run's own
-//     calendar date, see NOW-DEPENDENCE below) — it fails if the script's line format drifts.
+//     script against it and diffs those lines against README.md verbatim — it fails if the
+//     script's line format drifts.
 //   - Claude-drawn (the banner box and the SPEND/HABIT/CONFIG/SECURITY/DO NEXT block): no
 //     code renders this, so there is nothing to run and diff. Instead this test asserts the
 //     *numbers* the README hand-wrote for that block against the script's real --json output
 //     (flag amounts, shares, session ids) — it fails if the underlying numbers drift even
 //     though no formatter would ever catch it.
 //
-// NOW-DEPENDENCE: the script has no way to pin "now" (no --now flag, no NOW env var — see
-// docs/testing.md), so every timestamp below is built relative to Date.now() at test time,
-// not a fixed calendar date. That keeps every dollar figure, share, count and the DETAIL
-// table byte-for-byte reproducible on any day.
+// FIXED CLOCK: the script itself has no --now flag — it always reads Date.now() once, to
+// compute its window (see docs/testing.md's "Fixed clock for tests" section). Rather than
+// building the fixture relative to the real wall-clock time (which made the TOKEN AUDIT
+// header's window dates, and briefly the TREND bucket a session lands in near a
+// Monday-00:00-UTC boundary, drift with whatever day/hour the suite happened to run at —
+// see git history for the flaky version), this test pins the clock: tests/fixed-clock.js is
+// `--require`d into the spawned script (via auditWithClock()/auditTextWithClock()) with
+// TOKEN_AUDIT_TEST_NOW set to NOW_ISO below, and the fixture is built from that same
+// constant. With `now` fixed, the script's output — including the header's calendar dates
+// and the TREND line — is byte-for-byte reproducible no matter when or on what weekday the
+// suite actually runs, so the assertions below compare full lines exactly, no normalization.
 //
-// It does NOT make the TOKEN AUDIT header's window dates reproducible — those are literal
-// calendar dates derived from whatever day the suite happens to run on — so this test
-// normalizes dates out of both sides before comparing the header line.
-//
-// TREND is trickier: token-audit.js buckets it into Monday-aligned, UTC calendar weeks
-// (`weeks()`, day = (getUTCDay()+6)%7). A session placed at a fixed day-offset from `now`
-// (e.g. "now - 6*DAY") lands in a *different* week bucket depending on what weekday `now`
-// is — the offset crosses a Monday-00:00-UTC boundary on some days but not others — which
-// silently changes which rows a bucket aggregates and therefore its $/msg, so the TREND
-// line's numbers (not just its dates) used to drift with the weekday the suite ran on. To
-// make TREND's numbers reproducible on every weekday, every session below is anchored to
-// `thisMonday` (this UTC week's Monday, computed the same way the script computes it) or to
-// `week(n)` (n weeks before that), not to a fixed offset from `now`:
+// NOW_ISO is a Wednesday noon UTC, comfortably mid-week and away from any Monday-00:00-UTC
+// bucket boundary. Every session below is still anchored to `thisMonday` (NOW_ISO's UTC
+// week's Monday) or to `week(n)` (n weeks before that), not to a fixed offset from `now`, so
+// the fixture's structure (and the comment below explaining each session's placement) is
+// unchanged from before the clock was pinned:
 //   - the "current window" sessions sit inside thisMonday's own week: any timestamp in
-//     [thisMonday, thisMonday+7d) is *always* within the --days 7 window too (thisMonday is
-//     at most 6 days before `now`, see `week()` below), so this satisfies both the window
-//     filter and a single, stable TREND bucket regardless of weekday.
+//     [thisMonday, thisMonday+7d) is always within the --days 7 window too (thisMonday is at
+//     most 6 days before `now`), so this satisfies both the window filter and a single,
+//     stable TREND bucket.
 //   - the "previous window" session sits early in week(1) (last week), safely before
-//     `curFrom` on every weekday, and the older TREND-history sessions (w3, w5) sit early in
-//     week(2) and mid-week in week(4), safely before `prevFrom`/away from any bucket edge.
+//     `curFrom`, and the older TREND-history sessions (w3, w5) sit early in week(2) and
+//     mid-week in week(4), safely before `prevFrom`/away from any bucket edge.
 // week(3) is left empty on purpose — the gap that produces TREND's "(4 with data)".
-//
-// This was verified by patching Date.now() (both in this process and in the script's child
-// process, via NODE_OPTIONS=--require) to noon UTC on each of the 7 weekdays and confirming
-// the TREND line, SPEND, PER MESSAGE and the flags are byte-identical across all 7 runs. It
-// isn't a mathematical guarantee for every instant (a run in the first few hours after
-// Monday 00:00 UTC has a vanishingly small window where the margins above shrink toward
-// zero), but it is stable for any realistic test run.
+const NOW_ISO = '2026-09-23T12:00:00.000Z';
 
 const DAY = 86400000;
 const HOUR = 3600000;
@@ -68,9 +61,9 @@ function session(prefix, startMs, n, model, { ctx0, step, input, output, spacing
 }
 
 function buildFixture() {
-  const now = Date.now();
-  // thisMonday: this UTC week's Monday 00:00, computed the same way token-audit.js's weeks()
-  // does (day = (getUTCDay()+6)%7, Monday = 0) — see the NOW-DEPENDENCE comment above.
+  const now = Date.parse(NOW_ISO);
+  // thisMonday: NOW_ISO's UTC week's Monday 00:00, computed the same way token-audit.js's
+  // weeks() does (day = (getUTCDay()+6)%7, Monday = 0) — see the FIXED CLOCK comment above.
   const nowDate = new Date(now);
   const dow = (nowDate.getUTCDay() + 6) % 7;
   const thisMonday = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate() - dow);
@@ -114,12 +107,9 @@ function readmeSampleBlock() {
   return fence[1].replace(/\r?\n$/, '').split(/\r?\n/);
 }
 
-const DATE_RE = /\d{4}-\d{2}-\d{2}/g;
-const normalizeDates = s => s.replace(DATE_RE, '<date>');
-
 test('README "Sample report": DETAIL block matches the script\'s real output exactly', () => {
   const dir = buildFixture();
-  const fresh = auditText(dir, '--all', '--days', '7').replace(/\n$/, '').split('\n');
+  const fresh = auditTextWithClock(dir, NOW_ISO, '--all', '--days', '7').replace(/\n$/, '').split('\n');
   const freshDetailIdx = fresh.findIndex(l => l === 'DETAIL');
   assert.ok(freshDetailIdx >= 0, 'fresh script output must contain a DETAIL block');
   const freshDetail = fresh.slice(freshDetailIdx);
@@ -135,25 +125,27 @@ test('README "Sample report": DETAIL block matches the script\'s real output exa
     'README\'s DETAIL block is stale — regenerate it from the fixture in this test');
 });
 
-test('README "Sample report": TOKEN AUDIT header and TREND line match the script, dates aside', () => {
+test('README "Sample report": TOKEN AUDIT header and TREND line match the script exactly', () => {
   const dir = buildFixture();
-  const fresh = auditText(dir, '--all', '--days', '7').split('\n');
+  const fresh = auditTextWithClock(dir, NOW_ISO, '--all', '--days', '7').split('\n');
   const sample = readmeSampleBlock();
 
   const freshHeader = fresh.find(l => l.startsWith('TOKEN AUDIT'));
   const sampleHeader = sample.find(l => l.startsWith('TOKEN AUDIT'));
   assert.ok(freshHeader && sampleHeader, 'both outputs must have a TOKEN AUDIT header line');
-  assert.equal(normalizeDates(sampleHeader), normalizeDates(freshHeader));
+  // With the clock pinned to NOW_ISO, the header's window dates are no longer a function of
+  // whatever day the suite runs on, so this compares full lines, not just a normalized shape.
+  assert.equal(sampleHeader, freshHeader);
 
   const freshTrend = fresh.find(l => l.startsWith('TREND'));
   const sampleTrend = sample.find(l => l.startsWith('TREND'));
   assert.ok(freshTrend && sampleTrend, 'both outputs must have a TREND line');
-  assert.equal(normalizeDates(sampleTrend), normalizeDates(freshTrend));
+  assert.equal(sampleTrend, freshTrend);
 });
 
 test('README "Sample report": the hand-drawn banner/DO NEXT numbers match the script\'s --json flags', () => {
   const dir = buildFixture();
-  const r = audit(dir, '--all', '--days', '7');
+  const r = auditWithClock(dir, NOW_ISO, '--all', '--days', '7');
 
   // Banner: "REGRESSION" verdict — the window's cost/message must actually be up >25%.
   const regression = r.flags.find(f => f.id === 'REGRESSION');

@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const SCRIPT = path.join(__dirname, '..', 'plugin', 'skills', 'token-audit', 'scripts', 'token-audit.js');
+const CLOCK_SHIM = path.join(__dirname, 'fixed-clock.js');
 
 const fixture = name => path.join(__dirname, 'fixtures', name);
 
@@ -55,6 +56,27 @@ function auditCwd(claudeDir, cwd, ...args) {
     [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, '--json', ...args],
     { encoding: 'utf8', cwd });
   return JSON.parse(out);
+}
+
+// Like audit()/auditText(), but pins the script's Date.now() to `nowIso` (an ISO 8601 string)
+// via tests/fixed-clock.js, loaded with --require and TOKEN_AUDIT_TEST_NOW. For a test that
+// needs its fixture and assertions built off one fixed instant instead of the real wall-clock
+// time the suite happens to run at (see tests/readme-sample.test.js).
+function auditWithClock(claudeDir, nowIso, ...args) {
+  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
+  const out = execFileSync(process.execPath,
+    ['--require', CLOCK_SHIM, SCRIPT, '--claude-dir', claudeDir, ...defaultDays,
+      ...defaultScope(args), '--json', ...args],
+    { encoding: 'utf8', env: { ...process.env, TOKEN_AUDIT_TEST_NOW: nowIso } });
+  return JSON.parse(out);
+}
+
+function auditTextWithClock(claudeDir, nowIso, ...args) {
+  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
+  return execFileSync(process.execPath,
+    ['--require', CLOCK_SHIM, SCRIPT, '--claude-dir', claudeDir, ...defaultDays,
+      ...defaultScope(args), ...args],
+    { encoding: 'utf8', env: { ...process.env, TOKEN_AUDIT_TEST_NOW: nowIso } });
 }
 
 // Full control over argv order (no --claude-dir even), for edge cases like
@@ -149,6 +171,6 @@ function perfLimit(ms) {
 }
 
 module.exports = {
-  audit, auditText, auditCwd, auditRaw, auditEnv, fixture, tmpClaudeDir, tmpDir, tmpUserConfig, turn, turns,
-  perfLimit,
+  audit, auditText, auditCwd, auditRaw, auditEnv, auditWithClock, auditTextWithClock,
+  fixture, tmpClaudeDir, tmpDir, tmpUserConfig, turn, turns, perfLimit,
 };

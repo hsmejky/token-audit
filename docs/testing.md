@@ -39,6 +39,18 @@ documentation, and the e-mail check exempts `@users.noreply.github.com` addresse
 new exception, extend one of those two mechanisms and say why in the commit — don't loosen the
 check itself without a reason recorded there.
 
+## Fixed clock for tests
+
+The script itself has no `--now` flag; it reads `Date.now()` once, to compute its window.
+A test that needs the script's output to be independent of the real wall-clock time it
+happens to run at (`tests/readme-sample.test.js`, which diffs the script's output against a
+literal block in README.md) pins the clock instead: `tests/fixed-clock.js`, loaded into the
+spawned script via `--require` with the `TOKEN_AUDIT_TEST_NOW` environment variable (an ISO
+8601 string) set, patches `Date.now()` and the argless `new Date()` to that fixed instant and
+leaves every other `Date` entry point untouched. It's a no-op unless `TOKEN_AUDIT_TEST_NOW` is
+set, so it only affects a test that opts in (via `tests/harness.js`'s `auditWithClock()` /
+`auditTextWithClock()`) — every other test still sees the real clock.
+
 ## Performance tests
 
 Some tests feed the script pathological input (very long commands, deeply nested shell
