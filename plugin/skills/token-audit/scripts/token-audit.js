@@ -1915,8 +1915,9 @@ const DETAIL_MAX_LINES = 40;
 // one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE/GH_POLLING
 // (cost of those turns; GH_POLLING Slice 31) share tier 0, by $ — then a fixed priority for flags
 // whose $ is only the flagged spend, $ as tie-break inside a tier: LONG_AGENT
-// (Q5's main lever) > LONG_SESSION, MULTIDAY > OPUS_HEAVY, CONCENTRATION >
-// BIG_CTX, PLUGIN_BLOAT (no $) > CLEAN; id last, for a stable order.
+// (Q5's main lever) above (LONG_SESSION, MULTIDAY — tied) above (OPUS_HEAVY,
+// CONCENTRATION — tied) above (BIG_CTX, PLUGIN_BLOAT — tied, no $) above CLEAN;
+// id last, for a stable order.
 const FLAG_TIER = { REGRESSION: 0, POLLING: 0, BOILERPLATE: 0, GH_POLLING: 0, LONG_AGENT: 1, LONG_SESSION: 2,
   MULTIDAY: 2, OPUS_HEAVY: 3, CONCENTRATION: 3, BIG_CTX: 4, PLUGIN_BLOAT: 4, CLEAN: 5 };
 const flagTier = f => FLAG_TIER[f.id] ?? 4;
