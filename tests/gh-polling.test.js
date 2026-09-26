@@ -189,10 +189,10 @@ test('GH_POLLING: ranks in tier 0 with POLLING/BOILERPLATE by its cost', () => {
   assert.ok(Math.abs(ids.indexOf('GH_POLLING') - boil) === 1, ids.join(' '));
 });
 
-// Review finding 1: a call is excluded PER OCCURRENCE/shape, not whole — a read and a write
+// A call is excluded PER OCCURRENCE/shape, not whole — a read and a write
 // gh/curl invocation in the same Bash call must keep the read shape and drop only the write.
 test('githubReadShapes: one call with a read gh loop AND a write gh call keeps only the read ' +
-  'shape (review finding 1)', () => {
+  'shape', () => {
   const cmd = 'until gh pr checks 4242; do sleep 30; done && gh pr merge 4242';
   assert.deepEqual(readShapes(cmd), ['gh pr checks']);
   assert.deepEqual(shapes(cmd).sort(), ['gh pr checks', 'gh pr merge']);
@@ -200,7 +200,7 @@ test('githubReadShapes: one call with a read gh loop AND a write gh call keeps o
 });
 
 test('githubReadShapes: one call with a read curl loop AND a write curl (-X PUT …/merge) ' +
-  'keeps only the read shape (review finding 1)', () => {
+  'keeps only the read shape', () => {
   const cmd = 'for i in $(seq 1 3); do curl -s https://api.github.com/repos/jdoe/demo-proj/' +
     'commits/$i/check-runs; sleep 5; done && curl -s -X PUT https://api.github.com/repos/' +
     'jdoe/demo-proj/pulls/4242/merge';
@@ -208,7 +208,7 @@ test('githubReadShapes: one call with a read curl loop AND a write curl (-X PUT 
 });
 
 test('GH_POLLING: a call with a read AND a write occurrence counts once, only under the ' +
-  'read shape (review finding 1)', () => {
+  'read shape', () => {
   const cmd = i => `until gh pr checks ${4000 + i}; do sleep 5; done && gh pr merge ${4000 + i}`;
   const f = ghFlag(audit(tmpClaudeDir(spread(N, 2, cmd))));
   assert.ok(f);
@@ -216,10 +216,9 @@ test('GH_POLLING: a call with a read AND a write occurrence counts once, only un
   assert.deepEqual(f.groups.map(g => g.shape), ['gh pr checks']);
 });
 
-// Review finding 3 (privacy): the word after `gh <group>` is free text unless it is on that
+// Privacy: the word after `gh <group>` is free text unless it is on that
 // group's read-verb whitelist — anything else (a branch/repo name) must never be printed.
-test('githubReadShapes: unknown word after `gh <group>` never printed, becomes `*` ' +
-  '(review finding 3)', () => {
+test('githubReadShapes: unknown word after `gh <group>` never printed, becomes `*`', () => {
   assert.deepEqual(readShapes('gh browse fix-login-bug'), ['gh browse *']);
   assert.deepEqual(readShapes('gh repo acme-secret'), ['gh repo *']);
   const dump = JSON.stringify(readShapes('gh browse fix-login-bug')) +
@@ -227,7 +226,7 @@ test('githubReadShapes: unknown word after `gh <group>` never printed, becomes `
   assert.doesNotMatch(dump, /fix-login-bug|acme-secret/);
 });
 
-test('GH_POLLING --json groups[]: unknown gh word never appears (review finding 3)', () => {
+test('GH_POLLING --json groups[]: unknown gh word never appears', () => {
   const cmd = i => `gh browse fix-login-bug-${i}`;
   const f = ghFlag(audit(tmpClaudeDir(spread(N, 2, cmd))));
   assert.ok(f);
@@ -235,9 +234,9 @@ test('GH_POLLING --json groups[]: unknown gh word never appears (review finding 
   assert.doesNotMatch(JSON.stringify(f), /fix-login-bug/);
 });
 
-// Review finding 7: global/local gh flags before the group/verb, and write-method regex
+// Global/local gh flags before the group/verb, and write-method regex
 // scoped to its own command (not the whole compound key).
-test('isGhWrite/githubReadShapes: --repo/-R before or after the group (review finding 7)', () => {
+test('isGhWrite/githubReadShapes: --repo/-R before or after the group', () => {
   assert.equal(isGhWrite(commandKey('gh pr --repo jdoe/demo-proj merge 4242')), true);
   assert.equal(isGhWrite(commandKey('gh -R jdoe/demo-proj pr merge 4242')), true);
   assert.deepEqual(readShapes('gh -R jdoe/demo-proj pr view 4242'), ['gh pr view']);
@@ -245,13 +244,13 @@ test('isGhWrite/githubReadShapes: --repo/-R before or after the group (review fi
 });
 
 test('isGhWrite: write-method regex scoped to its own command — an unrelated `-x post` in a ' +
-  'different command must not false-positive (review finding 7)', () => {
+  'different command must not false-positive', () => {
   assert.equal(isGhWrite(commandKey('grep -x post f && gh pr view 4242')), false);
 });
 
-// Review finding 2: extended write detection.
+// Extended write detection.
 test('isGhWrite: curl --request/-XPOST/--data*/--method=POST, gh api field flags (graphql ' +
-  'exception), gh workflow run / secret|variable set / repo fork (review finding 2)', () => {
+  'exception), gh workflow run / secret|variable set / repo fork', () => {
   assert.equal(isGhWrite('curl --request POST https://api.github.com/repos/jdoe/demo-proj/issues'), true);
   assert.equal(isGhWrite('curl -d @b.json https://api.github.com/repos/jdoe/demo-proj/issues'), true);
   assert.equal(isGhWrite('curl -G -d "state=open" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
@@ -266,10 +265,9 @@ test('isGhWrite: curl --request/-XPOST/--data*/--method=POST, gh api field flags
   assert.equal(isGhWrite('gh repo fork'), true);
 });
 
-// Re-review finding 2: `-f`/`-F` implicit POST must still read on an explicit GET spelled
+// `-f`/`-F` implicit POST must still read on an explicit GET spelled
 // as `-X GET`/`-XGET`/`--method GET`/`--method=GET`, case-insensitive.
-test('isGhWrite: `gh api` field flags read when the method is explicitly GET, any spelling ' +
-  '(re-review finding 2)', () => {
+test('isGhWrite: `gh api` field flags read when the method is explicitly GET, any spelling', () => {
   assert.equal(isGhWrite('gh api -X GET search/issues -f q=is:open'), false);
   assert.equal(isGhWrite('gh api -XGET search/issues -f q=is:open'), false);
   assert.equal(isGhWrite('gh api --method GET search/issues -f q=is:open'), false);
@@ -277,21 +275,19 @@ test('isGhWrite: `gh api` field flags read when the method is explicitly GET, an
   assert.equal(isGhWrite('gh api -f title=x repos/jdoe/demo-proj/issues'), true); // no GET: still writes
 });
 
-// Re-review finding 3: -G must be case-sensitive (curl's lowercase -g is --globoff, an
+// -G must be case-sensitive (curl's lowercase -g is --globoff, an
 // unrelated flag) and must be recognized fused into a combined short-flag cluster.
-test('isGhWrite: curl -G is case-sensitive and matches inside a combined short-flag cluster ' +
-  '(re-review finding 3)', () => {
+test('isGhWrite: curl -G is case-sensitive and matches inside a combined short-flag cluster', () => {
   assert.equal(isGhWrite('curl -g -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), true);
   assert.equal(isGhWrite('curl -sG -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
   assert.equal(isGhWrite('curl -Gs -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
   assert.equal(isGhWrite('curl --get -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
 });
 
-// Re-review finding 4: curl --json / -F / --form are implicit-POST body flags (unless -G);
+// curl --json / -F / --form are implicit-POST body flags (unless -G);
 // gh api --input is always a write; a graphql `-F query=@file` is a file read, not a write
 // just because the filename says "mutation".
-test('isGhWrite: curl --json/-F/--form, gh api --input, graphql query=@file is a read ' +
-  '(re-review finding 4)', () => {
+test('isGhWrite: curl --json/-F/--form, gh api --input, graphql query=@file is a read', () => {
   assert.equal(isGhWrite('curl --json \'{"title":"x"}\' https://api.github.com/repos/jdoe/demo-proj/issues'),
     true);
   assert.equal(isGhWrite('curl -F file=@a.txt https://api.github.com/repos/jdoe/demo-proj/releases'), true);
@@ -303,16 +299,89 @@ test('isGhWrite: curl --json/-F/--form, gh api --input, graphql query=@file is a
   assert.equal(isGhWrite("gh api graphql -f query='query { viewer { login } }'"), false);
 });
 
-// Re-review finding 4 (documented limitation, not fixed): a flag scanned inside another
-// flag's own quoted value is indistinguishable from a real one without real tokenizing.
-test('isGhWrite: known limitation — a flag-shaped substring inside a header value is read ' +
-  'literally (documented in REFERENCE.md, re-review finding 4)', () => {
-  assert.equal(isGhWrite("curl -H 'X-Debug: -d' https://api.github.com/repos/jdoe/demo-proj/pulls"), true);
+// Write detection tokenizes each occurrence: a flag-shaped string inside another option's
+// quoted value is that option's value, never a flag of its own.
+test('isGhWrite: a flag-shaped substring inside a header value is not a flag', () => {
+  assert.equal(isGhWrite("curl -H 'X-Debug: -d' https://api.github.com/repos/jdoe/demo-proj/pulls"), false);
+  assert.equal(isGhWrite('curl -H "X-Debug: -X POST" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
+  assert.equal(isGhWrite("gh api -H 'X-Debug: -f a=b' repos/jdoe/demo-proj/pulls"), false);
 });
 
-// Re-review finding 5: `gh search` read-verb whitelist gains `commits` (issues/prs/repos/code
-// were already present).
-test('githubReadShapes: `gh search commits` is a known, printed verb (re-review finding 5)', () => {
+// `gh search`: read-verb whitelist gains `commits` (issues/prs/repos/code were already present).
+test('githubReadShapes: `gh search commits` is a known, printed verb', () => {
   assert.deepEqual(readShapes('gh search commits fix --repo jdoe/demo-proj'), ['gh search commits']);
   assert.deepEqual(readShapes('gh search issues fix --repo jdoe/demo-proj'), ['gh search issues']);
+});
+
+const PULLS = 'https://api.github.com/repos/jdoe/demo-proj/pulls';
+
+// An explicit method always wins, for curl and gh api alike: GET (any spelling) reads even
+// with a body/field flag, POST/PUT/PATCH/DELETE writes; a body flag implies a write only
+// when no method is given.
+test('isGhWrite: explicit method wins for curl and gh api — GET reads with a body, a write ' +
+  'method writes without one', () => {
+  assert.equal(isGhWrite(`curl -X GET -d q=x ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl -XGET --json '{}' ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl --request=get -F a=b ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl --request DELETE ${PULLS}/1`), true);
+  assert.equal(isGhWrite('gh api --method=GET --input body.json repos/jdoe/demo-proj/issues'), false);
+  assert.equal(isGhWrite('gh api -X PATCH repos/jdoe/demo-proj/pulls/1'), true);
+  assert.equal(isGhWrite("gh api graphql -X GET -f query='mutation { x }'"), false);
+});
+
+// curl rules run only on a curl occurrence, gh api rules only on gh api: `-F`/`-d` on `gh api`
+// is a field flag (overridden by an explicit GET), never a curl body flag; a full
+// `https://api.github.com/…` URL given to gh api yields exactly one path shape.
+test('isGhWrite/githubReadShapes: gh api with a full URL and -F under an explicit GET reads, ' +
+  'one shape only', () => {
+  assert.equal(isGhWrite(`gh api -X GET -F per_page=100 ${PULLS}`), false);
+  assert.equal(isGhWrite(`gh api -F per_page=100 --method GET ${PULLS}`), false);
+  assert.deepEqual(readShapes(`gh api -X GET -F per_page=100 ${PULLS}`), ['pulls']);
+  assert.deepEqual(shapes(`gh api ${PULLS}/7`), ['pulls/*']);
+  assert.equal(isGhWrite(`gh api -F title=x ${PULLS}`), true); // no method: field flag writes
+  assert.equal(isGhWrite(`wget -d ${PULLS}`), false); // `-d` is only a body flag for curl
+});
+
+// graphql: an inline `query=` value containing the word `mutation` writes wherever the word
+// sits (leading space, newline, double quotes); a `$(…)`/`@file` value's text isn't visible,
+// so it reads; the field name must be exactly `query` (not `searchquery`).
+test('isGhWrite: graphql inline mutation anywhere in the query value writes; $(…)/@file read; ' +
+  '`query=` is a whole field name', () => {
+  assert.equal(isGhWrite("gh api graphql -f query='\n  mutation { addComment(x:1) { id } }'"), true);
+  assert.equal(isGhWrite("gh api graphql -f query=' mutation { addComment(x:1) { id } }'"), true);
+  assert.equal(isGhWrite('gh api graphql -f query="mutation { addComment(x:1) { id } }"'), true);
+  assert.equal(isGhWrite('gh api graphql -f query="$(cat m.graphql)"'), false);
+  assert.equal(isGhWrite('gh api graphql -F query=@mutation.graphql'), false);
+  assert.equal(isGhWrite("gh api graphql -f searchquery='mutation' -f query='{ viewer { login } }'"),
+    false);
+});
+
+// curl combined short-flag clusters split the way curl does (the first value-taking letter
+// ends the cluster); curl's options are case-sensitive: `-D` is `--dump-header`, `-x` `--proxy`.
+test('isGhWrite: curl -sd/-sXPOST/-sF clusters write, -sSfG reads; -D and -x are not -d/-X', () => {
+  assert.equal(isGhWrite(`curl -sd q=x ${PULLS}`), true);
+  assert.equal(isGhWrite(`curl -sXPOST ${PULLS}`), true);
+  assert.equal(isGhWrite(`curl -sF a=b ${PULLS}`), true);
+  assert.equal(isGhWrite(`curl -sSfG -d q=x ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl -D - ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl -sD h.txt ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl -x post:8080 ${PULLS}`), false);
+});
+
+test('isGhWrite: `gh pr view --json` stays a read', () => {
+  assert.equal(isGhWrite('gh pr view 12 --json statusCheckRollup'), false);
+  assert.deepEqual(readShapes('gh pr view 12 --json statusCheckRollup'), ['gh pr view']);
+});
+
+test('isGhWrite/githubReadShapes: linear on 200k-char inputs — many/unclosed quotes, clusters', () => {
+  const inputs = ['gh api graphql -f query=' + '"'.repeat(200000), `curl ${PULLS} '` + 'x'.repeat(200000),
+    `curl ${PULLS}` + ' -sss'.repeat(40000), 'gh api' + ' -x'.repeat(66000), 'curl -' + 'a'.repeat(200000),
+    'curl ' + "'a' ".repeat(50000) + PULLS, 'gh api ' + '--method '.repeat(22000), '\\'.repeat(200000),
+    'gh api graphql -f query=' + ' mutation'.repeat(22000)];
+  for (const s of inputs) {
+    const t = process.hrtime.bigint();
+    isGhWrite(s);
+    githubReadShapes(s);
+    assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 250, `slow on ${s.slice(0, 20)}…`);
+  }
 });
