@@ -106,7 +106,7 @@ one `… +N more: IDs` line for the rest:
 
 | tier | flags | sorted by |
 |---|---|---|
-| 0 — extra cost defined | `REGRESSION`, `POLLING`, `BOILERPLATE` | `amount` desc |
+| 0 — extra cost defined | `REGRESSION`, `POLLING`, `BOILERPLATE`, `GH_POLLING` | `amount` desc |
 | 1 — design decision Q5's main lever | `LONG_AGENT` | — |
 | 2 — session habits | `LONG_SESSION`, `MULTIDAY` | `amount` desc (tie-break) |
 | 3 — spend mix | `OPUS_HEAVY`, `CONCENTRATION` | `amount` desc (tie-break) |
@@ -115,7 +115,7 @@ one `… +N more: IDs` line for the rest:
 
 Tier 0 holds the flags whose saving design decision Q5 defines: `REGRESSION`'s `amount` is the extra
 cost vs the previous window's cost/message, `cur.cost − prev.costPerMsg × cur.msgs` (clamped
-≥ 0); `POLLING`/`BOILERPLATE`'s is the cost of those turns (the saving's upper bound, see
+≥ 0); `POLLING`/`BOILERPLATE`/`GH_POLLING`'s is the cost of those turns (the saving's upper bound, see
 below). Design decision Q5 defines no saveable part for `OPUS_HEAVY` (its `amount` is all Opus spend)
 or `CONCENTRATION` (top-5 session spend), nor for `LONG_AGENT`/`LONG_SESSION`/`MULTIDAY`
 (their flagged spend), so those rank by the fixed tier and use `amount` only as a tie-break
@@ -481,6 +481,54 @@ N (57 turns). Merging spellings is the "no fuzzing" call below — Slice 15.
   and only then is it cut in the middle; the full prefix is in `--json`. The flag line
   leaves out the ≥ 5 threshold to make room. A share under 0.5 % prints `<1%` (also
   POLLING), not `0%`.
+
+### `GH_POLLING` — one GitHub endpoint ≥ 20 calls across sessions (Slice 31)
+
+`POLLING` only sees one command key repeated in *one* session. GitHub polling done by many
+subagents — each checks CI a few times with its own inline `curl …/commits/<sha>/check-runs`
+loop, a different PR number or SHA in every call — never repeats one key often enough in any
+single session, yet adds up to hundreds of full-context turns in the window. `GH_POLLING`
+sums those calls over **every session and subagent in the window**, grouped by endpoint shape
+instead of command key. The script prints the calls, sessions (main + subagent) and subagents
+behind the hit shapes, their combined cost and share of window spend, and the most expensive
+shape with its call count, e.g. `183 calls in 46 sessions (20 subagents) = $25.8, 2% of
+spend; top 37× pulls +4 more`. `--json`: the flag carries `calls`, `sessions`, `subagents`,
+`cost`, `share` and `groups[]` = `{ shape, calls, sessions, subagents, cost, share }`, most
+expensive first. Tier 0 like `POLLING`, `amount` = the cost of those calls' turns.
+
+- **Counted calls**: Bash/PowerShell calls in the `wait/poll` or `github` activity category
+  that name a GitHub endpoint. `git push`, a plain `sleep`, `Monitor` never count.
+- **Endpoint shape** (`githubShapes()`): an `api.github.com/<path>` URL loses `repos/<owner>/
+  <repo>/` and its query; every other segment that is not a known REST word (`pulls`,
+  `commits`, `check-runs`, `actions`, `runs`, `jobs`, `merge`, `branches`, …) becomes `*`,
+  consecutive `*` collapse — `…/commits/<sha|branch|$SHA>/check-runs` → `commits/*/check-runs`,
+  `…/pulls/4242/merge` → `pulls/*/merge`, the repository itself → `repos/*`. `gh api <path>`
+  gets the same path shape; any other `gh` call is `gh <group> <verb>` (`gh pr checks`,
+  `gh run view`). Only whitelisted words are ever printed, so a shape never carries an owner,
+  repo, branch, file path or id. One literal anchor plus one negated character class per
+  pattern — linear on 200k-char input.
+- **Hit**: a shape with ≥ `GH_POLL_MIN_CALLS` calls in the window (a named constant; a count
+  per window, so `--days 30` sees roughly twice the calls of the default 14 days). A call that
+  hits two shapes counts in both groups and once in the flag totals. In `--all` scope a shape
+  sums across projects (the fix is per machine).
+- **Overlap**: the same turns can also sit in a `POLLING` run or carry a `BOILERPLATE`
+  credential prefix; tier-0 `amount`s are not deduplicated against each other.
+
+**Threshold — provisional, awaiting the user's HITL approval.** `GH_POLL_MIN_CALLS = 20` is the
+proposed default from real, deduped, all-history data (calls per project × shape, n = 50):
+p50 1, p75 3, p90 25, p95 31, max 76. Ordinary GitHub use stayed at ≤ 8 calls per shape; the
+known spread-out polling case was 25–76 per shape (218 calls over 54 sessions, 26 of them
+subagents, median 3 calls per session — invisible to `POLLING` at any N) and nothing fell in
+between. Any value from 9 to 25 fires on exactly the same five shapes (≈ 2 % of that project's
+spend, 0 hits elsewhere); 20 leaves headroom for heavier normal use (e.g. a PR created and
+merged every day of a 14-day window) that the measured data doesn't show. 40 would keep only
+the pure `check-runs` poll; ≤ 5 starts flagging auth checks (`gh auth status`, `user`).
+
+**Playbook**: install and authenticate `gh` (removes the per-call `git credential fill` +
+`curl` + JSON-body boilerplate) and wait with one call — `gh pr checks --watch`,
+`gh run watch`, or a `run_in_background` / `Monitor` wait — instead of each subagent polling
+CI in its own loop. Put the wait in the orchestrating session or a script, not in every
+subagent's prompt.
 
 ### `BIG_CTX` — average context per message > 150k
 
