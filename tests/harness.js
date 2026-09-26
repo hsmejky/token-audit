@@ -135,9 +135,10 @@ function tmpUserConfig(claudeDir, obj) {
 
 // Perf-test timing limit, shared by every test that asserts a parser stays
 // under some millisecond bound on pathological input. CI runners are slower
-// and noisier than a dev machine, so under CI (`process.env.CI` truthy) the
-// limit is multiplied instead of the test being skipped — a real regression
-// should still fail, just against a more forgiving bound.
+// and noisier than a dev machine, so under CI (`process.env.CI` set to
+// `true` or `1`, see below) the limit is multiplied instead of the test
+// being skipped — a real regression should still fail, just against a more
+// forgiving bound.
 const CI_PERF_MULTIPLIER = 5;
 // Strict equality, not truthiness: GitHub Actions sets CI=true/1, but a local shell that does
 // `CI=false node --test ...` (or any other non-empty override) would otherwise still count as

@@ -408,9 +408,10 @@ test('activityCategory: 50k nested `(…)` in a command key processes well under
 // perfLimit's CI multiplier (harness.js) widens the absolute bound enough that a reintroduced
 // O(n²) scan can slip back under it on a slow-enough CI runner — the multiplier is tuned for
 // machine noise, not for telling linear from quadratic apart. So alongside the absolute bound,
-// measure the same scan at 1/4 the size and assert the timing ratio: linear code takes ~4x
-// longer at 4x the input, quadratic ~16x; a threshold of 8 sits between the two and is
-// independent of how fast or slow the machine is.
+// measure the same scan at 1/4 the size and assert the timing ratio: linear code measures
+// ~2-4x longer at 4x the input (the low end is JIT warm-up on the smaller run, not sublinear
+// behaviour), quadratic ~16x; a threshold of 8 sits between the two and is independent of how
+// fast or slow the machine is.
 function timeMs(fn) {
   const t0 = process.hrtime.bigint();
   fn();

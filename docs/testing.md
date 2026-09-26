@@ -46,13 +46,15 @@ constructs, many repeated flags) and assert that parsing finishes within a time 
 accidental non-linear behaviour before it ships. These tests are never skipped.
 
 Because a CI runner is slower and noisier than a developer's machine, every such assertion goes
-through one shared helper that multiplies the limit when the `CI` environment variable is set,
-instead of each test hard-coding its own allowance. If a performance test is flaky in CI, adjust
-the shared helper or the specific limit — don't skip the test and don't duplicate the
-CI-detection logic locally.
+through one shared helper that multiplies the limit, instead of each test hard-coding its own
+allowance. The multiplier applies only when the `CI` environment variable is exactly `true` or
+`1` (strict equality, not truthiness — a local `CI=false node --test ...` run must not get the
+multiplier). If a performance test is flaky in CI, adjust the shared helper or the specific
+limit — don't skip the test and don't duplicate the CI-detection logic locally.
 
 ## CI
 
-Continuous integration runs the full suite on every push and pull request, across a matrix of
-supported Node versions and both a Linux and a Windows runner, with no dependency installation
-step. A change that only passes on one platform or one Node version isn't done.
+Continuous integration runs the full suite across a matrix of supported Node versions and both
+a Linux and a Windows runner, with no dependency installation step. It runs on every pull
+request (any branch), and on every push to `main` only — not on push to other branches. A
+change that only passes on one platform or one Node version isn't done.
