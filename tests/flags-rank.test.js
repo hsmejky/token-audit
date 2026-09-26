@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine } =
+const { rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, sparkline } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Design decision Q-B (docs/decisions.md): FLAGS rank by extra cost where that decision
@@ -89,4 +89,52 @@ test('trendLine: zero first-week cost -> n/a instead of a % (no divide by zero)'
   const l = trendLine([wk('2026-09-14', 0), wk('2026-09-21', 0.1)]);
   assert.match(l, /n\/a/);
   assert.ok(!/Infinity|NaN/.test(l), l);
+});
+
+// AC 5 (docs/roadmap.md "Docs & fun"): a block-character sparkline, printed inline in the
+// TREND line by the script itself, not as a separate line.
+test('sparkline: scaling — evenly spaced values hit every level low to high', () => {
+  assert.equal(sparkline([0, 1, 2, 3, 4, 5, 6, 7]), '▁▂▃▄▅▆▇█');
+  assert.equal(sparkline([0, 10]), '▁█');
+  assert.equal(sparkline([10, 0]), '█▁');
+});
+
+test('sparkline: flat series (no variation) -> one mid-level bar per point, not a crash', () => {
+  assert.equal(sparkline([5, 5, 5]), '▄▄▄');
+  assert.equal(sparkline([0, 0, 0]), '▄▄▄'); // all-zero is flat too, not a divide-by-zero
+});
+
+test('sparkline: empty -> empty string (no bars, no crash)', () => {
+  assert.equal(sparkline([]), '');
+});
+
+test('sparkline: single point -> one bar, same flat treatment as a flat series', () => {
+  assert.equal(sparkline([0.5]), '▄');
+});
+
+test('trendLine: multi-week output carries a sparkline inline, no extra line', () => {
+  const l = trendLine([wk('2026-08-31', 0.05), wk('2026-09-07', 0.10), wk('2026-09-14', 0.20),
+    wk('2026-09-21', 0.12)]);
+  assert.ok(!l.includes('\n'), l);
+  assert.match(l, /^TREND {8}[▁▂▃▄▅▆▇█]+ /);
+});
+
+test('trendLine: single week also carries a one-bar sparkline inline', () => {
+  const l = trendLine([wk('2026-09-21', 0.12)]);
+  assert.match(l, /^TREND {8}[▁▂▃▄▅▆▇█] /);
+});
+
+test('trendLine: no data -> no sparkline at all', () => {
+  assert.equal(trendLine([]), 'TREND        no data');
+});
+
+test('trendLine: sparkline never pushes the line over the 120-char budget, however much history', () => {
+  // A long span, many weeks with data, and large costPerMsg swings (wide money() output) —
+  // the worst case for the fixed 120-char line budget.
+  const wks = Array.from({ length: 60 }, (_, i) => {
+    const d = new Date(Date.UTC(2020, 0, 1 + i * 7));
+    return wk(d.toISOString().slice(0, 10), i % 2 ? 12.34 : 0.5);
+  });
+  const l = trendLine(wks);
+  assert.ok([...l].length <= 120, `line is ${[...l].length} chars:\n${l}`);
 });

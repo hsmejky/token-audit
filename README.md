@@ -66,7 +66,7 @@ SPEND        $3.86   prev window $0.288  +1242%
 PER MESSAGE  ctx 108k avg   cost $0.034   prev 8k / $0.010
 SESSIONS     3   median 40 msgs   p90 60   ≥200 msgs: 0
 ALL-TIME     $4.15 over 4 sessions, 144 messages
-TREND        2026-09-14 $0.010/msg → 2026-09-21 $0.034/msg +253%   span 2 wk (2 with data)   full table in --json
+TREND        ▁█ 2026-09-14 $0.010/msg → 2026-09-21 $0.034/msg +253%   span 2 wk (2 with data)   full table in --json
 CONFIG       model=(unset — harness default) effort=unset plugins=0 prefix≈0.0k retention=30
 
 FLAGS

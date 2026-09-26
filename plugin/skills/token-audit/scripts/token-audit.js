@@ -1996,19 +1996,46 @@ function continuedFlagLines(moved, room) {
   if (stillMoved.length) out.push(moreIdsLine(stillMoved, '--json'));
   return out;
 }
+// Sparkline over a plain array of numbers, 8 levels low to high. A flat series (every value
+// equal, including a single point or all-zero) has no range to scale against, so it prints one
+// mid-level bar per point instead of dividing by zero. Pure and unbounded — trendLine() below
+// is the one that caps how many points it feeds this, to stay inside the line-width budget.
+const SPARK_LEVELS = '▁▂▃▄▅▆▇█';
+function sparkline(values) {
+  if (!values.length) return '';
+  const min = Math.min(...values), max = Math.max(...values);
+  if (max === min) return SPARK_LEVELS[3].repeat(values.length);
+  return values.map(v => SPARK_LEVELS[Math.round((v - min) / (max - min) * (SPARK_LEVELS.length - 1))]).join('');
+}
+// Caps the sparkline to whatever room is left once the rest of the TREND line (built without
+// it) is measured, so the line stays inside the 120-char budget by construction no matter how
+// much history there is — same idea as joinFit()/fitPrefix() elsewhere in this file. Also capped
+// at MAX_SPARK_POINTS even when room allows more: recent weeks read better than a long, faint
+// smear, and --json's full `weeks` table is the place for every data point anyway.
+const MAX_SPARK_POINTS = 12;
+function withSpark(line, costsPerMsg) {
+  const room = 120 - [...line].length - 1; // 1 for the separating space
+  const n = Math.max(0, Math.min(room, MAX_SPARK_POINTS, costsPerMsg.length));
+  if (n < 1) return line;
+  const spark = sparkline(costsPerMsg.slice(-n));
+  return line.replace('TREND        ', `TREND        ${spark} `);
+}
 // TREND: one line for the whole history. "span N wk" = calendar weeks
 // from the first to the last week with data; "(M with data)" = weeks with rows.
 function trendLine(wks) {
   if (!wks.length) return 'TREND        no data';
   const first = wks[0], last = wks[wks.length - 1];
   if (wks.length === 1)
-    return `TREND        week of ${first.week} only  ${money(first.costPerMsg)}/msg   full table in --json`;
+    return withSpark(`TREND        week of ${first.week} only  ${money(first.costPerMsg)}/msg   full table in --json`,
+      [first.costPerMsg]);
   const delta = first.costPerMsg > 0
     ? `${last.costPerMsg >= first.costPerMsg ? '+' : ''}${(100 * (last.costPerMsg / first.costPerMsg - 1)).toFixed(0)}%`
     : 'n/a';
   const span = Math.round((Date.parse(last.week) - Date.parse(first.week)) / (7 * DAY)) + 1;
-  return `TREND        ${first.week} ${money(first.costPerMsg)}/msg → ${last.week} ${money(last.costPerMsg)}/msg ` +
-    `${delta}   span ${span} wk (${wks.length} with data)   full table in --json`;
+  const line = `TREND        ${first.week} ${money(first.costPerMsg)}/msg → ` +
+    `${last.week} ${money(last.costPerMsg)}/msg ${delta}   span ${span} wk ` +
+    `(${wks.length} with data)   full table in --json`;
+  return withSpark(line, wks.map(w => w.costPerMsg));
 }
 // Design decision Q3, summary rework (docs/decisions.md#summary-back-to-24-lines):
 // CONFIG, UNPRICED and the SPEND family split
@@ -2440,7 +2467,7 @@ if (require.main === module) main();
 module.exports = {
   projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, githubShapes,
   githubReadShapes, isGhWrite, GH_POLL_MIN_CALLS,
-  rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags, appendFlagsMore,
+  rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, sparkline, fitFlags, appendFlagsMore,
   familyLine, renderDetail,
   SUMMARY_MAX_LINES, DETAIL_MAX_LINES,
   // Test-only: lets tests (activity.test.js) probe the `script run` rule's own regex in
