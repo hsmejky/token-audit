@@ -11,16 +11,16 @@ behind the design are in [decisions.md](decisions.md), the code map in
 `/review` of the whole script against [architecture.md](architecture.md) and
 [decisions.md](decisions.md), plus a hands-on run on real data.
 
-- [ ] The four transcript bugs found in the original script (dedupe, unknown models, subagent
+- [x] The four transcript bugs found in the original script (dedupe, unknown models, subagent
       project, per-model effort) are fixed and pinned by fixtures.
-- [ ] Q1–Q10 and the later decisions are implemented as recorded.
-- [ ] Confirm the subagent-distribution population (every subagent in the window, not only the
+- [x] Q1–Q10 and the later decisions are implemented as recorded.
+- [x] Confirm the subagent-distribution population (every subagent in the window, not only the
       top 10; Q3).
-- [ ] Summary ≤ 24 lines, DETAIL ≤ 40 lines, every line ≤ 120 characters, on fixtures and on
+- [x] Summary ≤ 24 lines, DETAIL ≤ 40 lines, every line ≤ 120 characters, on fixtures and on
       real data.
-- [ ] Numbers on real data are plausible and consistent with the dedupe factor documented in
+- [x] Numbers on real data are plausible and consistent with the dedupe factor documented in
       REFERENCE.md.
-- [ ] Review findings fixed or moved to the list below.
+- [x] Review findings fixed or moved to the list below.
 
 ### Repo hygiene
 
