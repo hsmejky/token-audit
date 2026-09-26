@@ -92,16 +92,29 @@ test('identity: accent folding stays linear on a 200k-char accented input', () =
   assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
 });
 
-test('security: git config read for identity is --global and pinned to a safe cwd', () => {
+test('security: git config read for identity is pinned to a safe cwd (home dir)', () => {
   // A cloned/malicious repo could plant its own `git`/`git.exe` in its working tree;
   // on Windows, an unpinned cwd lets that shadow the real git for execFileSync.
-  // currentIdentity() must fix `cwd` (not inherit the caller's) and read --global,
-  // not whatever a repo-local config in that cwd would otherwise layer in.
-  const src = fs.readFileSync(
-    require.resolve('../plugin/skills/token-audit/scripts/token-audit.js'), 'utf8');
-  const call = src.slice(src.indexOf("execFileSync('git'"), src.indexOf("execFileSync('git'") + 300);
-  assert.match(call, /--global/);
-  assert.match(call, /cwd:\s*os\.homedir\(\)/);
+  // currentIdentity() must fix `cwd` to the home dir (not inherit the caller's), which
+  // also cuts off any repo-local config that cwd would otherwise layer in.
+  const scriptPath = require.resolve('../plugin/skills/token-audit/scripts/token-audit.js');
+  const cp = require('child_process');
+  const realExecFileSync = cp.execFileSync;
+  let call = null;
+  cp.execFileSync = (...args) => { call = args; return ''; };
+  delete require.cache[scriptPath];
+  try {
+    const mod = require(scriptPath);
+    mod.redactPaths('nothing to redact here');
+    assert.ok(call, 'expected currentIdentity() to call execFileSync');
+    const [cmd, cmdArgs, opts] = call;
+    assert.equal(cmd, 'git');
+    assert.deepEqual(cmdArgs, ['config', 'user.name']);
+    assert.equal(opts.cwd, os.homedir());
+  } finally {
+    cp.execFileSync = realExecFileSync;
+    delete require.cache[scriptPath];
+  }
 });
 
 test('source: every line of the script and the tests is ≤ 120 chars', () => {

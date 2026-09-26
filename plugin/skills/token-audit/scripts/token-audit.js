@@ -998,10 +998,15 @@ function currentIdentity() {
   let username = '', name = '';
   try { username = os.userInfo().username; } catch { /* no passwd entry */ }
   try {
-    // --global (not the repo-local value) and cwd: home, not the caller's cwd: this
-    // reads the machine's identity, not a repo's, and a cwd inside an untrusted cloned
-    // repo must never be allowed to supply the `git` executable that runs here.
-    name = require('child_process').execFileSync('git', ['config', '--global', 'user.name'],
+    // No --global: cwd is pinned to the home dir below, which already cuts off any
+    // repo-local config a cloned/audited project could layer in, and closes the
+    // hijack where an untrusted cwd supplies its own `git`/`git.exe`. Reading plain
+    // `user.name` (not --global) from that safe cwd still reports the machine's
+    // identity. Trade-off: since cwd is the home dir, not the audited project's
+    // worktree, `includeIf gitdir:` conditions keyed to that project's path don't
+    // match, so a name set only via such an include won't be picked up (see
+    // docs/architecture.md).
+    name = require('child_process').execFileSync('git', ['config', 'user.name'],
       { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
         cwd: os.homedir() }).trim();
   } catch { /* no git or no user.name */ }

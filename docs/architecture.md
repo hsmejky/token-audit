@@ -35,8 +35,11 @@ REFERENCE.md  (flag → playbook; the skill turns flags into at most 3 proposed 
 ```
 
 - **Read-only and offline.** The script reads local files only, never writes, never opens a
-  network connection. The one subprocess is a local `git config user.name`, used to redact the
-  user's own name (see [privacy](#privacy-and-redaction-model)).
+  network connection. The one subprocess is a local `git config user.name`, run with `cwd`
+  pinned to the home dir (not the audited project) — this closes a cwd-supplied `git`/`git.exe`
+  hijack and skips any repo-local override, at the cost of not matching an `includeIf gitdir:`
+  keyed to that project — used to redact the user's own name (see
+  [privacy](#privacy-and-redaction-model)).
 - **Zero dependencies.** Plain Node (`fs`, `path`, `readline`, `crypto`, `os`,
   `child_process`), Node 18 or newer. Tests use `node:test`.
 - **Measure, then advise.** The script prints numbers and flags. The skill (`SKILL.md`) maps each
@@ -268,7 +271,9 @@ by a sticky regex (`WRAP_RE`) in one pass, and recursion is depth-capped. Timing
   3. the identity layer: the login name, the home folder name and `git config user.name`, whole
      and split into parts, become `<user>` wherever they appear as a whole word, with accents
      folded on both sides (`identityPattern()`, `currentIdentity()`, `redactIdentity()`). Terms
-     shorter than `ID_MIN_LEN` and generic names (`ID_GENERIC`) are skipped.
+     shorter than `ID_MIN_LEN` and generic names (`ID_GENERIC`) are skipped. `git config` runs
+     with `cwd` pinned to the home dir (safe against a cwd-supplied `git` and a repo-local
+     override), so it does not match an `includeIf gitdir:` scoped to the audited project.
 - **Untrusted text.** Plugin, MCP server and settings values can be author- or attacker-controlled.
   `show()` collapses control, format and line-separator characters (`CONTROL_CHARS`) so a value
   cannot inject a fake report line. `showAny()` walks objects and arrays so `--json` keeps real
