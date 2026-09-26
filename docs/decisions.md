@@ -319,3 +319,10 @@ doing. The decisions below come from that review.
   pathological input; each known blow-up has a timing test.
 - **Output width**: every text line ≤ 120 characters; advice text wraps instead of
   being cut; untrusted names are sanitized so they cannot forge report lines.
+- **TREND sparkline is inline, full-range, and text-only**: printed in the `TREND` line itself
+  rather than as its own row, so a glance at cost/message also shows its shape (e.g. a steady
+  climb versus a spike that has since settled reads differently even at the same first→last
+  number). Scaled against the low/high of the whole trend, not just the trailing weeks shown —
+  a trailing flat run must still read as low against a wider history, not as a false "no
+  change" flat bar. No `--json` field for it: `weeks` already gives every point, so the bars
+  would be a redundant re-encoding of data already there.
