@@ -41,7 +41,7 @@ input, cache write and output are identical, but cache read is $1/MTok for Fable
 vs $0.25/MTok for Fable 5.1 — a plain `includes('fable')` match used to silently price
 Fable 5 at the Fable 5.1 rate. Both still roll into the same `Fable` family bucket in SPEND.
 
-### Exact matching, not prefix/`includes()` (Slice 25)
+### Exact matching, not prefix/`includes()`
 
 `rateFor` matches the normalized model string (`claude-` prefix stripped, a trailing
 8-digit date suffix stripped, dots folded to hyphens) against an exact list of known
@@ -79,7 +79,7 @@ every run just from these, drowning out a real new-model warning. A `<synthetic>
 with non-zero usage (unexpected, but not ruled out) is not excluded — it still goes
 through the normal UNPRICED + warning path below.
 
-The text report prints `UNPRICED` as **one line** (Slice 28, HITL decision D):
+The text report prints `UNPRICED` as **one line** (HITL decision D):
 `UNPRICED     <n> model(s) <tokens>M tok: <model>, <model>, +N more (--json) -- add prices to
 PRICES + REFERENCE.md`. It names as many models as fit the 120-char line (each fit to 40
 chars) and ends the list in one `+N more (--json)` marker when they don't all fit; `--json`
@@ -98,7 +98,7 @@ which misrepresented an all-time total as this-window activity.
 
 Each flag the script prints maps to exactly one entry. Quote the script's number.
 
-**Summary cap and ranking (Slice 28, HITL Q-B/Q-C)**: the summary's `FLAGS` block shows as many
+**Summary cap and ranking (HITL Q-B/Q-C)**: the summary's `FLAGS` block shows as many
 flags, in this order (`rankFlags()`), as fit the lines left after every other fixed summary line
 and the *whole* `SECURITY` block, computed first so `SECURITY` is never displaced (`fitFlags()`;
 typically 4-5 flags on real data, fewer if `SECURITY` needs more room, more if it doesn't) — plus
@@ -113,7 +113,7 @@ one `… +N more: IDs` line for the rest:
 | 4 — no dollar figure | `BIG_CTX`, `PLUGIN_BLOAT` | id |
 | 5 | `CLEAN` | — |
 
-Tier 0 holds the flags whose saving design decision Q-B (Slice 28) defines: `REGRESSION`'s `amount` is the extra
+Tier 0 holds the flags whose saving design decision Q-B defines: `REGRESSION`'s `amount` is the extra
 cost vs the previous window's cost/message, `cur.cost − prev.costPerMsg × cur.msgs` (clamped
 ≥ 0); `POLLING`/`BOILERPLATE`/`GH_POLLING`'s is the cost of those turns (the saving's upper bound, see
 below). Design decision Q-B defines no saveable part for `OPUS_HEAVY` (its `amount` is all Opus spend)
@@ -128,7 +128,7 @@ it would pass 120 chars), and print in full under `FLAGS (continued, ranked, N t
 end of DETAIL. That block counts against DETAIL's 40-line budget: it shows the flags that fit
 (a wrapped flag counts all its lines) and names the rest on a `… +N more: IDs (--json)` line;
 with no room for even one flag it is left out. `--json`'s `flags` array is unranked and always
-has every flag; since Slice 28 each entry also carries `amount` (the dollar figure above, 0 for
+has every flag; each entry also carries `amount` (the dollar figure above, 0 for
 `BIG_CTX`/`PLUGIN_BLOAT`/`CLEAN`) next to `id`/`text`.
 
 ### `MULTIDAY` — sessions spanning more than a day
@@ -144,7 +144,7 @@ reopen against the artifact. Never resume yesterday's session "just to ask one t
 Same mechanism, measured by turns instead of days. The script prints what share of
 window spend these sessions hold — usually a quarter to a half from a handful of them.
 
-**Slice 15 HITL re-tune (real, deduped, all-history data, `token-audit.js --all --days
+**HITL re-tune (real, deduped, all-history data, `token-audit.js --all --days
 3650` and per-project cuts; full table measured during development):**
 main-thread turn distribution (subagents excluded) was p50 35, p75 64, p90 121, p95 185,
 p99 4784 (main history: 195 sessions; the p99 jump is the two multi-day monster sessions,
@@ -180,7 +180,7 @@ A subagent is just another session — the same "context re-sent every turn" mec
 because it lives inside a work unit, not among the top main sessions. The script prints how
 many subagents cross either threshold and their combined share of window spend.
 
-**Slice 15 HITL re-tune** (`LONG_AGENT_TURNS` = 150 unchanged, `LONG_AGENT_CTX` raised
+**HITL re-tune** (`LONG_AGENT_TURNS` = 150 unchanged, `LONG_AGENT_CTX` raised
 300k → 400k; real, deduped, all-history data — full table measured during development):
 subagent turn distribution (761 subagents, all history) p50 34, p75 73, p90 134,
 p95 174, p99 287, max 456; peak-ctx distribution p50 146k, p75 239k, p90 352k, p95 440k,
@@ -212,7 +212,7 @@ stays clean on the project that already follows the playbook below.
 details unstated; decided at implementation time:
 
 **Decided**: both comparisons are strict `>` (151 turns fires, 150 does not; 400 001 ctx fires,
-400 000 does not — the boundary moved with the Slice 15 re-tune, the comparison direction did
+400 000 does not — the boundary moved with the threshold re-tune, the comparison direction did
 not) — design decision Q5 phrases the threshold as "over N turns" and "peak context > 300k," both
 explicitly strictly-greater language. `LONG_SESSION` instead uses `>=`, because its own
 threshold ("200 messages") is stated as the boundary itself, not phrased as "over 200".
@@ -238,7 +238,7 @@ carries `groups[]` = `{ sid, parent, key, count, cost, share }`, most expensive 
 the same subagent id spawned under two different parents shares one `sid`; `parent` is what
 tells those two groups apart.
 
-**Slice 15 HITL re-tune** (`POLL_MIN_CALLS` 20 → 10; real, deduped, all-history data, sessions
+**HITL re-tune** (`POLL_MIN_CALLS` 20 → 10; real, deduped, all-history data, sessions
 with any poll-category shell call, n = 819 — full table measured during development):
 per-session max repeat of one key was p50 1, p75 2, p90 3, p95 6, p99 20, max 104 — almost
 every session repeats nothing, the tail is thin. 20 (the original guess) sat at exactly p99,
@@ -253,7 +253,7 @@ own `script run` activity category (below) and leaving it out of `POLL_CATEGORIE
 `check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of the second project's spend) still
 does not trip `POLLING` even at N = 10 — it is spread over 33 sessions (max 8 calls/session)
 behind ~87 distinct per-call keys (a fresh PR/commit id each time), so no single key repeats
-enough in one session. `GH_POLLING` (Slice 31) is that cross-session detector — flagging the
+enough in one session. `GH_POLLING` is that cross-session detector — flagging the
 same polling shape spread across many sessions instead of repeated within one; see its own
 section below.
 
@@ -273,13 +273,13 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   a subagent is its own session, also vs. a same-named agent under another parent). Other
   tools (`Read`, `TaskOutput`, …) don't count — POLLING is about a *command*.
 - **Only categories where a repeat is a wait count**: `POLL_CATEGORIES` = wait/poll, github,
-  read, other. test/lint/build, git, edit, screenshot and (Slice 15) `script run` are
+  read, other. test/lint/build, git, edit, screenshot and `script run` are
   excluded — a repeated test run is a TDD loop, a repeated script run is iterating on it,
   not polling. Why not just wait/poll + github: on real transcripts (2026-09-25, all
   history) the bulk of real polling was `cat`/`tail` of background-task `.output` files
   (read), `tasklist` and `echo waiting-N` (other, at the time); wait/poll alone caught 1 of
-  ~10. Same key ≥ 20 over all categories gave 14 hits, 2 of them pytest loops. Slice 15
-  additionally moved `tasklist`/`Get-Process` and `echo waiting-*`/`echo idle-*` from
+  ~10. Same key ≥ 20 over all categories gave 14 hits, 2 of them pytest loops. The same
+  re-tune additionally moved `tasklist`/`Get-Process` and `echo waiting-*`/`echo idle-*` from
   `other` into `wait/poll` itself (they are "burn a turn on purpose to wait" patterns, not
   uncategorized noise), so this bullet's `other` catch is narrower now than the 2026-09-25
   measurement above describes.
@@ -292,7 +292,7 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   check or noise). A "gap between repeats" rule was tried and dropped: it didn't remove the
   spread-out-file collapses and cut a real log-polling run. Tightening this (e.g. requiring
   a dominant raw command share, or time-clustering the repeats) belongs in `polling()` itself,
-  not `commandKey()` — deferred to Slice 15.
+  not `commandKey()` — deferred for now.
 - **Cost = 1/n of an n-call turn** (same split as COST BY ACTIVITY), share of window spend.
 - **Printed key is path-redacted**: `commandKey()` leaves some paths in (`O=/c/Users/…`
   assignments, `{ cd …; }`, `(cd …) 2>&1`, `$(cd …)`, unquoted `C:\…` args), so `polling()`'s
@@ -314,7 +314,7 @@ one `sleep`/`until … done` loop inside a single call waits for free.
   linear time instead of quadratic.
 - **Secret layer — credentials are redacted to `<secret>`** before the path and name layers
   (`redactPaths()` → `redactSecrets()`), so a token pasted into a command that repeats ≥ 10×
-  (Slice 15: was ≥ 20×) never prints. Shapes: known token prefixes (`ghp_`/`gho_`/`ghs_`/`ghu_`, `github_pat_`,
+  (previously ≥ 20×) never prints. Shapes: known token prefixes (`ghp_`/`gho_`/`ghs_`/`ghu_`, `github_pat_`,
   `sk-`/`sk-ant-`, `xoxb-`/`xoxp-`/`xoxa-`/`xoxs-`, `AKIA…`, a JWT `eyJ….….…`); the value of an
   `Authorization:` / `Cookie:` / `*-Token:` / `*-Api-Key:` / `*Secret:` header (a `Bearer` /
   `Basic` / `token` scheme word stays); the header value runs to the next quote/backtick/
@@ -398,7 +398,7 @@ of window spend of the turns carrying them, and the most expensive prefix with i
 and #turns. `--json`: the flag carries `groups[]` = `{ prefix, sessions, turns, cost, share }`,
 most expensive first.
 
-**Slice 15 HITL re-tune: kept N = 5** (real, deduped, all-history data; distribution of
+**HITL re-tune: kept N = 5** (real, deduped, all-history data; distribution of
 sessions-per-prefix over 206 prefixes: p50 1, p90 2, p95 3, p99 8, max 71 — full table
 measured during development). 5 sits between p95 (3) and p99 (8): loosening to 3 (~p95)
 lets in more idioms (`T=$(mktemp -d)`, loop counters) without finding more real boilerplate;
@@ -452,17 +452,17 @@ hit prefixes counts in both groups, but once in the flag's total cost/share.
 sessions / 1210 turns (was 68 / 1171); the credential fetch 8 / 39 and 7 / 18 (was 8 / 38
 and 6 / 15); new: `$env:PYTHONIOENCODING=<value>` (6 / 23, real), `SHA=$(git rev-parse
 HEAD)` (13 / 22), `start=$(date +%s)` (5 / 14) and `n=<value>` (5 / 114, a loop counter —
-noise; Slice 15). The credential fetch is in 54 sessions / 232 calls overall, but in ~15
+noise). The credential fetch is in 54 sessions / 232 calls overall, but in ~15
 spellings (quotes, `\n\n`, `2>/dev/null`, `sed` vs `grep | cut`, `TOKEN` vs `T`), most
 in 2–4 sessions each, plus some fetches after a non-assignment segment (`S=<path> && cat …
 && TOKEN=$(…)`); the leading run fixes only the few behind an export / path variable. So the
 design's ~110 is right for the fetch overall; the flag reports the two spellings that cross
-N (57 turns). Merging spellings is the "no fuzzing" call below — Slice 15.
+N (57 turns). Merging spellings is the "no fuzzing" call below.
 
 **Judgment calls:**
 - **Exact prefix, no fuzzing**: the credential fetch in three spellings is three groups (quote
   style, `\n\n`, `sed` vs `grep`). Merging them would need a looser key; not needed — the two
-  main spellings each cross N on their own. Revisit in Slice 15 if a real case splits below N.
+  main spellings each cross N on their own. Revisit this if a real case splits below N.
 - **Cost = the turns carrying the prefix**, 1/n of an n-call turn (as in COST BY ACTIVITY), not
   the prefix's own tokens: cost = turns × context, and those turns are what a `gh` call or a
   setting would have made shorter or fewer. It over-states the saving (the turn also did real
@@ -482,7 +482,7 @@ N (57 turns). Merging spellings is the "no fuzzing" call below — Slice 15.
   leaves out the ≥ 5 threshold to make room. A share under 0.5 % prints `<1%` (also
   POLLING), not `0%`.
 
-### `GH_POLLING` — one GitHub endpoint ≥ 20 calls across sessions (Slice 31)
+### `GH_POLLING` — one GitHub endpoint ≥ 20 calls across sessions
 
 `POLLING` only sees one command key repeated in *one* session. GitHub polling done by many
 subagents — each checks CI a few times with its own inline `curl …/commits/<sha>/check-runs`
@@ -705,7 +705,7 @@ are also a lever, not noise — `POLLING` and `BOILERPLATE` catch those; only th
 
 ## Baseline
 
-Anchor for trend questions, computed with the deduped (post-Slice-2) script,
+Anchor for trend questions, computed with the deduped script,
 `--all --days 3650`, all local history through 2026-09-25. 972 sessions total: 196
 main + 776 subagents, spanning 9 weeks with data (2026-07-27 → 2026-09-25).
 
@@ -725,17 +725,16 @@ Subagent turn/peak-ctx percentiles (measured the same way, slightly different su
 count on a later run since history keeps growing) live in the `LONG_AGENT` section above,
 not duplicated here.
 
-> **Supersedes the pre-Slice-2 baseline.** The first full measurement (2026-08-04 →
-> 2026-09-15, 283 sessions, 63 910 transcript lines) counted every transcript line as a
-> message; one API response is written as several lines (thinking / text / tool_use)
-> sharing one `message.id`, so its spend and message counts were inflated ≈ 1.9×.
-> All-time recount on this machine when the dedupe fix landed, Slice 2, 2026-09-25:
-> 118 574 lines → 63 083 turns, $24.1k → $12.9k deduped; the rise to $13 546 above is
-> newer history, not a method change.
-> The old baseline reported 86.5 % Opus share,
-> 79.6 % / 20.4 % main/subagent split, sessions ≥ 250 msgs at 57.5 % of spend — do not
-> read a trend into old-baseline vs. this table; the dedupe fix and threshold re-tune
-> (Slices 2 and 15) both moved the numbers.
+> **Supersedes an earlier, pre-dedupe-fix baseline.** The first full measurement counted
+> every transcript line as a message; one API response is written as several lines
+> (thinking / text / tool_use) sharing one `message.id`, so its spend and message counts
+> were inflated by roughly the dedupe factor (≈ 1.9× on this machine's history) before the
+> fix. The all-time recount right after the fix landed dropped both the deduped turn count
+> and the total spend by about that same factor; the further rise to the total above is
+> newer history accumulating since then, not a method change.
+> The old baseline's model-share and main/subagent-split numbers moved by a similar margin
+> — do not read a trend into old-baseline vs. this table; the dedupe fix and the threshold
+> re-tune both moved the numbers on their own, independent of any real change in usage.
 >
 > **To check the dedupe factor on your own machine:** run
 > `node token-audit.js --all --days 3650 --json` and read `cur.msgs` from the output,
@@ -747,7 +746,7 @@ not duplicated here.
 > that line count to `cur.msgs` is your machine's dedupe factor — it will differ from the
 > figures above, which are this machine's history, not a fixed constant.
 
-## Summary layout (Slice 28)
+## Summary layout
 
 The summary (everything above DETAIL, incl. the blank line before it) stays ≤ 24 lines on
 real data and on the fixture that fires every section at once (`tests/summary-budget.test.js`):
@@ -760,7 +759,7 @@ real data and on the fixture that fires every section at once (`tests/summary-bu
   cost nothing), and `span N wk (M with data)` — N = calendar weeks from the first to the last
   week with data, M = weeks that had any rows. With one week of data it prints `week of <date>
   only` and no change. The full per-week table is `--json`'s `weeks`. CONFIG: see "CONFIG — one
-  line" below. **ALL-TIME mixes two populations on purpose (Slice 15 HITL, re-review
+  line" below. **ALL-TIME mixes two populations on purpose (HITL re-review
   decision):** `sessions`/`msgs` are main sessions only — same population as `SESSIONS`
   above it (`mainSessions`, `!isSub`) — but `cost` is all-time spend **including
   subagents** (`all.cost`, every row ever seen). Deliberate: `SPEND` (the window total,
@@ -788,7 +787,7 @@ Same data under `detail` in `--json`. Fixed-width, every line ≤ 120 chars, no 
 between sections (the whole block has a hard line-budget guard: ≤ 40 lines, `DETAIL_MAX_LINES`;
 if a section's own rendering would still overrun it, `renderDetail()` cuts it down to
 `DETAIL_MAX_LINES - 1` lines and appends a `… DETAIL truncated, full data in --json` marker
-line). Sections, in order, plus one optional trailing `FLAGS (continued, …)` block (Slice 28)
+line). Sections, in order, plus one optional trailing `FLAGS (continued, …)` block
 when the summary's `fitFlags()` guard moved any flags here — it gets only the lines left of the
 40 (`DETAIL_MAX_LINES`), see "Summary cap and ranking" above:
 
@@ -844,25 +843,25 @@ and `timeout 600 python -m pytest | tail` is a test run. Priority order and what
 | # | category | tool / command |
 |---|---|---|
 | 1 | agent spawn | `Agent`, `Task`, `SendMessage` |
-| 2 | harness (Slice 15) | `Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TodoWrite`, `ListAgents`, `EnterPlanMode`, `ExitPlanMode`, `EnterWorktree`, `ExitWorktree`, `CronCreate`, `CronDelete`, `ScheduleWakeup` |
+| 2 | harness | `Skill`, `ToolSearch`, `AskUserQuestion`, `TaskStop`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TodoWrite`, `ListAgents`, `EnterPlanMode`, `ExitPlanMode`, `EnterWorktree`, `ExitWorktree`, `CronCreate`, `CronDelete`, `ScheduleWakeup` |
 | 3 | web | `WebFetch`, `WebSearch` |
 | 4 | screenshot/image | `Read` of a .png/.jpg/.gif/.webp/.bmp; any tool named `*screenshot*` (MCP); a `screenshot*.mjs/js/ts/py/sh` script *run* (at a command start, directly or via `node`/`python`/`bun`/`deno`/`tsx`/`bash`/`sh`/`pwsh`); `.screenshot(` in such an interpreter's command |
 | 5 | wait/poll | `Monitor`, `TaskOutput`, `BashOutput`; `sleep`, `Start-Sleep`, `gh pr checks`, `gh run watch/view`; any `check-runs` / `actions/runs` URL |
 | 6 | github | `api.github.com`, `gh …` |
 | 7 | test/lint/build | `pnpm/npm/yarn/bun [--opts] [run/exec] test/lint/build/typecheck/…` (e.g. `pnpm --filter x test`), `vitest`, `jest`, `pytest`, `unittest`, `ruff`, `mypy`, `eslint`, `prettier`, `tsc`, `playwright test`, `node --test`, `make`, `cargo test/build/check/clippy/nextest`, `go test/build/vet` |
 | 8 | git | `git …` |
-| 9 | wait/poll — busy-poll (Slice 15) | `echo waiting-*`/`echo idle-*`, `tasklist`, `Get-Process`, checked below git and test/lint/build — real work wins a compound like `git status; Get-Process` (review finding: these used to live in row 5's high-priority rule, so that compound fell to wait/poll instead of git) |
+| 9 | wait/poll — busy-poll | `echo waiting-*`/`echo idle-*`, `tasklist`, `Get-Process`, checked below git and test/lint/build — real work wins a compound like `git status; Get-Process` (review finding: these used to live in row 5's high-priority rule, so that compound fell to wait/poll instead of git) |
 | 10 | edit | `Edit`, `Write`, `MultiEdit`, `NotebookEdit`; `sed -i`, `cat >`, `tee` |
 | 11 | read | `Read`, `Grep`, `Glob`; `cat`, `sed -n`, `grep`, `rg`, `head`, `tail`, `ls`, `find`, `wc`, `awk`, `Get-Content` — **only when reached directly** (a new top-level command: start of string, or after `;`/`&&`/`\|\|`/newline/`(`). A reader reached only by piping another command's output into it (`python x.py 2>&1 \| tail -20`) does NOT count as read (BLOCKER fix, re-review finding): `markCommands()` marks a `\|`-opened boundary with a distinct marker (`CMD_PIPE`, vs. plain `CMD` for every other boundary) and this rule's `READERS` alternative matches only the plain marker, so `\| tail`/`\| head`/`\| grep`/`\| sort`/`\| wc`/`\| less` filters fall through to whatever rule the piped-FROM command matches (usually `script run`, below). Every other rule still matches through either marker (`ANY_CMD`), so e.g. `cat file \| git apply` is still `git` — only `read`'s READERS branch is narrowed. `ls; python x.py` (semicolon, not pipe) is unaffected and still reads as `read`. |
-| 12 | script run (Slice 15) | a bare interpreter run (`python[^\s‣‥]*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start (`CMD` or `CMD_PIPE`) — below test/lint/build, git, screenshot/image, edit **and read** (all of which win first: `python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot). Moved below edit/read after a review finding (real data): a compound Bash call mixing a `python - <<EOF … EOF` heredoc segment with a real edit/read segment (e.g. a `cat`/`sed -i` elsewhere in the same call) used to classify as `script run` — `.find()` over `ACTIVITY_RULES` picks the first *rule* with a match anywhere in the subject, not the first *segment* in the command, and `script run` ran before edit/read. With `script run` last, it only ever claims turns edit/read didn't already recognize — i.e. it takes share from `other`, plus (after the `CMD_PIPE` fix above) the false `read` share that piped script re-runs (`python x.py \| tail`) used to get. **Measured** (`--all --days 3650`, real local history, after both fixes): read 29.3%, script run 16.0%, edit 15.2%, test/lint/build 13.6%, git 10.5%, reply 7.0%, wait/poll 2.3%, other 0.5% — `other` stays a small residual, as designed. |
+| 12 | script run | a bare interpreter run (`python[^\s‣‥]*`, `py`, `node`, `deno`, `bun`, `tsx`, `ts-node`, `sh`, `bash`, `pwsh`, `powershell`) or a direct `*.mjs/js/py/sh/ps1` file run, at a command start (`CMD` or `CMD_PIPE`) — below test/lint/build, git, screenshot/image, edit **and read** (all of which win first: `python -m pytest` is still a test run, `node scripts/screenshot.mjs` is still a screenshot). Moved below edit/read after a review finding (real data): a compound Bash call mixing a `python - <<EOF … EOF` heredoc segment with a real edit/read segment (e.g. a `cat`/`sed -i` elsewhere in the same call) used to classify as `script run` — `.find()` over `ACTIVITY_RULES` picks the first *rule* with a match anywhere in the subject, not the first *segment* in the command, and `script run` ran before edit/read. With `script run` last, it only ever claims turns edit/read didn't already recognize — i.e. it takes share from `other`, plus (after the `CMD_PIPE` fix above) the false `read` share that piped script re-runs (`python x.py \| tail`) used to get. **Measured** (`--all --days 3650`, real local history, after both fixes): read 29.3%, script run 16.0%, edit 15.2%, test/lint/build 13.6%, git 10.5%, reply 7.0%, wait/poll 2.3%, other 0.5% — `other` stays a small residual, as designed. |
 | – | other | no rule matched at all |
-| – | reply (Slice 15) | the turn made no tool call (final answer, plan, question to the user) |
+| – | reply | the turn made no tool call (final answer, plan, question to the user) |
 
 Decisions not fixed by design decision Q9 (judgment calls):
 
 - **Status checks count as wait/poll, not GitHub.** Design decision Q9 lists "repeated status checks"
   under wait/poll; a single call can't know it is repeated, so every `check-runs` /
-  `actions/runs` / `gh pr checks` / `gh run watch|view` call is wait/poll. `POLLING` (Slice 12)
+  `actions/runs` / `gh pr checks` / `gh run watch|view` call is wait/poll. `POLLING`
   is the repeat detector.
 - **Compound commands take the highest-priority category**, not a split: `pnpm test && git
   commit` is one call → test/lint/build. Splitting is per *tool call*, not per shell segment.
@@ -877,7 +876,7 @@ Decisions not fixed by design decision Q9 (judgment calls):
   their options are skipped only in front of a known script name.
 - **Screenshot = running a screenshot script**, not touching it: `cat` / `git log --` / `Write`
   of `scripts/screenshot.mjs` are read / git / edit.
-- **Turn with no `tool_use` → `reply` (Slice 15; `other` before it).** A text-only or
+- **Turn with no `tool_use` → `reply` (`other` before this category existed).** A text-only or
   thinking-only turn (final answer, plan, question to the user) has no tool to attribute it
   to. Originally folded into `other`, which kept totals whole (turns and cost still sum to
   the window's totals with `reply`) but hid `other`'s real composition — measured on
@@ -891,7 +890,7 @@ Decisions not fixed by design decision Q9 (judgment calls):
   `Σ(w·ctx) / Σw`, and turns, cost and share each sum to the window totals.
 - **Tool calls of a turn = union over its JSONL lines** (one line per content part, all
   sharing `message.id`); a `tool_use.id` seen twice counts once.
-- **`harness` and `script run` (Slice 15) pulled out of `other`.** Measured on 2026-09-25,
+- **`harness` and `script run` pulled out of `other`.** Measured on 2026-09-25,
   all-history real data, `other`'s composition (share of total spend) was: reply-shaped
   turns ≈ 7% (now `reply`, above), shell runs of a script (`python …`, `node …`,
   `S=<path> ; python -c …`, `sh x.sh`) ≈ 11.3% all / 6.4% second project / 2.4% token-audit (now
@@ -906,7 +905,7 @@ Decisions not fixed by design decision Q9 (judgment calls):
   file-extension alternative is written `[^\s${CMD}${CMD_PIPE}]*\.(?:m?js|py|sh|ps1)\b`,
   not `\S+\.(?:m?js|py|sh|ps1)\b` — the latter, anchored at every `CMD` boundary (e.g. every
   `(` of 50k nested parens, none of them whitespace), backtracks per anchor across the rest
-  of the string, O(n²) or worse (Slice 30's exact bug class); excluding `CMD` from the
+  of the string, O(n²) or worse (the same bug class the linear-time-parsing fix covers); excluding `CMD` from the
   class too stops each attempt at the very next command boundary, same fix as `SHOT_TARGET`
   above. Its bare-interpreter alternative had the same flaw for `python`: `python\S*` is
   unbounded, so many adjacent `‣python` command starts with no whitespace between them (e.g.
@@ -915,9 +914,9 @@ Decisions not fixed by design decision Q9 (judgment calls):
   the file-extension alternative above (review finding, re-tune pass). A sibling, still-open
   instance of the identical flaw lives in `SHOT_EXEC` (the `screenshot/image` row above,
   which is checked *before* `script run` and so masks this one on the same adversarial
-  input) — pre-existing (before Slice 15), out of scope for this fix.
+  input) — pre-existing (predates the re-tune above), out of scope for this fix.
 
-### Activity table vs Q9 hand estimates (Slice 15)
+### Activity table vs Q9 hand estimates
 
 Design decision Q9 gave two hand estimates to verify once this feature existed: polling ≈ 1–2%
 of the second project's spend, screenshots ≈ 2.6%. Measured with the finished script (the second project,
@@ -930,20 +929,20 @@ of the second project's spend, screenshots ≈ 2.6%. Measured with the finished 
   itself a wait. No bug — a definition gap, not a measurement gap. This case (89 `check-runs`
   + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of the second project's spend, spread across 33
   sessions with ≤ 8 calls/session and ~87 distinct keys) is also why `POLLING` itself never
-  fires on it — `GH_POLLING` (Slice 31) is the cross-session detector that catches it.
+  fires on it — `GH_POLLING` is the cross-session detector that catches it.
 - **Screenshots: `screenshot/image` table row = 4.89% of the second project's spend.** Higher than the
   2.6% hand estimate because the table charges the *whole turn* (full context) to the
   category, not just the image's own tokens. A second, narrower measure — the tokens a
   screenshot actually carries forward in context (image tokens × remaining turns in that
   session, at the session's cache-read price) — comes to ≈ 1.4% (the original hand estimate,
   2.6%, was computed on non-deduped turns; 2.6 / 1.9, the dedupe factor, ≈ 1.4%, i.e. the
-  gap there was the pre-Slice-2 dedupe bug, not a real difference). The conclusion from
+  gap there was the pre-dedupe-fix bug, not a real difference). The conclusion from
   design decision Q6 stands either way: screenshots are a non-lever (≈ 1.4% actually carried in
   context); the table's 4.9% is turn cost that the verification step would spend regardless
   of whether it looked at a screenshot.
 - **`other` (now `other` + `reply` + `script run` + `harness` together, so they can be
-  compared to the old single-bucket `other`): before Slice 15, all-history 20.4%, the second project
-  18.1%, token-audit 17.9%, last-14-days 16.7%. After Slice 15 (same real data, `other`
+  compared to the old single-bucket `other`): before the re-tune, all-history 20.4%, the second project
+  18.1%, token-audit 17.9%, last-14-days 16.7%. After the re-tune (same real data, `other`
   alone): all-history 0.28%, the second project 0.76%, token-audit 0.66% — comfortably under the
   "~1%" target on every cut, on the second project and on this repo's own history. The rest of the old `other` moved to
   `reply` (≈7–10%), `script run` (≈2–14% depending on project), `harness` (≈1–5%) and a
@@ -1017,7 +1016,7 @@ Judgment calls:
 - **Env prefix is per segment, never across a newline**: a standalone `SCR="…"` line stays its
   own segment instead of swallowing the next line.
 
-What Slices 12–13 can rely on: equal keys = same command modulo cwd, env prefixes, quoted
+What `POLLING`/`BOILERPLATE` can rely on: equal keys = same command modulo cwd, env prefixes, quoted
 paths, ids and numbers (outside `sed -n` scripts and heredoc bodies). `shellSegments(key)`
 round-trips a key into its top-level segments, so `shellSegments(key)[0].text` is the first
 segment with any `$(…)` intact (the whole `TOKEN=$(printf … | git credential fill | …)`).
@@ -1038,7 +1037,7 @@ distribution's job is to say whether a leaderboard entry is typical or an outlie
 considered during design: "agent A ran 288 turns — is that normal?"), which only works if it is computed over the
 full population, not the 10 rows the reader is already looking at (those would show a distribution
 dominated by the leaderboard itself, converging to roughly the top-10's own median as list size
-shrinks). This mirrors the summary's SESSIONS median/p90 (Slice 15: main sessions only,
+shrinks). This mirrors the summary's SESSIONS median/p90 (main sessions only,
 `cur.mainSessions`, see `LONG_SESSION` above), which is likewise computed over its full
 population — main sessions, not subagents — rather than just the top ones.
 
@@ -1078,7 +1077,7 @@ Prefix weight is estimated from each definition's `name` + `description` frontma
 entries for marketplaces/plugins that were browsed or previously installed but are not
 active, and counting those inflates `PLUGIN_BLOAT`.
 
-### CONFIG value types in `--json` (Slice 20, 4th review)
+### CONFIG value types in `--json`
 
 `config.model`, `config.cleanupPeriodDays`, `config.effortLevel` and each
 `config.modelEffort[].effortLevel` keep their **live JSON type** in `--json` — a
@@ -1095,7 +1094,7 @@ run only when building the text report, on a `JSON.stringify()` of the
 already-redacted structure at that point — see `showAny()`/`textOf()` in
 token-audit.js.
 
-### CONFIG — one line (Slice 28, HITL decision D)
+### CONFIG — one line (HITL decision D)
 
 CONFIG prints one ≤ 120-char line, right under `TREND`:
 `CONFIG       model=<model> effort=<root>,<model>:<level>,… plugins=N mcp=N prefix≈N.Nk
@@ -1112,12 +1111,12 @@ retention=N`.
 - Per-plugin rows, MCP server names/scopes, agent/skill counts and the separate token
   estimates are no longer printed (DETAIL has no room left): `--json`'s `config` has all of
   them. Every value is `show()`n (redacted/sanitized) before and `fit()` at print time
-  (Slice 20/29), so a hostile value can't add a line or pass 120 chars.
+  (the output-width and redaction-everywhere work), so a hostile value can't add a line or pass 120 chars.
 
-Replaces the Slice 20 layout (own `effortLevel:` line plus one `    <model>=<level>` line per
+Replaces the original layout (own `effortLevel:` line plus one `    <model>=<level>` line per
 model, and one row per heavy plugin / MCP server).
 
-### FLAGS/SECURITY text — wraps instead of truncating (Slice 20)
+### FLAGS/SECURITY text — wraps instead of truncating
 
 A flag's `text` can be a fixed advisory message (e.g. `NO_RETENTION`'s "transcripts …
 sit in plaintext indefinitely", 109 chars) that alone exceeds `FLAG_TEXT_WIDTH` (103 —
@@ -1129,13 +1128,13 @@ BOILERPLATE lines are unaffected — their variable part is already bounded to
 
 ### MCP servers — CONFIG's `mcp=` field
 
-Slice 14. `--json`'s `config.mcpServers` lists the MCP servers configured for the scoped
+`--json`'s `config.mcpServers` lists the MCP servers configured for the scoped
 project, tagged `user` / `project` / `mcp.json` for which of the 3 sources above declared it.
 `config.mcpPrefixTokens` is the estimated tool-definition weight those servers add to the
 prompt prefix (`mcpServers.length * MCP_SERVER_TOKENS`, see "Weight estimate" below) — the
 same number folded into the text report's `prefix≈` figure, exposed on its own for callers
 that want the MCP-only portion split out from plugin agent/skill weight.
-Since Slice 28 (HITL decision D) the text report only counts them (`mcp=N` on the one CONFIG
+Under HITL decision D, the text report only counts them (`mcp=N` on the one CONFIG
 line, their estimated tool-definition tokens folded into `prefix≈`); no `mcp=` at all when
 nothing is configured.
 Under `--all` (no single scoped project), only `user`-scope servers are listed —
@@ -1143,8 +1142,8 @@ Under `--all` (no single scoped project), only `user`-scope servers are listed �
 
 **Location decided at implementation time**: checked a real `~/.claude.json` —
 `mcpServers` lives there, at the top level and per-project, never in `settings.json`.
-Where the script reads that file from tracks how the Claude dir itself was resolved
-(Slice 23): under the default (`~/.claude`), it reads the sibling `<claude-dir>.json`
+Where the script reads that file from tracks how the Claude dir itself was resolved:
+under the default (`~/.claude`), it reads the sibling `<claude-dir>.json`
 (`DIR.json`, matching real Claude Code's default `~/.claude` + `~/.claude.json` layout,
 and the convention fixtures already use — tests fixture `DIR.json` the same way they
 already fixture `settings.json` inside `DIR`). Under `CLAUDE_CONFIG_DIR`, it reads
@@ -1170,19 +1169,19 @@ typical MCP tool schema), clearly presented as an estimate, not a measurement.
 | flag | default | meaning |
 |---|---|---|
 | `--days N` | 14 | window; the previous N days form the comparison window |
-| `--top N` | 8 | sessions kept in `--json`'s `cur.sessions`/`prev.sessions`; TOP SESSIONS is no longer printed in the text summary (Slice 28) |
+| `--top N` | 8 | sessions kept in `--json`'s `cur.sessions`/`prev.sessions`; TOP SESSIONS is no longer printed in the text summary |
 | `--json` | off | full structured dump incl. per-week and per-plugin detail |
 | `--claude-dir DIR` | `$CLAUDE_CONFIG_DIR` or `~/.claude` | read transcripts + settings from DIR instead (tests use fixture dirs) |
 | `--project PATH` | cwd | scope to one project: PATH is resolved (`path.resolve`, so `.`, `..`, and relative paths work) then mapped to its `projects/` folder name the same way Claude Code names it — every character that isn't a-z/A-Z/0-9 becomes `-` (`C:\Users\user\project` → `C--Users-user-project`; `/Users/user/project` → `-Users-user-project`). Folder names over 200 chars are truncated by Claude Code to 200 chars + `-<hash>`; this script matches the 200-char prefix against an existing `projects/` folder instead of reimplementing the hash. An empty value (`--project ""`) errors the same as a missing value. |
-| `--all` | off | scope to every project instead of just one (pre-Slice-6 behaviour) |
+| `--all` | off | scope to every project instead of just one (the original default behaviour) |
 | `--no-detail` | off | drop the DETAIL block (text) and the `detail` key (`--json`): summary only |
 
 **`--json`'s `cur.medianMsgs`/`cur.p90Msgs`** (and the same fields on `prev`) are computed over
 **main sessions only** (`cur.mainSessions`, `!isSub`) — the same population the text summary's
-`SESSIONS` line reports (Slice 15; see `LONG_SESSION` above). `cur.sessions`/`prev.sessions`
+`SESSIONS` line reports (see `LONG_SESSION` above). `cur.sessions`/`prev.sessions`
 still list every session, main and subagent alike; only the median/p90 stat excludes subagents.
 
-**`--claude-dir` precedence (Slice 23)**: an explicit `--claude-dir DIR` flag wins if given;
+**`--claude-dir` precedence**: an explicit `--claude-dir DIR` flag wins if given;
 else the `CLAUDE_CONFIG_DIR` env var if set (real Claude Code's own relocation variable);
 else `~/.claude` (the default). This also decides where the MCP user-config file is read
 from — see "MCP servers" above.
