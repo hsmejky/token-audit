@@ -63,10 +63,10 @@ behind the design are in [decisions.md](decisions.md), the code map in
 
 ### Publish and install check
 
-- [ ] Repository pushed; `/plugin marketplace add hsmejky/token-audit` then
+- [x] Repository pushed; `/plugin marketplace add hsmejky/token-audit` then
       `/plugin install token-audit@token-audit` works.
-- [ ] `/token-audit` runs from a fresh session in another project.
-- [ ] No stale standalone copy of the skill left in `~/.claude/skills`.
+- [x] `/token-audit` runs from a fresh session in another project.
+- [x] No stale standalone copy of the skill left in `~/.claude/skills`.
 - [ ] Record a baseline on a second project, then re-measure it after a few slices of work there
       to see whether the `LONG_AGENT` playbook moved the numbers.
 
