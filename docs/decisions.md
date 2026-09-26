@@ -104,7 +104,10 @@ doing. The decisions below come from that review.
 - **Context.** Cost is turns × context. Long subagent runs (many turns at large context) were the
   main lever and the playbook had no entry for them.
 - **Decision.** `LONG_AGENT` fires for subagents over `LONG_AGENT_TURNS` turns or over
-  `LONG_AGENT_CTX` peak context and prints their share of spend. Playbook:
+  `LONG_AGENT_CTX` peak context and prints their share of spend. `LONG_AGENT_CTX` was originally
+  300k at design time; [Slice 15](#slice-15-thresholds-re-tuned-on-deduped-history) raised it to
+  400k (`LONG_AGENT_CTX = 400e3`) after the lower value flagged ordinary agents that had simply
+  read a lot. Playbook:
   - a hard `maxTurns` in agent frontmatter (a limit hit returns a partial result);
   - one sub-task per agent → commit → short report → stop; hand off through git and the report,
     not through context;
@@ -231,8 +234,8 @@ doing. The decisions below come from that review.
   - keep private design notes out of git, with no references to them from published files;
   - MIT license; README with install, requirements, flags and a privacy note (read-only, local,
     redaction is best effort);
-  - a test that fails if a manifest, README or `docs/` page carries a personal e-mail or known
-    private names.
+  - a test that fails if a manifest or README carries a personal e-mail. (Extended in Slice 32,
+    alongside publishing `docs/`, to also cover the `docs/` pages and known private names.)
 - **Rejected.** Publishing with the history as it was; keeping private notes in the repository.
 - **Consequences.** REFERENCE keeps its anonymized example numbers (a separate decision: they are
   examples, not leakage). Design notes are published only as these `docs/` pages, rewritten
@@ -254,9 +257,10 @@ doing. The decisions below come from that review.
     says so); full lists only in `--json`.
   - **Q-B ranking.** Tier 0 = flags with a defined extra cost, by that cost: `REGRESSION` (cost
     above what the previous cost per message would give), `POLLING`, `GH_POLLING`,
-    `BOILERPLATE` (cost of those turns, an upper bound on the saving). Then fixed tiers with the
-    flagged spend as tie-break: `LONG_AGENT` > `LONG_SESSION`, `MULTIDAY` > `OPUS_HEAVY`,
-    `CONCENTRATION` > `BIG_CTX`, `PLUGIN_BLOAT` > `CLEAN`; id last.
+    `BOILERPLATE` (cost of those turns, an upper bound on the saving). Then fixed tiers, ranked in
+    this order, flagged spend as tie-break inside a tier, id as the final tie-break for a stable
+    order: `LONG_AGENT` above (`LONG_SESSION`, `MULTIDAY` — tied) above (`OPUS_HEAVY`,
+    `CONCENTRATION` — tied) above (`BIG_CTX`, `PLUGIN_BLOAT` — tied) above `CLEAN`.
   - **Q-C.** The overflow line names the moved flag ids (`… +3 more: A, B, C (DETAIL / --json)`),
     cut to fit 120 characters; DETAIL's continued block counts against DETAIL's 40 lines.
 - **Rejected.** A fixed "top N flags" count (breaks when a flag wraps or SECURITY grows);
