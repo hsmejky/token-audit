@@ -54,11 +54,11 @@ audit any project (or all of them) from wherever you are.
 ## Sample report
 
 This is what `/token-audit` actually puts on screen, not just the script's raw text: the
-banner and the `DO NEXT` fixes are Claude's own rendering, drawn from the script's numbers
-per the skill's report template; the `TOKEN AUDIT` header line, `TREND` line and everything
-from `DETAIL` down are the script's own output, unedited. Generated from synthetic fixture
-data (`--all --days 7`), not a real project. Names, sessions and paths below are made up for
-illustration:
+banner, the `SPEND`/`HABIT`/`CONFIG`/`SECURITY` rows and the `DO NEXT` fixes are Claude's own
+rendering, drawn from the script's numbers per the skill's report template; the `TOKEN AUDIT`
+header line, `TREND` line and everything from `DETAIL` down are the script's own output,
+unedited. Generated from synthetic fixture data (`--all --days 7`), not a real project. Names,
+sessions and paths below are made up for illustration:
 
 ```
 ┌──────────────────────┐
@@ -66,7 +66,7 @@ illustration:
 └──────────────────────┘
 
 TOKEN AUDIT   scope all projects   window 2026-09-19 → 2026-09-26 (7d)   list-price equivalent
-TREND        ▃▁▃█ 2026-08-24 $0.012/msg → 2026-09-21 $0.023/msg +96%   span 5 wk (4 with data)   full table in --json
+TREND        ▃▁▃█ 2026-08-24 $0.012/msg → 2026-09-21 $0.022/msg +87%   span 5 wk (4 with data)   full table in --json
 
 SPEND     $1.52 / 7d (+585%)         Opus 40% Sonnet 60%      main 100% sub 0%
 HABIT     ctx/msg 68k (16k)          worst: sess-build $0.92, <1d span, 34 msgs
