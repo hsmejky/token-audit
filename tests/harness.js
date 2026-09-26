@@ -30,21 +30,29 @@ function defaultScope(args) {
   return (args.includes('--project') || args.includes('--all')) ? [] : ['--all'];
 }
 
-function audit(claudeDir, ...args) {
+// Shared body of audit()/auditText() and their *WithClock() variants: adds the default --days
+// and scope flags, --json when `json` is set, and — when `nowIso` is given — the fixed-clock
+// shim (see auditWithClock()).
+function runAudit(claudeDir, args, { json = false, nowIso } = {}) {
   const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
+  const clock = nowIso ? ['--require', CLOCK_SHIM] : [];
+  const opts = { encoding: 'utf8' };
+  if (nowIso) opts.env = { ...process.env, TOKEN_AUDIT_TEST_NOW: nowIso };
   const out = execFileSync(process.execPath,
-    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, ...defaultScope(args), '--json', ...args],
-    { encoding: 'utf8' });
-  return JSON.parse(out);
+    [...clock, SCRIPT, '--claude-dir', claudeDir, ...defaultDays, ...defaultScope(args),
+      ...(json ? ['--json'] : []), ...args],
+    opts);
+  return json ? JSON.parse(out) : out;
+}
+
+function audit(claudeDir, ...args) {
+  return runAudit(claudeDir, args, { json: true });
 }
 
 // Same as audit(), but returns the plain-text report (no --json) — for
 // assertions about the printed layout itself (line content, formatting).
 function auditText(claudeDir, ...args) {
-  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
-  return execFileSync(process.execPath,
-    [SCRIPT, '--claude-dir', claudeDir, ...defaultDays, ...defaultScope(args), ...args],
-    { encoding: 'utf8' });
+  return runAudit(claudeDir, args);
 }
 
 // Like audit(), but spawns the script with a chosen process cwd and adds no
@@ -63,20 +71,11 @@ function auditCwd(claudeDir, cwd, ...args) {
 // needs its fixture and assertions built off one fixed instant instead of the real wall-clock
 // time the suite happens to run at (see tests/readme-sample.test.js).
 function auditWithClock(claudeDir, nowIso, ...args) {
-  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
-  const out = execFileSync(process.execPath,
-    ['--require', CLOCK_SHIM, SCRIPT, '--claude-dir', claudeDir, ...defaultDays,
-      ...defaultScope(args), '--json', ...args],
-    { encoding: 'utf8', env: { ...process.env, TOKEN_AUDIT_TEST_NOW: nowIso } });
-  return JSON.parse(out);
+  return runAudit(claudeDir, args, { json: true, nowIso });
 }
 
 function auditTextWithClock(claudeDir, nowIso, ...args) {
-  const defaultDays = args.includes('--days') ? [] : ['--days', '36500'];
-  return execFileSync(process.execPath,
-    ['--require', CLOCK_SHIM, SCRIPT, '--claude-dir', claudeDir, ...defaultDays,
-      ...defaultScope(args), ...args],
-    { encoding: 'utf8', env: { ...process.env, TOKEN_AUDIT_TEST_NOW: nowIso } });
+  return runAudit(claudeDir, args, { nowIso });
 }
 
 // Full control over argv order (no --claude-dir even), for edge cases like
