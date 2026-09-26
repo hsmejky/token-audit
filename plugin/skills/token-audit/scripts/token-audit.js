@@ -2417,7 +2417,7 @@ async function main() {
   // suffix differs (see `flagsMoreLine` below).
   const detSeparator = det ? [''] : [];
 
-  // Slice 28 (design decision Q3/Q5, HITL Q-B/Q-C): flags in rankFlags() order fill
+  // Slice 28 (design decision Q3, HITL Q-B/Q-C): flags in rankFlags() order fill
   // whatever room is left (fitFlags(), same hard guard DETAIL's "FLAGS
   // (continued)" uses); the rest continue there within its own line budget.
   // --json's `flags` always carries every flag (unranked).
