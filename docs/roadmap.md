@@ -119,3 +119,13 @@ behind the design are in [decisions.md](decisions.md), the code map in
   should read "(~N turns)"; the
   POLLING and BOILERPLATE definitions could be stated more tightly; the "Subagent distribution —
   population" reason wraps badly after a reflow.
+
+### Privacy guard
+
+- Privacy guard skips path-shape checks for REFERENCE.md and token-audit.js (NO_PATH_CHECK). A real
+  user path there would pass unless the name is in the hashed term list. A future fix: capture the
+  path's user segment and check it against an allowlist of synthetic names, then drop NO_PATH_CHECK.
+- POSIX_USER_PATH uses a case-insensitive flag, so a URL containing `/users/` in docs would trip the
+  guard. Dropping the flag would fix it.
+- Two guard test names in tests/manifest.test.js do not mention the path and UUID checks.
+- WIN_USER_PATH covers only drive C:. Use a drive-letter class.
