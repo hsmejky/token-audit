@@ -57,7 +57,7 @@ behind the design are in [decisions.md](decisions.md), the code map in
 - [x] The README reads as fun and inviting, in keeping with the project's ASCII-art style,
       recommends installing at user scope rather than per project, and explains that an
       uninvoked skill costs no tokens at rest.
-- [ ] The README's sample report shows the full rendered report (banner, script body, DO
+- [x] The README's sample report shows the full rendered report (banner, script body, DO
       NEXT) as a user sees it, and a test keeps its script-generated part in sync with the
       script's real output.
 
