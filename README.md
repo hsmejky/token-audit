@@ -111,6 +111,8 @@ a guarantee. Review a report yourself before pasting it anywhere public.
   flag ranking, line budgets, activity classification, redaction, packaging, tests.
 - [docs/decisions.md](docs/decisions.md): design decisions and why they were made.
 - [docs/roadmap.md](docs/roadmap.md): open work and known limitations.
+- [docs/testing.md](docs/testing.md): how to run the test suite, fixtures, the privacy guard,
+  performance tests and CI.
 
 ## License
 

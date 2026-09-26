@@ -22,6 +22,39 @@ behind the design are in [decisions.md](decisions.md), the code map in
       REFERENCE.md.
 - [ ] Review findings fixed or moved to the list below.
 
+### Repo hygiene
+
+- [ ] `.claude/CLAUDE.md` documents project conventions for contributors working with Claude
+      Code: structure (by reference, not duplicated), zero-dependency/Node-version constraints,
+      test commands, privacy rules for this public repo, commit conventions, and when to hand a
+      codebase lookup to a search agent instead of reading inline.
+- [ ] A GitHub Actions workflow runs the test suite on push and pull request, across a matrix of
+      supported Node versions and both a Linux and a Windows runner, with no dependency install
+      step.
+- [ ] Every performance test's time limit goes through one shared helper, multiplied under CI
+      instead of hard-coded per test; none of them are skipped.
+- [ ] `docs/testing.md` explains how to run the suite, the test/fixture layout, the privacy
+      guard, and how performance tests behave under CI — linked from the README and from
+      `.claude/CLAUDE.md`.
+
+### Docs & fun
+
+- [ ] A documentation section walks through usage scenarios with the recommended flag
+      combination for each, rather than leaving readers to assemble one from the flag table
+      alone.
+- [ ] Numbered work-tracking language (references to a numbered unit of work) is removed from
+      code, tests and docs and rephrased so the same information is still conveyed, without
+      relying on that numbering scheme anywhere, including in this document going forward.
+- [ ] The worked dedupe-factor example in the flag reference no longer cites specific real
+      figures (line counts, turn counts); the explanation stands on its own without them.
+- [ ] The trend sparkline is printed by the script itself, inline in the TREND line, not as a
+      separate line; the skill's own ASCII art (banners, next-step bars) is kept as is.
+- [ ] The skill's frontmatter disables automatic model-driven invocation, and its description's
+      trigger phrasing is trimmed down.
+- [ ] The README reads as fun and inviting, in keeping with the project's ASCII-art style,
+      recommends installing at user scope rather than per project, and explains that an
+      uninvoked skill costs no tokens at rest.
+
 ### Publish and install check
 
 - [ ] Repository pushed; `/plugin marketplace add hsmejky/token-audit` then
