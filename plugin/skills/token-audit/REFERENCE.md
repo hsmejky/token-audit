@@ -70,7 +70,8 @@ exact turn accounting doesn't matter here) and reports them under `UNPRICED`, ke
 by the literal model string. Printed as its own line below `SPEND` in the text report
 (only when non-empty) and always present as top-level `unpriced` in `--json`, so a
 new/renamed model family shows up as a visible line item instead of silently
-vanishing from the totals the way Fable did before this fix.
+vanishing from the totals. (Fable once did exactly that: with no price row and no UNPRICED
+list yet, its rows and tokens were dropped from every total without a trace.)
 
 `<synthetic>` rows are excluded before this check, not counted as UNPRICED: Claude Code
 writes a `<synthetic>`-model, all-zero-usage row for locally generated placeholder/error
@@ -79,8 +80,8 @@ every run just from these, drowning out a real new-model warning. A `<synthetic>
 with non-zero usage (unexpected, but not ruled out) is not excluded — it still goes
 through the normal UNPRICED + warning path below.
 
-The text report prints `UNPRICED` as **one line** (the summary rework decision,
-[docs/decisions.md#summary-back-to-24-lines](../../../docs/decisions.md#summary-back-to-24-lines)):
+The text report prints `UNPRICED` as **one line** (the summary rework decision; see
+"Summary back to 24 lines" in `docs/decisions.md` in the source repository):
 `UNPRICED     <n> model(s) <tokens>M tok: <model>, <model>, +N more (--json) -- add prices to
 PRICES + REFERENCE.md`. It names as many models as fit the 120-char line (each fit to 40
 chars) and ends the list in one `+N more (--json)` marker when they don't all fit; `--json`
@@ -758,11 +759,14 @@ real data and on the fixture that fires every section at once (`tests/summary-bu
   week with data, M = weeks that had any rows. With one week of data it prints `week of <date>
   only` and no change. Inline before the dates, a sparkline: one bar per week with data, the
   most recent weeks, oldest→newest — up to 12 weeks, fewer if the 120-char line has no room
-  left for that many —
-  scaled against the low/high of the *whole* trend, not just the weeks shown, so a flat run at
-  the tail still reads as low (or high) relative to the rest of the history. Dropped entirely
-  when there's no room for even one bar. The full per-week table is `--json`'s `weeks` — the
-  sparkline itself has no `--json` field, since `weeks` already carries every point. CONFIG: see
+  left for that many — scaled against the low/high of the *whole* trend, not just the weeks
+  shown, so a flat run at the tail still reads as low (or high) relative to the rest of the
+  history. Dropped entirely when there's no room for even one bar. The full per-week table is
+  `--json`'s `weeks` — the sparkline itself has no `--json` field, since `weeks` already
+  carries every point. Known limits: `▁`–`█` are East Asian *ambiguous width*, so a terminal
+  configured for CJK may draw them double-width (a wider, misaligned line); and a `NaN`
+  cost/message would blank every bar (min/max turn `NaN`) — the aggregation never yields one
+  from numeric usage fields (a week with no messages scores 0, not 0/0). CONFIG: see
   "CONFIG — one line" below. **ALL-TIME mixes two populations on purpose (HITL re-review
   decision):** `sessions`/`msgs` are main sessions only — same population as `SESSIONS`
   above it (`mainSessions`, `!isSub`) — but `cost` is all-time spend **including
@@ -915,10 +919,10 @@ Decisions not fixed by design decision Q9 (judgment calls):
   unbounded, so many adjacent `‣python` command starts with no whitespace between them (e.g.
   40k reps) forced one giant greedy match that then backtracked a char at a time hunting for
   the trailing `(?: |$)` — O(n²), ≈21s measured. Fixed to `python[^\s${CMD}${CMD_PIPE}]*`, same bound as
-  the file-extension alternative above (review finding, re-tune pass). A sibling, still-open
-  instance of the identical flaw lives in `SHOT_EXEC` (the `screenshot/image` row above,
-  which is checked *before* `script run` and so masks this one on the same adversarial
-  input) — pre-existing (predates the re-tune above), out of scope for this fix.
+  the file-extension alternative above (review finding, re-tune pass). `python\S*` inside
+  `SHOT_EXEC` (the `screenshot/image` row above, which is checked *before* `script run` and
+  so masks this one on the same adversarial input) is a known, not-yet-bounded instance of the
+  same flaw — it predates the re-tune above and is still open.
 
 ### Activity table vs Q9 hand estimates
 
