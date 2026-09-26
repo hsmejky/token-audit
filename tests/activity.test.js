@@ -338,7 +338,7 @@ test('activityCategory: `node ` script run classifies a long trailing arg in wel
 // `python[^\s‣]*`, bounded at CMD same as SCRIPT_FILE. Tested against the `script run` rule's
 // own regex (`SCRIPT_INTERP`, exported test-only) rather than through `activityCategory()`:
 // the `screenshot/image` rule runs first and has its own separate, still-unbounded `python\S*`
-// inside SHOT_EXEC (predates this fix, explicitly out of scope for it) that would dominate
+// inside SHOT_EXEC (a separate instance of the same flaw, not addressed here) that would dominate
 // the timing of any input shaped to stress this one instead.
 test('SCRIPT_INTERP: `python[^\\s CMD]*` stays linear on many adjacent `‣python` runs (was O(n^2) unbounded)', () => {
   const { SCRIPT_INTERP } = require('../plugin/skills/token-audit/scripts/token-audit.js');

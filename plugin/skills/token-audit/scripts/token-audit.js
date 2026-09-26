@@ -2483,7 +2483,8 @@ module.exports = {
   // Test-only: lets tests (activity.test.js) probe the `script run` rule's own regex in
   // isolation, without going through the whole ACTIVITY_RULES priority chain — the
   // `screenshot/image` rule (checked first) has its own, separate, still-unbounded
-  // `python\S*` inside SHOT_EXEC (predates this fix, out of scope here) that would otherwise
-  // dominate the timing of any input built to stress SCRIPT_INTERP's own fix.
+  // `python\S*` inside SHOT_EXEC (a known, not-yet-bounded instance of the same flaw) that
+  // would otherwise dominate the timing of any input built to check that SCRIPT_INTERP's
+  // `python[^\s${NOT_CMD}]*` bound keeps it linear.
   SCRIPT_INTERP,
 };

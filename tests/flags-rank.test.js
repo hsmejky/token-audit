@@ -153,6 +153,7 @@ test('withSpark: never shows more than MAX_SPARK_POINTS (12) bars, whatever the 
   assert.ok(bars.length <= 12, bars.length);
 });
 
+const SPARK_LEVELS_FOR_TEST = '▁▂▃▄▅▆▇█';
 test('withSpark: shows the most recent weeks, scaled against the full series (not the tail alone)', () => {
   const dates = weeklyDates(20);
   const wks = dates.map((d, i) => wk(d, i)); // costPerMsg 0..19, monotonically increasing
@@ -162,7 +163,6 @@ test('withSpark: shows the most recent weeks, scaled against the full series (no
   const expected = tail.map(v => SPARK_LEVELS_FOR_TEST[Math.round((v - 0) / (19 - 0) * 7)]).join('');
   assert.equal(bars, expected);
 });
-const SPARK_LEVELS_FOR_TEST = '▁▂▃▄▅▆▇█';
 
 test('trendLine: sparkline never pushes the line over the 120-char budget, however much history', () => {
   // A long span, many weeks with data, and large costPerMsg swings (wide money() output) —

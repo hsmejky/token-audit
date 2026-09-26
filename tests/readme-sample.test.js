@@ -72,8 +72,8 @@ function buildFixture() {
   const week = n => thisMonday - n * 7 * DAY; // Monday 00:00 UTC, n weeks before this one
   const statusCheck = i => `sleep 2 && curl -s http://localhost:4000/jobs/${100 + i}/status`;
   const files = {
-    // current window (last 7 days): anywhere in [thisMonday, thisMonday+7d) is always inside
-    // both the --days 7 window and a single, stable TREND bucket, on any weekday.
+    // current window (last 7 days): anywhere in [thisMonday, now) is inside both the --days 7
+    // window (curFrom = now-7d falls before thisMonday) and thisMonday's single TREND bucket.
     'projects/demo-webapp/sess-polling.jsonl': session('poll', week(0) + 3 * DAY + 9 * HOUR, 25, 'claude-opus-5-5',
       { ctx0: 20000, step: 3000, input: 600, output: 250, spacingMs: 45000, toolCmd: statusCheck }),
     'projects/demo-webapp/sess-build.jsonl': session('build', week(0) + 1 * DAY + 9 * HOUR, 34, 'claude-sonnet-5',
@@ -81,11 +81,13 @@ function buildFixture() {
     'projects/demo-webapp/sess-quick.jsonl': session('quick', week(0) + 5 * DAY + 9 * HOUR, 9, 'claude-opus-5-5',
       { ctx0: 5000, step: 4000, input: 800, output: 400, spacingMs: 100000 }),
     // previous window (7-14 days ago) — cheaper baseline, for REGRESSION. Early in week(1), well
-    // before curFrom on any weekday, so it never leaks into the current window or bucket.
+    // before curFrom (now-7d: week(1)'s Sunday noon), so it never leaks into the current window
+    // or bucket.
     'projects/demo-webapp/sess-prev.jsonl': session('prev', week(1) + 6 * HOUR, 22, 'claude-opus-5-5',
       { ctx0: 3000, step: 1200, input: 500, output: 250, spacingMs: 100000 }),
     // older history, so TREND has more than one week of data. Early in week(2), well before
-    // prevFrom on any weekday, so it never leaks into the previous window's totals.
+    // prevFrom (now-14d: week(2)'s Sunday noon), so it never leaks into the previous window's
+    // totals.
     'projects/demo-webapp/sess-w3.jsonl': session('w3', week(2) + 2 * HOUR, 14, 'claude-sonnet-5',
       { ctx0: 3000, step: 1500, input: 500, output: 300, spacingMs: 100000 }),
     // week(3) is left empty on purpose — the gap that makes TREND's "span 5 wk (4 with data)".
