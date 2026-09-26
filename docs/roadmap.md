@@ -70,6 +70,29 @@ behind the design are in [decisions.md](decisions.md), the code map in
 - [ ] Record a baseline on a second project, then re-measure it after a few slices of work there
       to see whether the `LONG_AGENT` playbook moved the numbers.
 
+### Report label vs default window
+
+The SKILL.md report row `BEAT LAST WEEK` implies a weekly comparison, but the default window is
+14 days (the last 14 against the 14 before); only `--days 7` is truly week over week.
+
+- [ ] The label, and any matching wording in SKILL.md and REFERENCE.md, names the comparison
+      accurately for any `--days` value (for example `BEAT PREV WINDOW`, or a label derived
+      from the window).
+- [ ] The ASCII report layout is otherwise unchanged; tests green.
+
+### Non-numeric usage fields
+
+Token fields in `token-audit.js` are coerced only with `|| 0`, so a non-numeric value (a string,
+say) in a corrupt transcript yields `NaN` or string concatenation. Totals go wrong, and a `NaN`
+weekly cost/message blanks every TREND sparkline bar (min/max turn `NaN`).
+
+- [ ] Non-finite or non-numeric usage fields are treated as 0 (or the row is skipped with a
+      warning) at the parse boundary.
+- [ ] A test with a string or `NaN` token field shows totals unaffected and the sparkline
+      rendered.
+- [ ] The TREND "Known limits" note about `NaN` in REFERENCE.md is updated to match; tests
+      green.
+
 ## Known limitations and deferred items
 
 ### Pricing and models
