@@ -69,7 +69,7 @@ Then run:
 ## Requirements
 
 Node.js **18 or newer**. Verified by running the full test suite (`node --test tests/*.test.js`)
-on Node 18, 20, 22 and 24 — all green. No other dependencies; the script is plain Node
+on Node 18, 22 and 24 — all green (CI's matrix). No other dependencies; the script is plain Node
 (`fs`, `path`, `readline`, `crypto`, `os`, `child_process`).
 
 ## Script flags

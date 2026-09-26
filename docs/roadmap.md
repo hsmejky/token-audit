@@ -45,6 +45,9 @@ behind the design are in [decisions.md](decisions.md), the code map in
 - [ ] Numbered work-tracking language (references to a numbered unit of work) is removed from
       code, tests and docs and rephrased so the same information is still conveyed, without
       relying on that numbering scheme anywhere, including in this document going forward.
+- [ ] The `v1`/`v2` labels for the script's two design generations (used in this file's opening
+      lines and throughout `decisions.md`) are replaced with descriptive wording — what changed,
+      not a version number — the same rationale as the numbered-work-tracking item above.
 - [ ] The worked dedupe-factor example in the flag reference no longer cites specific real
       figures (line counts, turn counts); the explanation stands on its own without them.
 - [ ] The trend sparkline is printed by the script itself, inline in the TREND line, not as a
@@ -131,7 +134,6 @@ behind the design are in [decisions.md](decisions.md), the code map in
 
 ### Tests
 
-- Run the suite on Node 18, 22 and 24 as a routine check (ideally in CI).
 - The timing test for 50k nested parentheses is flaky on Node 18 under full-suite load (fixed
   1500 ms limit); raise the limit or measure relative to a baseline.
 - `tests/subagent.test.js`: the exact-sum check covers `cur.cost` but not `all.cost` across all

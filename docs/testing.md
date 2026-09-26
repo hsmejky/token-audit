@@ -25,16 +25,19 @@ releases; CI runs it on a small matrix of supported Node versions across Linux a
 
 ## Privacy guard
 
-One test file acts as a guard for the public repository: it scans the documentation and
-manifests for anything that shouldn't be there — a real e-mail address, a personal name outside
-the license and package manifests, a real filesystem path, an identifier that looks like it was
-copied out of a live transcript rather than written by hand.
+One test file (`tests/manifest.test.js`) acts as a guard for the public repository. It scans
+docs, the plugin manifest and script, fixtures, `.claude/CLAUDE.md` and `.github/` for four kinds
+of leak: a personal e-mail address (only a GitHub noreply address is allowed), a hashed private
+word (a local account name or the author's other, unrelated project), a literal Windows/POSIX
+user-profile path, and a UUID-shaped id (a real session id).
 
-The guard checks candidate terms against a hashed list rather than a plaintext one, so the list
-of things to avoid isn't itself a map of what to avoid. If you need to add a legitimate exception
-(a synthetic name or path that happens to look real, or a new documentation file the guard should
-also cover), extend the guard's allowlist and say why in the commit — don't loosen the check
-itself without a reason recorded there.
+Private words are checked against a hashed list rather than a plaintext one, so the list of
+things to avoid isn't itself a map of what to avoid. There's no general allowlist: the guard has
+two narrow, named exceptions instead — `NO_PATH_CHECK` skips the path-shape check for the handful
+of files (REFERENCE.md, the script) that use synthetic `C:\Users\<name>`-style examples as worked
+documentation, and the e-mail check exempts `@users.noreply.github.com` addresses. If you need a
+new exception, extend one of those two mechanisms and say why in the commit — don't loosen the
+check itself without a reason recorded there.
 
 ## Performance tests
 
