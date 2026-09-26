@@ -42,13 +42,13 @@ behind the design are in [decisions.md](decisions.md), the code map in
 - [ ] A documentation section walks through usage scenarios with the recommended flag
       combination for each, rather than leaving readers to assemble one from the flag table
       alone.
-- [ ] Numbered work-tracking language (references to a numbered unit of work) is removed from
+- [x] Numbered work-tracking language (references to a numbered unit of work) is removed from
       code, tests and docs and rephrased so the same information is still conveyed, without
       relying on that numbering scheme anywhere, including in this document going forward.
-- [ ] The `v1`/`v2` labels for the script's two design generations (used in this file's opening
+- [x] The `v1`/`v2` labels for the script's two design generations (used in this file's opening
       lines and throughout `decisions.md`) are replaced with descriptive wording — what changed,
       not a version number — the same rationale as the numbered-work-tracking item above.
-- [ ] The worked dedupe-factor example in the flag reference no longer cites specific real
+- [x] The worked dedupe-factor example in the flag reference no longer cites specific real
       figures (line counts, turn counts); the explanation stands on its own without them.
 - [ ] The trend sparkline is printed by the script itself, inline in the TREND line, not as a
       separate line; the skill's own ASCII art (banners, next-step bars) is kept as is.
