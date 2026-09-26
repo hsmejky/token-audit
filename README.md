@@ -65,7 +65,7 @@ sessions and paths below are made up for illustration:
 │  REGRESSION  ▓▓▓▓▓    │
 └──────────────────────┘
 
-TOKEN AUDIT   scope all projects   window 2026-09-16 → 2026-09-23 (7d)   list-price equivalent
+TOKEN AUDIT   scope all projects   window 2026-09-20 → 2026-09-27 (7d)   list-price equivalent
 TREND        ▃▁▃█ 2026-08-24 $0.012/msg → 2026-09-21 $0.022/msg +87%   span 5 wk (4 with data)   full table in --json
 
 SPEND     $1.52 / 7d (+585%)         Opus 40% Sonnet 60%      main 100% sub 0%

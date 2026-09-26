@@ -47,7 +47,9 @@ happens to run at (`tests/readme-sample.test.js`, which diffs the script's outpu
 literal block in README.md) pins the clock instead: `tests/fixed-clock.js`, loaded into the
 spawned script via `--require` with the `TOKEN_AUDIT_TEST_NOW` environment variable (an ISO
 8601 string) set, patches `Date.now()` and the argless `new Date()` to that fixed instant and
-leaves every other `Date` entry point untouched. It's a no-op unless `TOKEN_AUDIT_TEST_NOW` is
+leaves every other `Date` entry point that takes an explicit value untouched; calling `Date()`
+as a plain function (no `new`) isn't supported, but the script never does that. It's a no-op
+unless `TOKEN_AUDIT_TEST_NOW` is
 set, so it only affects a test that opts in (via `tests/harness.js`'s `auditWithClock()` /
 `auditTextWithClock()`) — every other test still sees the real clock.
 

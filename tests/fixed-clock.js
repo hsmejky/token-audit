@@ -8,10 +8,11 @@
 // `--require` this file, sees the real, unpatched Date.
 //
 // Only two things are pinned: Date.now() and the argless `new Date()` — both readings of
-// "the current instant". Every other Date entry point (new Date(ms), new Date(str),
-// Date.UTC(...), Date.parse(...), instance getters, `instanceof Date`) passes straight through
-// to the real Date, via `extends`, so nothing that builds or inspects an explicit timestamp is
-// affected.
+// "the current instant". Every other Date entry point that builds or inspects an explicit
+// timestamp (new Date(ms), new Date(str), Date.UTC(...), Date.parse(...), instance getters,
+// `instanceof Date`) passes straight through to the real Date, via `extends`. Not supported:
+// calling `Date()` as a plain function (no `new`) — a class can't be invoked without `new`, so
+// this would throw instead of returning a fixed string. The script never does this.
 'use strict';
 
 const iso = process.env.TOKEN_AUDIT_TEST_NOW;

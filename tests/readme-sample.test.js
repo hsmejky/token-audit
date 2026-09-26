@@ -30,20 +30,22 @@ const { auditWithClock, auditTextWithClock, tmpClaudeDir } = require('./harness'
 // and the TREND line — is byte-for-byte reproducible no matter when or on what weekday the
 // suite actually runs, so the assertions below compare full lines exactly, no normalization.
 //
-// NOW_ISO is a Wednesday noon UTC, comfortably mid-week and away from any Monday-00:00-UTC
-// bucket boundary. Every session below is still anchored to `thisMonday` (NOW_ISO's UTC
-// week's Monday) or to `week(n)` (n weeks before that), not to a fixed offset from `now`, so
-// the fixture's structure (and the comment below explaining each session's placement) is
-// unchanged from before the clock was pinned:
-//   - the "current window" sessions sit inside thisMonday's own week: any timestamp in
-//     [thisMonday, thisMonday+7d) is always within the --days 7 window too (thisMonday is at
-//     most 6 days before `now`), so this satisfies both the window filter and a single,
-//     stable TREND bucket.
+// NOW_ISO is a Sunday noon UTC — the last day of its own UTC week — so every current-window
+// session below (all dated earlier that same week) falls safely before "now", the way a real
+// transcript always does; it's also away from any Monday-00:00-UTC bucket boundary. Every
+// session below is still anchored to `thisMonday` (NOW_ISO's UTC week's Monday) or to
+// `week(n)` (n weeks before that), not to a fixed offset from `now`, so the fixture's
+// structure (and the comment below explaining each session's placement) is unchanged from
+// before the clock was pinned:
+//   - the "current window" sessions sit inside thisMonday's own week, before `now`: the
+//     --days 7 window's curFrom is now-7d, which always falls before thisMonday (NOW_ISO is
+//     in thisMonday's own week), so any timestamp in [thisMonday, now) clears the window's
+//     lower bound and lands in a single, stable TREND bucket.
 //   - the "previous window" session sits early in week(1) (last week), safely before
 //     `curFrom`, and the older TREND-history sessions (w3, w5) sit early in week(2) and
 //     mid-week in week(4), safely before `prevFrom`/away from any bucket edge.
 // week(3) is left empty on purpose — the gap that produces TREND's "(4 with data)".
-const NOW_ISO = '2026-09-23T12:00:00.000Z';
+const NOW_ISO = '2026-09-27T12:00:00.000Z';
 
 const DAY = 86400000;
 const HOUR = 3600000;
