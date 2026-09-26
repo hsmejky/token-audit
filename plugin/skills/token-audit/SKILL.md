@@ -124,7 +124,7 @@ subagent/activity evidence for that ranking lives.
 
 ## Cadence
 
-Weekly — habits move on a week scale.
+Every week or two — habits move on a week scale; the default window is 14 days.
 
 ```
 manual    /token-audit            start of week

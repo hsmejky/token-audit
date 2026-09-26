@@ -49,9 +49,9 @@ spawned script via `--require` with the `TOKEN_AUDIT_TEST_NOW` environment varia
 8601 string) set, patches `Date.now()` and the argless `new Date()` to that fixed instant and
 leaves every other `Date` entry point that takes an explicit value untouched; calling `Date()`
 as a plain function (no `new`) isn't supported, but the script never does that. It's a no-op
-unless `TOKEN_AUDIT_TEST_NOW` is
-set, so it only affects a test that opts in (via `tests/harness.js`'s `auditWithClock()` /
-`auditTextWithClock()`) — every other test still sees the real clock.
+unless `TOKEN_AUDIT_TEST_NOW` is set, so it only affects a test that opts in (via
+`tests/harness.js`'s `auditWithClock()` / `auditTextWithClock()`) — every other test still sees
+the real clock.
 
 ## Performance tests
 

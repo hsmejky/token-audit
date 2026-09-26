@@ -10,9 +10,9 @@
 ```
 
 A checkup for your Claude Code habits. Type `/token-audit` and get a one-screen report: what you
-spent, how fat each message's context is, which sessions ate the budget, whether this week beat
-last week, what drifted in your config (model, effort, MCP servers, plugin count, transcript
-retention), and a ranked list of the three fixes worth your time.
+spent, how fat each message's context is, which sessions ate the budget, whether this window
+beat the one before, what drifted in your config (model, effort, MCP servers, plugin count,
+transcript retention), and a ranked list of the three fixes worth your time.
 
 No vibes. Every number comes from a script that reads your transcripts; Claude only turns the
 measured flags into advice, and says "all clear" when there's nothing to fix.
@@ -95,13 +95,13 @@ token, so the number is a proxy for what eats the plan limit, not a bill.
 
 ## Pick your audit
 
-Plain `/token-audit` is the weekly checkup. For anything else, add flags after the command
+Plain `/token-audit` is the regular checkup. For anything else, add flags after the command
 (`/token-audit --days 7 --no-detail`) and Claude passes them on to the script:
 
 ```
  you want...                        run
  ─────────────────────────────────  ──────────────────────────────────────────────
- the weekly checkup                 /token-audit
+ the regular checkup                /token-audit
  a quick glance, summary only       /token-audit --days 7 --no-detail
  to see if a habit fix worked       /token-audit --days 3        (3 = days since the fix)
  a deep-dive into another project   /token-audit --project ../demo-webapp --days 30
@@ -110,10 +110,10 @@ Plain `/token-audit` is the weekly checkup. For anything else, add flags after t
  numbers for a spreadsheet/script   node <skill-dir>/scripts/token-audit.js --json ...
 ```
 
-**The weekly checkup** (`/token-audit`). This project, the last 14 days against the 14 before,
+**The regular checkup** (`/token-audit`). This project, the last 14 days against the 14 before,
 summary plus the DETAIL block (top work units, costliest subagents, cost by activity). Run it
-from a fresh session: auditing from inside a long, fat-context session is exactly the habit it
-is built to catch.
+every week or two, from a fresh session: auditing from inside a long, fat-context session is
+exactly the habit it is built to catch.
 
 **A quick glance** (`--days 7 --no-detail`). This week against last week, summary only: the
 banner, trend, flags and at most three next steps.
@@ -130,13 +130,20 @@ work. A longer window (`--days 30`) gives a quieter project enough data to flag 
 to see which project dominates (the `project` column in DETAIL). Habits differ per project, so
 treat the flags as a pointer and follow up with `--project` on the project that stands out.
 
-**The long view** (`--days 90`). `ALL-TIME` and `TREND` already cover your entire history
-whatever window you pick; a wide `--days` makes SPEND, FLAGS and DETAIL cover a quarter too.
-The full week-by-week table is `weeks` in `--json`.
+**The long view** (`--days 90`). Whatever window you pick, `ALL-TIME` and `TREND` already cover
+every transcript still on disk for the audit's scope (this project by default, or whatever
+`--project`/`--all` selects); a wide `--days` makes SPEND, FLAGS and DETAIL cover a quarter too.
+If you set `cleanupPeriodDays`, transcripts older than that are already deleted and can't be
+counted. The full week-by-week table is `weeks` in `--json`.
 
 **Machine-readable export** (`--json`). Run the script yourself instead of through the skill,
-so a large JSON dump doesn't land in Claude's context. `<skill-dir>` is
-`plugin/skills/token-audit` in a clone of this repo:
+so a large JSON dump doesn't land in Claude's context. `<skill-dir>` is the skill's own folder,
+the one holding `SKILL.md` and `scripts/`:
+
+- installed with `/plugin install`: `skills/token-audit` inside the installed plugin's
+  directory (the skill itself refers to that directory as `${CLAUDE_PLUGIN_ROOT}`);
+- a clone of this repo: `plugin/skills/token-audit`;
+- a manual copy of the skill: wherever you put the `token-audit` folder.
 
 ```
 node <skill-dir>/scripts/token-audit.js --all --days 30 --json --top 25 > audit.json
@@ -169,8 +176,9 @@ The script accepts these flags:
 | `--all` | off | scope to every project instead of just one |
 | `--no-detail` | off | drop the DETAIL block: summary only |
 
-`/token-audit` only forwards `--days`, `--project`, `--all`, `--no-detail` and `--claude-dir`,
-and refuses `--json`; run the script directly for `--top` or `--json`.
+Through `/token-audit`, Claude passes only `--days`, `--project`, `--all`, `--no-detail` and
+`--claude-dir` on to the script and drops any other flag, `--top` included; `--json` is refused
+outright. For `--top` or `--json`, run the script directly.
 
 Full detail on each flag, precedence rules, and the flag playbook (what each `FLAGS`/
 `SECURITY` line means and how to act on it) live in
