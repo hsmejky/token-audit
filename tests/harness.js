@@ -139,8 +139,12 @@ function tmpUserConfig(claudeDir, obj) {
 // limit is multiplied instead of the test being skipped — a real regression
 // should still fail, just against a more forgiving bound.
 const CI_PERF_MULTIPLIER = 5;
+// Strict equality, not truthiness: GitHub Actions sets CI=true/1, but a local shell that does
+// `CI=false node --test ...` (or any other non-empty override) would otherwise still count as
+// "truthy" and silently get the multiplier too, defeating the point of setting CI=false.
+const inCI = process.env.CI === 'true' || process.env.CI === '1';
 function perfLimit(ms) {
-  return process.env.CI ? ms * CI_PERF_MULTIPLIER : ms;
+  return inCI ? ms * CI_PERF_MULTIPLIER : ms;
 }
 
 module.exports = {

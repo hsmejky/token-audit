@@ -405,18 +405,32 @@ test('activityCategory: 50k nested `(…)` in a command key processes well under
 // 'a;'×80k 77ms → 1411ms, 'a|'×80k 62ms → 1392ms. A single combined forward scan for
 // either marker restores O(n). 500ms is well above the ~80-90ms fixed-code time but far
 // below the >1300ms regressed time, so this fails hard on a reintroduction of the bug.
-test('activityCategory: `a;` x80k (all CMD, no CMD_PIPE) processes in < 500ms (was ~1.4s, quadratic)', () => {
-  const command = 'a;'.repeat(80000);
-  const t0 = Date.now();
-  activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < perfLimit(500), `took ${Date.now() - t0}ms`);
+// perfLimit's CI multiplier (harness.js) widens the absolute bound enough that a reintroduced
+// O(n²) scan can slip back under it on a slow-enough CI runner — the multiplier is tuned for
+// machine noise, not for telling linear from quadratic apart. So alongside the absolute bound,
+// measure the same scan at 1/4 the size and assert the timing ratio: linear code takes ~4x
+// longer at 4x the input, quadratic ~16x; a threshold of 8 sits between the two and is
+// independent of how fast or slow the machine is.
+function timeMs(fn) {
+  const t0 = process.hrtime.bigint();
+  fn();
+  return Number(process.hrtime.bigint() - t0) / 1e6;
+}
+
+test('activityCategory: `a;` x80k, < 500ms and scales linearly not quadratically (was ~1.4s, quadratic)', () => {
+  const small = timeMs(() => activityCategory('Bash', { command: 'a;'.repeat(20000) }));
+  const large = timeMs(() => activityCategory('Bash', { command: 'a;'.repeat(80000) }));
+  assert.ok(large < perfLimit(500), `took ${large}ms`);
+  const ratio = large / small;
+  assert.ok(ratio < 8, `4x input took ${ratio.toFixed(1)}x longer (${small.toFixed(2)}ms -> ${large.toFixed(2)}ms)`);
 });
 
-test('activityCategory: `a|` x80k (all CMD_PIPE after first CMD) processes in < 500ms (was ~1.4s, quadratic)', () => {
-  const command = 'a|'.repeat(80000);
-  const t0 = Date.now();
-  activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < perfLimit(500), `took ${Date.now() - t0}ms`);
+test('activityCategory: `a|` x80k, < 500ms and scales linearly not quadratically (was ~1.4s, quadratic)', () => {
+  const small = timeMs(() => activityCategory('Bash', { command: 'a|'.repeat(20000) }));
+  const large = timeMs(() => activityCategory('Bash', { command: 'a|'.repeat(80000) }));
+  assert.ok(large < perfLimit(500), `took ${large}ms`);
+  const ratio = large / small;
+  assert.ok(ratio < 8, `4x input took ${ratio.toFixed(1)}x longer (${small.toFixed(2)}ms -> ${large.toFixed(2)}ms)`);
 });
 
 test('activityCategory: `time ` x8000 (chained WRAPPED words) processes in < 100ms (was ~0.9s)', () => {

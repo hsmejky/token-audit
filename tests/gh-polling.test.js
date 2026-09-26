@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, auditText, tmpClaudeDir } = require('./harness');
+const { audit, auditText, tmpClaudeDir, perfLimit } = require('./harness');
 const { commandKey, activityCategory, githubShapes, githubReadShapes, isGhWrite, rankFlags, GH_POLL_MIN_CALLS } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
@@ -79,7 +79,7 @@ test('githubShapes: linear on 200k-char inputs', () => {
   for (const s of inputs) {
     const t = process.hrtime.bigint();
     githubShapes(s);
-    assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 500, `slow on ${s.slice(0, 20)}…`);
+    assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < perfLimit(500), `slow on ${s.slice(0, 20)}…`);
   }
 });
 
@@ -401,7 +401,7 @@ test('isGhWrite/githubReadShapes: linear on 200k-char inputs — many/unclosed q
     const t = process.hrtime.bigint();
     isGhWrite(s);
     githubReadShapes(s);
-    assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 250, `slow on ${s.slice(0, 20)}…`);
+    assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < perfLimit(250), `slow on ${s.slice(0, 20)}…`);
   }
 });
 
@@ -416,7 +416,7 @@ test('isGhWrite: \\" inside double quotes stays in the word; the flags after it 
   const t = process.hrtime.bigint();
   isGhWrite(`curl -H "${'\\"'.repeat(100000)}" -X GET ${PULLS}`);
   githubReadShapes(`gh api -f body="${'\\"'.repeat(100000)}" repos/o/r/pulls`);
-  assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 250, 'slow on many \\"');
+  assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < perfLimit(250), 'slow on many \\"');
 });
 
 test('isGhWrite: curl/gh named by a path or with .exe is still curl/gh', () => {

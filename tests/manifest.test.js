@@ -91,6 +91,14 @@ const PLUGIN_FILES = fs.existsSync(PLUGIN_DIR)
   ? walk(PLUGIN_DIR).filter((f) => /\.(md|json|js)$/.test(f)).map(toRel) : [];
 const FIXTURE_FILES = fs.existsSync(FIXTURES_DIR)
   ? walk(FIXTURES_DIR).filter((f) => f.endsWith('.jsonl')).map(toRel) : [];
+// Repo-hygiene fixup: the guard covered docs/, the plugin and fixtures, but not the two other
+// places a leak could land — the project's own `.claude/CLAUDE.md` (checked into this public
+// repo, unlike the user's private global one) and the CI workflow files under `.github/`.
+const GITHUB_DIR = path.join(ROOT, '.github');
+const REPO_META_FILES = [
+  ...(fs.existsSync(path.join(ROOT, '.claude', 'CLAUDE.md')) ? ['.claude/CLAUDE.md'] : []),
+  ...(fs.existsSync(GITHUB_DIR) ? walk(GITHUB_DIR).map(toRel) : []),
+];
 // REFERENCE.md and the script carry synthetic `C:\Users\<name>` (and `/home/<name>`, …)
 // examples throughout (worked documentation), so the generic user-path patterns would
 // false-positive there. Only the path-shape check is skipped for them — neither file contains
@@ -100,7 +108,7 @@ const NO_PATH_CHECK = new Set([
   'plugin/skills/token-audit/scripts/token-audit.js',
 ]);
 
-for (const rel of [...DOC_FILES, 'README.md']) {
+for (const rel of [...DOC_FILES, 'README.md', ...REPO_META_FILES]) {
   test(`${rel}: no personal email or private word`, () => {
     assertNoPersonalEmail(rel);
     const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
