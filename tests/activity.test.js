@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, auditText, tmpClaudeDir, turn } = require('./harness');
+const { audit, auditText, tmpClaudeDir, turn, perfLimit } = require('./harness');
 const { commandKey, shellSegments, activityCategory } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // One API response that makes tool calls, as Claude Code writes it: one JSONL
@@ -319,7 +319,7 @@ test('activityCategory: a long non-matching command after `ruby ` does not blow 
   const command = 'ruby ' + 'x'.repeat(200000);
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 1000, 'should classify a 200k-char command in well under 1s');
+  assert.ok(Date.now() - t0 < perfLimit(1000), 'should classify a 200k-char command in well under 1s');
   assert.equal(cat, 'other');
 });
 
@@ -327,7 +327,7 @@ test('activityCategory: `node ` script run classifies a long trailing arg in wel
   const command = 'node ' + 'x'.repeat(200000);
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1000), `took ${Date.now() - t0}ms`);
   assert.equal(cat, 'script run');
 });
 
@@ -347,14 +347,14 @@ test('SCRIPT_INTERP: `python[^\\s CMD]*` stays linear on many adjacent `‣pytho
   const s = (CMD + 'python').repeat(40000) + '\t'; // trailing tab: never a match, forces full backtrack per start
   const t0 = Date.now();
   re.test(s);
-  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1000), `took ${Date.now() - t0}ms`);
 });
 
 test('activityCategory: many `-X` interpreter options before -m do not blow up (linear, not quadratic)', () => {
   const command = 'python ' + '-X '.repeat(40) + '-m pytest';
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 1000, 'should classify 40 `-X` flags in well under 1s');
+  assert.ok(Date.now() - t0 < perfLimit(1000), 'should classify 40 `-X` flags in well under 1s');
   assert.equal(cat, 'test/lint/build');
 });
 
@@ -362,7 +362,7 @@ test('activityCategory: many `-X val` interpreter options before -m do not blow 
   const command = 'python ' + '-X val '.repeat(40) + '-m pytest';
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 1000, 'should classify 40 `-X val` flags in well under 1s');
+  assert.ok(Date.now() - t0 < perfLimit(1000), 'should classify 40 `-X val` flags in well under 1s');
   assert.equal(cat, 'test/lint/build');
 });
 
@@ -370,7 +370,7 @@ test('activityCategory: many `py -3` version flags do not blow up (linear, not q
   const command = 'py ' + '-3 '.repeat(40) + '-m pytest';
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 1000, 'should classify 40 `-3` flags in well under 1s');
+  assert.ok(Date.now() - t0 < perfLimit(1000), 'should classify 40 `-3` flags in well under 1s');
   assert.equal(cat, 'test/lint/build');
 });
 
@@ -380,7 +380,7 @@ test('activityCategory: `pnpm` + `--a ` x40 with a non-matching tail classifies 
   const command = 'pnpm ' + '--a '.repeat(40) + 'run foo';
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1000), `took ${Date.now() - t0}ms`);
   assert.equal(cat, 'other');
 });
 
@@ -395,7 +395,7 @@ test('activityCategory: 50k nested `(…)` in a command key processes well under
   // dual-indexOf regression itself (this exact bug) is now pinned tightly below by the
   // dedicated `a;`/`a|` x80k tests, which are far less noisy (trivial command, no other
   // regex machinery involved).
-  assert.ok(Date.now() - t0 < 1500, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1500), `took ${Date.now() - t0}ms`);
 });
 
 // BLOCKER fix (re-review, real data): markCommands()'s pass 2 used to look up the next
@@ -409,21 +409,21 @@ test('activityCategory: `a;` x80k (all CMD, no CMD_PIPE) processes in < 500ms (w
   const command = 'a;'.repeat(80000);
   const t0 = Date.now();
   activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(500), `took ${Date.now() - t0}ms`);
 });
 
 test('activityCategory: `a|` x80k (all CMD_PIPE after first CMD) processes in < 500ms (was ~1.4s, quadratic)', () => {
   const command = 'a|'.repeat(80000);
   const t0 = Date.now();
   activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(500), `took ${Date.now() - t0}ms`);
 });
 
 test('activityCategory: `time ` x8000 (chained WRAPPED words) processes in < 100ms (was ~0.9s)', () => {
   const command = 'time '.repeat(8000) + 'echo hi';
   const t0 = Date.now();
   activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 100, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(100), `took ${Date.now() - t0}ms`);
 });
 
 test('activityCategory: `python -m ` x10k processes in < 200ms (was exponential)', () => {
@@ -433,14 +433,14 @@ test('activityCategory: `python -m ` x10k processes in < 200ms (was exponential)
   const command = 'python ' + '-m '.repeat(10000) + 'pytest';
   const t0 = Date.now();
   activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 200, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(200), `took ${Date.now() - t0}ms`);
 });
 
 test('activityCategory: `-X -m ` x10k processes in < 200ms (was exponential)', () => {
   const command = 'python ' + '-X -m '.repeat(10000) + 'pytest';
   const t0 = Date.now();
   activityCategory('Bash', { command });
-  assert.ok(Date.now() - t0 < 200, `took ${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(200), `took ${Date.now() - t0}ms`);
 });
 
 // Lines of the DETAIL block (from the DETAIL header to end of output).

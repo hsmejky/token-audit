@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, auditText, tmpClaudeDir } = require('./harness');
+const { audit, auditText, tmpClaudeDir, perfLimit } = require('./harness');
 const { redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 12 / design decision Q9: POLLING = the same normalized command
@@ -338,21 +338,21 @@ test('POLLING: redactPaths is fast on a 200k-char run of "." (no email)', () => 
   const s = 'a.'.repeat(100000);
   const t0 = Date.now();
   redactPaths(s);
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms`);
 });
 
 test('POLLING: redactPaths is fast on a 200k-char run of "-" (no email)', () => {
   const s = 'a-'.repeat(100000);
   const t0 = Date.now();
   redactPaths(s);
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms`);
 });
 
 test('POLLING: redactPaths is fast on a 200k-char dotted run ending in "@" (email-shaped)', () => {
   const s = 'x.'.repeat(99999) + 'x@';
   const t0 = Date.now();
   redactPaths(s);
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms`);
 });
 
 // Re-review finding 2: a path whose name segment has a space, in several shapes.
@@ -486,7 +486,7 @@ test('POLLING: value layer is fast on a 200k-char run of a name-part prefix', ()
   for (const s of ['a'.repeat(200000), 'aab'.repeat(70000)]) {
     const t0 = Date.now();
     redactPaths(s, id);
-    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+    assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms`);
   }
 });
 
@@ -495,6 +495,6 @@ test('POLLING: generic layer is fast on 200k-char runs of Users-path prefixes', 
     ' C:/Users/'.repeat(20000), ':'.repeat(200000), ' /mnt/c/'.repeat(25000)]) {
     const t0 = Date.now();
     redactPaths(s, NO_ID);
-    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms`);
+    assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms`);
   }
 });

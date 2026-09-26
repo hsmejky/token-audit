@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, auditText, tmpClaudeDir, turn } = require('./harness');
+const { audit, auditText, tmpClaudeDir, turn, perfLimit } = require('./harness');
 
 test('Fable rows are priced and shown as their own family in SPEND', () => {
   const dir = tmpClaudeDir({
@@ -124,7 +124,7 @@ test('rateFor is fast on a pathological 200k-char model string (linear, not expo
   });
   const t0 = Date.now();
   const r = audit(dir);
-  assert.ok(Date.now() - t0 < 1000, 'should classify a 200k-char model string in well under 1s');
+  assert.ok(Date.now() - t0 < perfLimit(1000), 'should classify a 200k-char model string in well under 1s');
   assert.equal(r.unpriced.length, 1);
 });
 

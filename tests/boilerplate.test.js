@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, auditText, tmpClaudeDir } = require('./harness');
+const { audit, auditText, tmpClaudeDir, perfLimit } = require('./harness');
 const { commandKey, setupPrefixes } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 13 / design decision Q9: BOILERPLATE = the same setup prefix of a
@@ -137,7 +137,7 @@ test('BOILERPLATE: setup-prefix detection is fast on 200k-char inputs', () => {
   ]) {
     const t0 = Date.now();
     setupPrefixes(commandKey(cmd));
-    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms for ${cmd.slice(0, 12)}…`);
+    assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms for ${cmd.slice(0, 12)}…`);
   }
 });
 

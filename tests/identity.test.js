@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { auditEnv, tmpClaudeDir, tmpUserConfig, turn } = require('./harness');
+const { auditEnv, tmpClaudeDir, tmpUserConfig, turn, perfLimit } = require('./harness');
 const { projectFolder } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 29: every printed field that can carry a path or the user's identity goes
@@ -89,7 +89,7 @@ test('identity: accent folding stays linear on a 200k-char accented input', () =
   const input = ('\u00e9a ' + 'S\u030C').repeat(40000);
   const t0 = Date.now();
   redactPaths(input, PETR);
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0} ms`);
 });
 
 test('security: git config read for identity is pinned to a safe cwd (home dir)', () => {

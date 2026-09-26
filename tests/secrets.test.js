@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { audit, auditText, tmpClaudeDir } = require('./harness');
+const { audit, auditText, tmpClaudeDir, perfLimit } = require('./harness');
 const { redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Secret layer of the shared printed-key redaction (redactPaths), which POLLING keys
@@ -153,7 +153,7 @@ test('secret layer is fast on 200k-char pathological inputs', () => {
     '"'.repeat(100000) + 'mysql -pX', "'\\\"".repeat(60000), 'bash -c "sh -c \'bash -c \\"'.repeat(8000)]) {
     const t0 = Date.now();
     redactPaths(s, NO_ID);
-    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);
+    assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);
   }
 });
 
@@ -246,6 +246,6 @@ test('secret + path layers stay linear on 200k-char escape / quoted-path runs (S
     '& "C:\\x\\mysql.exe" -p'.repeat(9000), "mysql -p$X'a'".repeat(15000)]) {
     const t0 = Date.now();
     redactPaths(s, NO_ID);
-    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);
+    assert.ok(Date.now() - t0 < perfLimit(1000), `${Date.now() - t0}ms for ${s.slice(0, 12)}…`);
   }
 });

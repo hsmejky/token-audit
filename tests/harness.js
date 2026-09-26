@@ -133,6 +133,17 @@ function tmpUserConfig(claudeDir, obj) {
   return p;
 }
 
+// Perf-test timing limit, shared by every test that asserts a parser stays
+// under some millisecond bound on pathological input. CI runners are slower
+// and noisier than a dev machine, so under CI (`process.env.CI` truthy) the
+// limit is multiplied instead of the test being skipped — a real regression
+// should still fail, just against a more forgiving bound.
+const CI_PERF_MULTIPLIER = 5;
+function perfLimit(ms) {
+  return process.env.CI ? ms * CI_PERF_MULTIPLIER : ms;
+}
+
 module.exports = {
   audit, auditText, auditCwd, auditRaw, auditEnv, fixture, tmpClaudeDir, tmpDir, tmpUserConfig, turn, turns,
+  perfLimit,
 };
