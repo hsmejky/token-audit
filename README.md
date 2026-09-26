@@ -103,6 +103,15 @@ subprocess call, not a network request) — see `token-audit.js`.
 Path and name redaction (project folders, subagent task text, etc.) is **best-effort**, not
 a guarantee. Review a report yourself before pasting it anywhere public.
 
+## Documentation
+
+- [REFERENCE.md](plugin/skills/token-audit/REFERENCE.md): user-facing reference — every flag
+  and its playbook, output sections, `--json` fields, script flags.
+- [docs/architecture.md](docs/architecture.md): how the script works — pipeline, main parts,
+  flag ranking, line budgets, activity classification, redaction, packaging, tests.
+- [docs/decisions.md](docs/decisions.md): design decisions and why they were made.
+- [docs/roadmap.md](docs/roadmap.md): open work and known limitations.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
