@@ -756,8 +756,9 @@ real data and on the fixture that fires every section at once (`tests/summary-bu
   whole history: first week → last week cost/message, the % change (`n/a` when the first week
   cost nothing), and `span N wk (M with data)` — N = calendar weeks from the first to the last
   week with data, M = weeks that had any rows. With one week of data it prints `week of <date>
-  only` and no change. Inline before the dates, a sparkline: one bar per week with data, most
-  recent first — up to 12 weeks, fewer if the 120-char line has no room left for that many —
+  only` and no change. Inline before the dates, a sparkline: one bar per week with data, the
+  most recent weeks, oldest→newest — up to 12 weeks, fewer if the 120-char line has no room
+  left for that many —
   scaled against the low/high of the *whole* trend, not just the weeks shown, so a flat run at
   the tail still reads as low (or high) relative to the rest of the history. Dropped entirely
   when there's no room for even one bar. The full per-week table is `--json`'s `weeks` — the

@@ -43,7 +43,8 @@ per project — don't mix them by default).
    listed flag that got dropped:
    - `--days N` — N must match `^\d+$`, else drop the flag.
    - `--project <path>` / `--claude-dir <path>` — always wrap the value in single quotes in the
-     command; if it contains a `'` or a newline, drop the flag instead of wrapping it.
+     command, so it's passed as one argument even with spaces; if it contains a `'` or a
+     newline, or is empty or starts with `-`, drop the flag instead of wrapping it.
    - `--all`, `--no-detail` — no value, pass through as-is.
    `--top N` is not on this list: it only reshapes `--json`'s session list, and this skill never
    emits `--json`, so it has nothing to affect here. Refuse `--json` itself: it doesn't fit the

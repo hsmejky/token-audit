@@ -158,7 +158,7 @@ on Node 18, 22 and 24 — all green (CI's matrix). No other dependencies; the sc
 
 ## Script flags
 
-The skill runs `node <skill-dir>/scripts/token-audit.js` with these flags:
+The script accepts these flags:
 
 | flag | default | meaning |
 |---|---|---|
@@ -169,6 +169,9 @@ The skill runs `node <skill-dir>/scripts/token-audit.js` with these flags:
 | `--project PATH` | cwd | scope to one project |
 | `--all` | off | scope to every project instead of just one |
 | `--no-detail` | off | drop the DETAIL block: summary only |
+
+`/token-audit` only forwards `--days`, `--project`, `--all`, `--no-detail` and `--claude-dir`,
+and refuses `--json`; run the script directly for `--top` or `--json`.
 
 Full detail on each flag, precedence rules, and the flag playbook (what each `FLAGS`/
 `SECURITY` line means and how to act on it) live in
