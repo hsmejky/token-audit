@@ -497,7 +497,14 @@ spend; top 37× pulls +4 more`. `--json`: the flag carries `calls`, `sessions`, 
 expensive first. Tier 0 like `POLLING`, `amount` = the cost of those calls' turns.
 
 - **Counted calls**: Bash/PowerShell calls in the `wait/poll` or `github` activity category
-  that name a GitHub endpoint. `git push`, a plain `sleep`, `Monitor` never count.
+  that name a GitHub endpoint *and query state rather than change it* (HITL decision).
+  `-X POST`/`PUT`/`PATCH`/`DELETE` (or `--method` with one of those, case-insensitive) and a
+  `gh <group> <verb>` whose verb writes (`create`, `merge`, `close`, `edit`, `comment`,
+  `reopen`, `rerun`, …) are excluded even though their category is still `wait/poll`/`github`;
+  no method flag and no matching verb defaults to a read. So `gh pr checks`/`view`, `gh run
+  view`/`watch`, a bare `gh api repos/…/pulls/1` and any GET curl count; `gh pr create`,
+  `gh pr merge`, `gh issue create`, `pulls/*/merge` and any explicit write method never do,
+  however many times they run. `git push`, a plain `sleep`, `Monitor` never count either.
 - **Endpoint shape** (`githubShapes()`): an `api.github.com/<path>` URL loses `repos/<owner>/
   <repo>/` and its query; every other segment that is not a known REST word (`pulls`,
   `commits`, `check-runs`, `actions`, `runs`, `jobs`, `merge`, `branches`, …) becomes `*`,
@@ -511,18 +518,37 @@ expensive first. Tier 0 like `POLLING`, `amount` = the cost of those calls' turn
   per window, so `--days 30` sees roughly twice the calls of the default 14 days). A call that
   hits two shapes counts in both groups and once in the flag totals. In `--all` scope a shape
   sums across projects (the fix is per machine).
-- **Overlap**: the same turns can also sit in a `POLLING` run or carry a `BOILERPLATE`
-  credential prefix; tier-0 `amount`s are not deduplicated against each other.
+- **Overlap**: `GH_POLLING`, `POLLING` and `BOILERPLATE` are independent views over the same
+  turns (by endpoint shape, by repeated command key, by credential-prefix), not a partition —
+  a turn can count in more than one. Their `amount`s are never deduplicated against each
+  other and must not be added together as "total saveable spend"; each is its own upper
+  bound, read on its own.
 
-**Threshold — provisional, awaiting the user's HITL approval.** `GH_POLL_MIN_CALLS = 20` is the
-proposed default from real, deduped, all-history data (calls per project × shape, n = 50):
-p50 1, p75 3, p90 25, p95 31, max 76. Ordinary GitHub use stayed at ≤ 8 calls per shape; the
-known spread-out polling case was 25–76 per shape (218 calls over 54 sessions, 26 of them
-subagents, median 3 calls per session — invisible to `POLLING` at any N) and nothing fell in
-between. Any value from 9 to 25 fires on exactly the same five shapes (≈ 2 % of that project's
-spend, 0 hits elsewhere); 20 leaves headroom for heavier normal use (e.g. a PR created and
-merged every day of a 14-day window) that the measured data doesn't show. 40 would keep only
-the pure `check-runs` poll; ≤ 5 starts flagging auth checks (`gh auth status`, `user`).
+**Threshold — final: `GH_POLL_MIN_CALLS = 20`.** Chosen from real, deduped, all-history data
+(calls per project × shape, n = 50, writes and reads together, before the read-only scope
+below was decided): p50 1, p75 3, p90 25, p95 31, max 76. Ordinary GitHub use stayed at ≤ 8
+calls per shape; the one known spread-out polling case ran 25–76 per shape (218 calls over
+54 sessions, 26 of them subagents, median 3 calls per session — invisible to `POLLING` at
+any N), and nothing fell in between — the data can't distinguish 10 from 25. Any value from
+9 to 25 fires on exactly the same shapes for that case (0 hits elsewhere); 20 sits closer to
+p90 and leaves headroom for heavier normal use (e.g. a PR created and merged every day of a
+14-day window) that the measured data doesn't show. 40 would keep only the pure `check-runs`
+poll; ≤ 5 starts flagging auth checks (`gh auth status`, `user`) — false positives, not
+polling, so 20 is comfortably clear of that floor too.
+
+**Scope — reads only (HITL decision).** Write calls (`gh pr create`/`merge`, `gh issue
+create`, any explicit `-X POST`/`PUT`/`PATCH`/`DELETE`) are excluded from `GH_POLLING`
+regardless of category, per the "Counted calls" rule above. Re-measured on the same
+all-history data with writes excluded (`--all --days 3650`): only 2 shapes now clear
+`T = 20` — `commits/*/check-runs` (73 calls) and `pulls/*` (20 GET calls) — 87 calls, 33
+sessions (13 subagents), $8.56 = 0.65 % of the second project's spend (all of it; 0 hits in
+any other project). That is roughly a third of the earlier writes-included figure (5 shapes,
+183 calls, 46 sessions, $25.8 = 1.96 %) — the flag now measures spread-out CI/status
+polling specifically, not general `gh`/API traffic. At lower T the same reads-only data
+gives: `T=5` 6 shapes, 118 calls, $12.24 (0.09 %); `T=10` 3 shapes, 102 calls, $10.40
+(0.08 %); `T=30`/`T=40` 1 shape (the 73 `check-runs`), $7.17 (0.05 %). `T=20` still lands in
+the same 10–25 empty band as before, so the finalized value is unchanged by the scope
+decision.
 
 **Playbook**: install and authenticate `gh` (removes the per-call `git credential fill` +
 `curl` + JSON-body boilerplate) and wait with one call — `gh pr checks --watch`,
