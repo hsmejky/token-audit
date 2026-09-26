@@ -39,7 +39,7 @@ behind the design are in [decisions.md](decisions.md), the code map in
 
 ### Docs & fun
 
-- [ ] A documentation section walks through usage scenarios with the recommended flag
+- [x] A documentation section walks through usage scenarios with the recommended flag
       combination for each, rather than leaving readers to assemble one from the flag table
       alone.
 - [x] Numbered work-tracking language (references to a numbered unit of work) is removed from
@@ -50,11 +50,11 @@ behind the design are in [decisions.md](decisions.md), the code map in
       not a version number — the same rationale as the numbered-work-tracking item above.
 - [x] The worked dedupe-factor example in the flag reference no longer cites specific real
       figures (line counts, turn counts); the explanation stands on its own without them.
-- [ ] The trend sparkline is printed by the script itself, inline in the TREND line, not as a
+- [x] The trend sparkline is printed by the script itself, inline in the TREND line, not as a
       separate line; the skill's own ASCII art (banners, next-step bars) is kept as is.
-- [ ] The skill's frontmatter disables automatic model-driven invocation, and its description's
+- [x] The skill's frontmatter disables automatic model-driven invocation, and its description's
       trigger phrasing is trimmed down.
-- [ ] The README reads as fun and inviting, in keeping with the project's ASCII-art style,
+- [x] The README reads as fun and inviting, in keeping with the project's ASCII-art style,
       recommends installing at user scope rather than per project, and explains that an
       uninvoked skill costs no tokens at rest.
 
