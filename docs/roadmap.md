@@ -82,6 +82,11 @@ behind the design are in [decisions.md](decisions.md), the code map in
   can be misread as an option.
 - `node ./tools/gh pr merge` is treated as a `gh` write (the command word is matched by basename);
   `gh api -X =POST` is treated as POST.
+- `gh` invoked by a path or as `gh.exe` (`C:\tools\gh.exe`, `/usr/local/bin/gh`) falls into the
+  `other` activity category, not `github`: the category rule matches the literal word `gh `,
+  while `githubReadShapes()`/`isGhWrite()` already resolve `gh` by basename. `GH_POLL_CATEGORIES`
+  only counts `wait/poll` and `github`, so those calls are silently excluded from `GH_POLLING`
+  even though a shape is available for them.
 
 ### Flags and layout
 
