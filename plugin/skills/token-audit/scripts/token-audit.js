@@ -1350,15 +1350,29 @@ const GH_POLL_CATEGORIES = new Set(['wait/poll', 'github']);
 // Slice 31 review finding 2: `--request` (curl's `-X` alias) alongside `--method`, both
 // `NAME value` and `NAME=value`; `-x` with or without a space covers `-XPOST` too.
 const GH_WRITE_METHOD = /-x\s*['"]?(post|put|patch|delete)\b|--(?:request|method)[=\s]+['"]?(post|put|patch|delete)\b/i;
+// Re-review finding 2: an explicit GET always reads, for `gh api` as much as for curl —
+// `-X GET`/`-XGET` (curl's `-x` alias) alongside `--method GET`/`--method=GET`, all
+// case-insensitive, fused or spaced.
+const GH_GET_METHOD = /-x\s*['"]?get\b|--(?:request|method)[=\s]+['"]?get\b/i;
 // Slice 31 review finding 2: curl sends an implicit POST whenever a body flag is present and
-// `-G`/`--get` doesn't turn it back into a query-string GET.
-const GH_DATA_FLAG = /(?:^|\s)(?:-d\b|--data(?:-raw|-binary|-urlencode)?\b)/i;
-const GH_GET_FLAG = /(?:^|\s)(?:-G|--get)\b/i;
+// `-G`/`--get` doesn't turn it back into a query-string GET. `--json` (implicit
+// `-d`+content-type) is the same shape (re-review finding 4).
+const GH_DATA_FLAG = /(?:^|\s)(?:-d\b|--data(?:-raw|-binary|-urlencode)?\b|--json\b)/i;
+// `-F`/`--form` (multipart, re-review finding 4) — kept case-sensitive and apart from
+// GH_DATA_FLAG: curl's lowercase `-f` is `--fail`, unrelated to a body.
+const GH_FORM_FLAG = /(?:^|\s)(?:-F\b|--form(?:-string)?\b)/;
+// Re-review finding 3: case-sensitive `-G` (curl's lowercase `-g` is `--globoff`, an unrelated
+// flag) that also matches it fused into a combined short-flag cluster (`-sG`, `-Gs`); `--get`
+// stays its own literal alternative.
+const GH_GET_FLAG = /(?:^|\s)-(?!-)[A-Za-z]*G[A-Za-z]*\b|(?:^|\s)--get\b/;
 // `gh api` flags that imply a write body (Slice 31 review finding 2): `-f`/`-F`/`--field`/
 // `--raw-field` post form/JSON fields unless an explicit `--method GET` overrides it.
 // Exception: `gh api graphql -f query=…` is itself a query endpoint — a read UNLESS the
 // query text is a `mutation`.
 const GH_API_FIELD_FLAG = /(?:^|\s)(?:-f|-F|--field|--raw-field)\b/i;
+// `gh api --input file` sends `file`'s content as the request body (re-review finding 4) —
+// same implicit-write rule as `-f`/`-F`, but never has a graphql query-field to inspect.
+const GH_API_INPUT_FLAG = /(?:^|\s)--input\b/i;
 // `gh <group> <verb>` verbs that write; anything else in a whitelisted GH_GROUPS command is
 // a query (`checks`, `view`, `watch`, `list`, `status`, `diff`, …), so an unlisted verb
 // defaults to read rather than needing its own whitelist entry. `run`/`set`/`fork` write
@@ -1387,7 +1401,7 @@ const GH_GROUP_VERBS = {
   secret: new Set('list'.split(' ')),
   variable: new Set('list'.split(' ')),
   ruleset: new Set('view list'.split(' ')),
-  search: new Set('issues prs repos code'.split(' ')),
+  search: new Set('commits issues prs repos code'.split(' ')),
   auth: new Set('status'.split(' ')),
 };
 // gh global/local flags that take a separate value token, skipped along with it when
@@ -1473,21 +1487,33 @@ function ghApiPath(rest) {
   }
   return '';
 }
-// `gh api`'s write test (Slice 31 review finding 2): an explicit write method wins outright;
-// an explicit `--method GET` always reads; otherwise a field flag (`-f`/`-F`/`--field`/
-// `--raw-field`) implies POST — except `graphql`, itself a query endpoint, which is a write
-// only when the body text contains `mutation`.
+// `gh api`'s write test (Slice 31 review finding 2, re-review findings 2/4): an explicit
+// write method wins outright; an explicit GET (`-X GET`/`-XGET`/`--method GET`, case-
+// insensitive) always reads; `--input FILE` always writes (its own body, no query field to
+// inspect); otherwise a field flag (`-f`/`-F`/`--field`/`--raw-field`) implies POST — except
+// `graphql`, itself a query endpoint, which is a write only when the INLINE `query=` value
+// contains `mutation` — a `query=@file.graphql` value is a file to read, never a write just
+// because the filename says "mutation" (re-review finding 4).
 function isGhApiWrite(rest) {
   if (GH_WRITE_METHOD.test(rest)) return true;
-  if (/--method[=\s]+['"]?get\b/i.test(rest)) return false;
+  if (GH_GET_METHOD.test(rest)) return false;
+  if (GH_API_INPUT_FLAG.test(rest)) return true;
   if (!GH_API_FIELD_FLAG.test(rest)) return false;
   const path = ghApiPath(rest).replace(/^\/+/, '').toLowerCase();
-  return path === 'graphql' ? /\bmutation\b/i.test(rest) : true;
+  if (path !== 'graphql') return true;
+  const qm = rest.match(/query=(\S+)/i);
+  if (!qm) return true;
+  const val = qm[1].replace(/^["']|["']$/g, '');
+  return val.startsWith('@') ? false : /\bmutation\b/i.test(val);
 }
-// curl's write test (Slice 31 review finding 2): an explicit write method, or a body flag
-// (`-d`/`--data*`) not turned back into a GET by `-G`/`--get`.
+// curl's write test (Slice 31 review finding 2, re-review finding 4): an explicit write
+// method, or a body flag (`-d`/`--data*`/`--json`/`-F`/`--form`) not turned back into a GET
+// by `-G`/`--get`. Known limitation: a flag scanned here inside another flag's quoted value
+// (e.g. `-H 'X: -d'`) is indistinguishable from a real one — see REFERENCE.md "GH_POLLING".
 function isCurlWrite(occText) {
-  return GH_WRITE_METHOD.test(occText) || (GH_DATA_FLAG.test(occText) && !GH_GET_FLAG.test(occText));
+  if (GH_WRITE_METHOD.test(occText)) return true;
+  if (!GH_DATA_FLAG.test(occText) && !GH_FORM_FLAG.test(occText)) return false;
+  return !GH_GET_FLAG.test(occText);
 }
 // One command occurrence (commandOccurrences()) → its GitHub shape(s) and whether each is a
 // write, scoped to just that command (Slice 31 review finding 1/7) — a REST URL's path with

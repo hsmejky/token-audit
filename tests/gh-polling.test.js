@@ -265,3 +265,54 @@ test('isGhWrite: curl --request/-XPOST/--data*/--method=POST, gh api field flags
   assert.equal(isGhWrite('gh variable set FOO --body x'), true);
   assert.equal(isGhWrite('gh repo fork'), true);
 });
+
+// Re-review finding 2: `-f`/`-F` implicit POST must still read on an explicit GET spelled
+// as `-X GET`/`-XGET`/`--method GET`/`--method=GET`, case-insensitive.
+test('isGhWrite: `gh api` field flags read when the method is explicitly GET, any spelling ' +
+  '(re-review finding 2)', () => {
+  assert.equal(isGhWrite('gh api -X GET search/issues -f q=is:open'), false);
+  assert.equal(isGhWrite('gh api -XGET search/issues -f q=is:open'), false);
+  assert.equal(isGhWrite('gh api --method GET search/issues -f q=is:open'), false);
+  assert.equal(isGhWrite('gh api --method=get search/issues -f q=is:open'), false);
+  assert.equal(isGhWrite('gh api -f title=x repos/jdoe/demo-proj/issues'), true); // no GET: still writes
+});
+
+// Re-review finding 3: -G must be case-sensitive (curl's lowercase -g is --globoff, an
+// unrelated flag) and must be recognized fused into a combined short-flag cluster.
+test('isGhWrite: curl -G is case-sensitive and matches inside a combined short-flag cluster ' +
+  '(re-review finding 3)', () => {
+  assert.equal(isGhWrite('curl -g -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), true);
+  assert.equal(isGhWrite('curl -sG -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
+  assert.equal(isGhWrite('curl -Gs -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
+  assert.equal(isGhWrite('curl --get -d "q=x" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
+});
+
+// Re-review finding 4: curl --json / -F / --form are implicit-POST body flags (unless -G);
+// gh api --input is always a write; a graphql `-F query=@file` is a file read, not a write
+// just because the filename says "mutation".
+test('isGhWrite: curl --json/-F/--form, gh api --input, graphql query=@file is a read ' +
+  '(re-review finding 4)', () => {
+  assert.equal(isGhWrite('curl --json \'{"title":"x"}\' https://api.github.com/repos/jdoe/demo-proj/issues'),
+    true);
+  assert.equal(isGhWrite('curl -F file=@a.txt https://api.github.com/repos/jdoe/demo-proj/releases'), true);
+  assert.equal(isGhWrite('curl -G -F file=@a.txt https://api.github.com/repos/jdoe/demo-proj/releases'), false);
+  assert.equal(isGhWrite('gh api --input body.json repos/jdoe/demo-proj/issues'), true);
+  assert.equal(isGhWrite('gh api --method GET --input body.json repos/jdoe/demo-proj/issues'), false);
+  assert.equal(isGhWrite('gh api graphql -F query=@mutation.graphql'), false);
+  assert.equal(isGhWrite("gh api graphql -f query='mutation { addComment(x:1) }'"), true);
+  assert.equal(isGhWrite("gh api graphql -f query='query { viewer { login } }'"), false);
+});
+
+// Re-review finding 4 (documented limitation, not fixed): a flag scanned inside another
+// flag's own quoted value is indistinguishable from a real one without real tokenizing.
+test('isGhWrite: known limitation — a flag-shaped substring inside a header value is read ' +
+  'literally (documented in REFERENCE.md, re-review finding 4)', () => {
+  assert.equal(isGhWrite("curl -H 'X-Debug: -d' https://api.github.com/repos/jdoe/demo-proj/pulls"), true);
+});
+
+// Re-review finding 5: `gh search` read-verb whitelist gains `commits` (issues/prs/repos/code
+// were already present).
+test('githubReadShapes: `gh search commits` is a known, printed verb (re-review finding 5)', () => {
+  assert.deepEqual(readShapes('gh search commits fix --repo jdoe/demo-proj'), ['gh search commits']);
+  assert.deepEqual(readShapes('gh search issues fix --repo jdoe/demo-proj'), ['gh search issues']);
+});
