@@ -492,44 +492,56 @@ sums those calls over **every session and subagent in the window**, grouped by e
 instead of command key. The script prints the calls, sessions (main + subagent) and subagents
 behind the hit shapes, their combined cost and share of window spend, and the most expensive
 shape with its call count, e.g. `121 calls in 37 sessions (13 subagents) = $13.7, 1% of
-spend; top 76× commits/*/check-runs +2 more`. `--json`: the flag carries `calls`, `sessions`, `subagents`,
-`cost`, `share` and `groups[]` = `{ shape, calls, sessions, subagents, cost, share }`, most
-expensive first. Tier 0 like `POLLING`, `amount` = the cost of those calls' turns.
+spend; top 76× commits/*/check-runs +2 more`. `--json`: the flag carries `calls`, `sessions`,
+`subagents`, `cost`, `share` and `groups[]` = `{ shape, calls, sessions, subagents, cost,
+share }`, most expensive first. Tier 0 like `POLLING`, `amount` = the cost of those
+calls' turns.
 
 - **Counted calls**: Bash/PowerShell calls in the `wait/poll` or `github` activity category
   that name a GitHub endpoint *and query state rather than change it* (HITL decision),
   decided **per command occurrence, not per whole Bash call** — a
   compound call mixing a read and a write (`until gh pr checks 12; do sleep 30; done && gh
   pr merge 12`, a `check-runs` curl loop next to a `curl -X PUT …/merge`) keeps the read
-  occurrence's shape and drops only the write one; a write-method regex match in one
-  occurrence (e.g. an unrelated `grep -x post f`) never taints another occurrence in the
-  same call. A write is: an explicit `-X`/`--request`/`--method` `POST`/`PUT`/`PATCH`/
-  `DELETE` (case-insensitive, fused or spaced, `=` or space before the value) — an explicit
-  `GET` the same way always reads, even alongside a body/field flag; a curl
-  `-d`/`--data`/`--data-raw`/`--data-binary`/`--data-urlencode`/`--json`/`-F`/`--form` body
-  with no `-G`/`--get` turning it back into a query string (`-G` is case-sensitive and also
-  matches fused into a combined short-flag cluster like `-sG`; curl's lowercase `-g` is
-  `--globoff`, unrelated); a `gh <group> <verb>` whose verb writes (`create`, `merge`,
-  `close`, `edit`, `comment`, `reopen`, `rerun`, `run` — only for `gh workflow run` — `set`
-  — `gh secret|variable set` — `fork` — `gh repo fork` — …); or `gh api` with `--input FILE`
-  (its own body) or `-f`/`-F`/`--field`/`--raw-field` and no explicit `--method GET`
-  (implicit POST) — **except** `gh api graphql -f query=…`, itself a query endpoint, which
-  is a write only when the INLINE query text contains `mutation` — `-F query=@file.graphql`
-  is a file to read, never a write just because the filename says "mutation". No
-  method/body/`--input` flag and no matching verb/field defaults to a read. So `gh pr
-  checks`/`view`, `gh run view`/`watch`, a bare `gh api repos/…/pulls/1`, a **GET** on
-  `pulls/N/merge` (checking mergeability) and any other GET curl count; `gh pr create`, `gh
-  pr merge`, `gh issue create`, a **write** (`PUT`) to `pulls/*/merge` and any other
-  explicit write method never do, however many times they run. `git push`, a plain `sleep`,
-  `Monitor` never count either. Known limitation: a flag-shaped substring inside another
-  flag's own quoted value (e.g. `-H 'X-Debug: -d'`) is read the same as a real flag — the
-  scan is linear text matching, not a shell tokenizer.
+  occurrence's shape and drops only the write one; a flag in one occurrence (e.g. an
+  unrelated `grep -x post f`) never taints another occurrence in the same call. Each
+  occurrence is split into shell words (quotes removed, one linear pass) and its options are
+  read the way the command itself parses them: a combined short-flag cluster splits at its
+  first value-taking letter (curl `-sXPOST` = `-s -X POST`, `-sd q` = `-s -d q`, `-sSfG` =
+  `-s -S -f -G`), and an option's value is never read as a flag (`-H 'X-Debug: -d'` is a
+  header, not a body). curl rules apply only to a `curl` occurrence, `gh api` rules only to
+  `gh api`. A write is:
+  - **explicit method first**, for curl and `gh api` alike: `-X`/`--request` (curl),
+    `-X`/`--method` (`gh api`), fused, spaced or `=`, value case-insensitive —
+    `POST`/`PUT`/`PATCH`/`DELETE` write, `GET` (or any other method) reads even alongside a
+    body/field/`--input` flag. Any other command naming an `api.github.com` URL writes only
+    on such an explicit write method (`-Method` included).
+  - **curl, no method**: a `-d`/`--data`/`--data-raw`/`--data-binary`/`--data-ascii`/
+    `--data-urlencode`/`--json`/`-F`/`--form`/`--form-string` body with no `-G`/`--get`
+    turning it into a query string. curl options are case-sensitive: `-g` is `--globoff`,
+    `-D` `--dump-header`, `-x` `--proxy` — none of them is `-G`/`-d`/`-X`.
+  - **`gh api`, no method**: `--input FILE` or `-f`/`-F`/`--field`/`--raw-field` (implicit
+    POST) — **except** `gh api graphql`, itself a query endpoint: a write only when an inline
+    `query=` field value contains the word `mutation` anywhere (leading spaces or newlines
+    included); a `query=@file.graphql` or `query="$(cat file)"` value's text is not visible
+    in the command, so it reads (even when the filename says "mutation"), as does `--input`.
+    The field name must be exactly `query` (`searchquery=…` is not it).
+  - **`gh <group> <verb>`** whose verb writes (`create`, `merge`, `close`, `edit`,
+    `comment`, `reopen`, `rerun`, `run` — only for `gh workflow run` — `set` — `gh
+    secret|variable set` — `fork` — `gh repo fork` — …).
+
+  No method/body/`--input` flag and no matching verb/field defaults to a read. So `gh pr
+  checks`/`view` (`--json` included), `gh run view`/`watch`, a bare `gh api repos/…/pulls/1`,
+  a **GET** on `pulls/N/merge` (checking mergeability) and any other GET curl count; `gh pr
+  create`, `gh pr merge`, `gh issue create`, a **write** (`PUT`) to `pulls/*/merge` and any
+  other explicit write method never do, however many times they run. `git push`, a plain
+  `sleep`, `Monitor` never count either.
 - **Endpoint shape** (`githubShapes()`/`githubReadShapes()`): an `api.github.com/<path>` URL
   loses `repos/<owner>/<repo>/` and its query; every other segment that is not a known REST
   word (`pulls`, `commits`, `check-runs`, `actions`, `runs`, `jobs`, `merge`, `branches`, …)
   becomes `*`, consecutive `*` collapse — `…/commits/<sha|branch|$SHA>/check-runs` →
   `commits/*/check-runs`, `…/pulls/4242/merge` → `pulls/*/merge`, the repository itself →
-  `repos/*`. `gh api <path>` gets the same path shape; any other `gh` call is `gh <group>
+  `repos/*`. `gh api <path>` gets the same path shape (a full `https://api.github.com/…` URL
+  is reduced to its path first — one shape); any other `gh` call is `gh <group>
   <verb>` (`gh pr checks`, `gh run view`), the group and verb read past any flag that comes
   before them (`gh -R o/r pr merge`, `gh pr --repo o/r merge`). The verb
   is only printed when it is on that group's own read-verb whitelist or a known write verb
@@ -537,8 +549,9 @@ expensive first. Tier 0 like `POLLING`, `amount` = the cost of those calls' turn
   name (`gh repo <name>`), an issue title, … — becomes `*` instead (privacy:
   `gh browse fix-login-bug` → `gh browse *`, never the branch name, in text or
   `--json groups[]`). Only whitelisted words are ever printed, so a shape never carries an
-  owner, repo, branch, file path or id. One literal anchor plus one negated character class
-  per pattern — linear on 200k-char input.
+  owner, repo, branch, file path or id. The URL scan is one literal anchor plus one negated
+  character class, the word split one pass per occurrence — linear on 200k-char input, however
+  many (or unclosed) quotes.
 - **Hit**: a shape with ≥ `GH_POLL_MIN_CALLS` calls in the window (a named constant; a count
   per window, so `--days 30` sees roughly twice the calls of the default 14 days). A call that
   hits two shapes counts in both groups and once in the flag totals. In `--all` scope a shape
