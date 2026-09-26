@@ -427,7 +427,7 @@ function markCommands(key) {
     // THEIR marker is absent from the remainder — e.g. all-`;` input has no CMD_PIPE, so
     // indexOf(CMD_PIPE, i) scans to the end on every iteration, i²-many chars total
     // (O(n²): measured 'a;'×80k 77ms → 1411ms, 'a|'×80k 62ms → 1392ms). Checking both
-    // marker chars in one forward pass per boundary keeps this O(n) — this fix.
+    // marker chars in one forward pass per boundary keeps this O(n) — the pipe-boundary fix.
     let mark = -1;
     for (let j = i; j < s.length; j++) {
       if (s[j] === CMD || s[j] === CMD_PIPE) { mark = j; break; }
@@ -440,7 +440,7 @@ function markCommands(key) {
       WRAP_RE.lastIndex = i;
       const wm = WRAP_RE.exec(s);
       if (!wm || s[WRAP_RE.lastIndex] === CMD || s[WRAP_RE.lastIndex] === CMD_PIPE) break;
-      // Re-emit the SAME marker the wrapper's boundary got (this fix): a wrapper
+      // Re-emit the SAME marker the wrapper's boundary got (the pipe-boundary fix): a wrapper
       // right after a pipe (`| timeout 5 tail`, `| xargs grep foo`) must stay CMD_PIPE
       // so the wrapped command is still read as piped-into filter, not a fresh command.
       out.push(wm[0], markChar);
@@ -1275,7 +1275,7 @@ function polling(rows) {
     .map(g => ({ ...g, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.count - a.count);
 }
-// BOILERPLATE threshold (design decision Q9) — provisional, later re-tuned.
+// BOILERPLATE threshold (design decision Q9) — checked against real data and confirmed unchanged.
 const BOILER_MIN_SESSIONS = 5; // same setup prefix in >= N distinct sessions
 // Setup prefixes of a command key: each top-level segment of its leading run of
 // variable assignments (`NAME=…`, `export NAME=…`, PowerShell `$env:NAME=…`), when a
@@ -2010,7 +2010,8 @@ function trendLine(wks) {
   return `TREND        ${first.week} ${money(first.costPerMsg)}/msg → ${last.week} ${money(last.costPerMsg)}/msg ` +
     `${delta}   span ${span} wk (${wks.length} with data)   full table in --json`;
 }
-// Design decision Q3, HITL D: CONFIG, UNPRICED and the SPEND family split
+// Design decision Q3, summary rework (docs/decisions.md#summary-back-to-24-lines):
+// CONFIG, UNPRICED and the SPEND family split
 // print one line each (≤ 120 chars); a list that doesn't fit ends in one
 // "+N more" marker, and --json carries every entry. fit()/textOf() run here, at
 // print time, on the already show()n (redacted/sanitized) values.

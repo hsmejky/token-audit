@@ -73,7 +73,7 @@ const summaryLines = out => {
   return end === -1 ? lines : lines.slice(0, end);
 };
 
-// Review finding e: a section-scoped slice, from a header line matching
+// Review finding: a section-scoped slice, from a header line matching
 // `headerRe` up to (not including) the next blank line — so a "+N more" check
 // against one section's cap line can't be satisfied by an unrelated line (a
 // different section's own cap line, or free text that happens to contain the
@@ -329,8 +329,8 @@ test('renderDetail(): a section that alone overflows DETAIL_MAX_LINES is cut wit
 });
 
 // Re-review finding: familyLine(cur) returns null for a window
-// with no byFamily entries (the same finding, in the source) — main()
-// must skip the line entirely rather than print a blank one.
+// with no byFamily entries (see the review finding on familyLine() itself, in the source) —
+// main() must skip the line entirely rather than print a blank one.
 test('familyLine(cur) === null for an empty byFamily map, and main() prints no family line', () => {
   assert.equal(familyLine({ byFamily: {}, cost: 0 }), null);
   // A transcript exists (so main() doesn't bail on "no transcripts found"),

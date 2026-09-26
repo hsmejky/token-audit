@@ -19,11 +19,11 @@ const detailLines = out => {
 test('DETAIL top subagents row shows the task text, not the agent id', () => {
   const dir = tmpClaudeDir({
     'projects/p/3ac91e04-uuid.jsonl': turn({ id: 'main-1' }),
-    [SUB + '.jsonl']: [userLine('Repo /x. Implement slice 14g.'), ...turns(3, 'sub')],
-    [SUB + '.meta.json']: { agentType: 'general-purpose', description: 'Implement slice 14g' },
+    [SUB + '.jsonl']: [userLine('Repo /x. Implement retry backoff.'), ...turns(3, 'sub')],
+    [SUB + '.meta.json']: { agentType: 'general-purpose', description: 'Implement retry backoff' },
   });
   const detail = detailLines(auditText(dir));
-  const row = detail.find(l => l.includes('Implement slice 14g'));
+  const row = detail.find(l => l.includes('Implement retry backoff'));
   assert.ok(row, `expected a DETAIL row with the task text, got:\n${detail.join('\n')}`);
   assert.ok(!row.includes('agent-a5'), `row must not show the agent id: ${row}`);
   assert.match(row, /\s3\s.*opus-5-5\s+3ac91e04\s+Implement/, `turns, short model, 8-char parent: ${row}`);
@@ -32,11 +32,11 @@ test('DETAIL top subagents row shows the task text, not the agent id', () => {
 
 test('no meta.json description -> task = first non-empty line of the first user prompt', () => {
   const dir = tmpClaudeDir({
-    [SUB + '.jsonl']: [userLine('\n  Review slice 4 in repo token-audit.\nDetails follow...'), ...turns(2, 'sub')],
+    [SUB + '.jsonl']: [userLine('\n  Review retry logic in repo token-audit.\nDetails follow...'), ...turns(2, 'sub')],
     [SUB + '.meta.json']: { agentType: 'general-purpose' },
   });
   const [top] = audit(dir).detail.topSubagents;
-  assert.equal(top.task, 'Review slice 4 in repo token-audit.');
+  assert.equal(top.task, 'Review retry logic in repo token-audit.');
   assert.equal(top.sid, 'agent-a5f00ba7');
   assert.equal(top.parent, '3ac91e04-uuid');
   assert.equal(top.turns, 2);
@@ -74,12 +74,12 @@ test('--no-detail prints the summary only: default output minus the DETAIL block
   const dir = tmpClaudeDir({
     'projects/p/3ac91e04-uuid.jsonl': turn({ id: 'main-1' }),
     [SUB + '.jsonl']: turns(2, 'sub'),
-    [SUB + '.meta.json']: { description: 'Implement slice 14g' },
+    [SUB + '.meta.json']: { description: 'Implement retry backoff' },
   });
   const full = auditText(dir);
   const compact = auditText(dir, '--no-detail');
   assert.ok(!compact.split('\n').includes('DETAIL'), 'no DETAIL header with --no-detail');
-  assert.ok(!compact.includes('Implement slice 14g'));
+  assert.ok(!compact.includes('Implement retry backoff'));
   assert.equal(compact.trimEnd(), full.slice(0, full.indexOf('\nDETAIL\n')).trimEnd(),
     'summary part must be identical with and without DETAIL');
   assert.equal(audit(dir, '--no-detail').detail, undefined, '--json omits detail with --no-detail');
@@ -390,7 +390,7 @@ test('SUBAGENT DISTRIBUTION: text report shows turns and peak-ctx lines, <= 120 
   });
 });
 
-// An earlier review raised the budget from 30 to 40 (design decision Q9: "the DETAIL
+// An earlier implementation step raised the budget from 30 to 40 (design decision Q9: "the DETAIL
 // block is ~40 lines") — every section at full size, incl. 6 activity rows.
 test('DETAIL block stays <= 40 lines, <= 120 chars, with full sections: 10 units, 10 subagents, ' +
   'distribution, 6 activity rows', () => {
