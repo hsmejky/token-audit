@@ -41,7 +41,7 @@ if (PROJECT_ARG === null) {
 
 const HOME = process.env.USERPROFILE || process.env.HOME;
 
-// --claude-dir precedence (Slice 23): explicit flag wins, then
+// --claude-dir precedence: explicit flag wins, then
 // CLAUDE_CONFIG_DIR (the real Claude Code env var that relocates ~/.claude),
 // then ~/.claude as the default. claudeDirSource feeds the MCP user-config
 // lookup below — real Claude Code keeps `.claude.json` INSIDE the relocated
@@ -89,7 +89,7 @@ function projectFolder(p, root = ROOT) {
 }
 
 // Default scope = cwd's project. --project <path> overrides it. --all scans
-// every project (pre-Slice-6 behaviour). SCOPE_PROJECT is the folder name to
+// every project (the original default behaviour). SCOPE_PROJECT is the folder name to
 // filter to, or null when scanning everything. SCOPE_DIR is the same target
 // as an unmangled absolute path (not the `projects/` folder name) — needed
 // for CONFIG's MCP lookup, which reads real on-disk paths (`.mcp.json`,
@@ -117,7 +117,7 @@ const PRICES = {
   sonnet: [2, 2.5, 4, 0.2, 10],
   haiku: [1, 1.25, 2, 0.1, 5],
 };
-// Exact known-version matching (Slice 25) — not prefix/`includes()`. Loose matching used to
+// Exact known-version matching — not prefix/`includes()`. Loose matching used to
 // let an unlisted version fall through to the wrong row (an Opus fallback for any `opus-*`,
 // a plain `includes('fable-5')` catching `fable-5-2`, `sonnet-4-5` matching the `includes
 // ('sonnet')` fallback and pricing at the Sonnet 5 rate). Every id below is matched exactly
@@ -171,7 +171,7 @@ function commandKey(command) {
 }
 // A segment that is only `cd <dir>` / `Set-Location [-Path] <dir>` — cwd is not the
 // command, and any argument text (flags, an unquoted path with spaces) would leak
-// the project path (Slice 12 prints keys).
+// the project path when a command key gets printed.
 const isCdCmd = t => /^(?:cd|Set-Location)\b(?:\s.*)?$/i.test(t);
 // Strips `NAME=value` env prefixes and cd/Set-Location segments — at the top level
 // and, recursively, inside a `(…)` group that is a whole segment on its own (a
@@ -261,7 +261,7 @@ function hashHeredocBodies(s, keep) {
 // run, `grep "a|git"` is not git, `uv run pytest | tail` is a test run.
 // No match → ACTIVITY_OTHER.
 const CMD = '‣';
-// Slice 15 fix (review, real data, BLOCKER): a command boundary opened by a bare `|`
+// Fix (review, real data, BLOCKER): a command boundary opened by a bare `|`
 // (as opposed to `;`, `&&`, `||`, newline or `(`) gets this marker instead of CMD, so
 // the read rule's READERS alt (below) can tell "ls" (a command) from "| tail" (a filter
 // piped onto some other command's output) — same character class otherwise, so every
@@ -286,7 +286,7 @@ const NOT_CMD = String.raw`${CMD}${CMD_PIPE}`;
 // this exclusion every `-m` in a repeated `-m -m -m …` run could be parsed
 // either as a PY_OPT or as the terminal `-m`, and the engine tried every
 // split — that ambiguity is what made `python -m ` × 10k backtrack
-// exponentially; Slice 30). Deliberately avoids inline regex-modifier groups
+// exponentially). Deliberately avoids inline regex-modifier groups
 // (a newer syntax for toggling flags like case-insensitivity mid-pattern) —
 // unsupported before Node 23, throws `SyntaxError: Invalid group` on older
 // engines, e.g. Node 22 LTS, crashing the whole script.
@@ -296,7 +296,7 @@ const WRAPPERS = String.raw`do|then|else|\{|!|time|nice|env(?: [A-Za-z_]\w*=\S*)
   String.raw`npx(?: -y| --yes)?|bunx|(?:pnpm|yarn) (?:dlx|exec)|npm exec`;
 // Word lists the rules share (regex alternations).
 const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`;
-// Slice 15 HITL: the two "burn a turn on purpose to wait" patterns found on real data
+// HITL: the two "burn a turn on purpose to wait" patterns found on real data
 // (`echo waiting-N` / `echo idle-check-N`, `tasklist` / `Get-Process` busy-polls), so
 // they count as wait/poll instead of falling to `other`. Kept out of POLLERS/the main
 // wait/poll rule above and checked in their own lower-priority rule (below git) — a
@@ -308,12 +308,12 @@ const POLLERS = String.raw`sleep|Start-Sleep|gh pr checks|gh run (?:watch|view)`
 // command's whole point, not a side check bolted onto real work.
 const BUSY_POLLERS = String.raw`echo (?:waiting|idle)\S*|tasklist|Get-Process`;
 // Harness tools that are neither agent spawns nor real work: skills, tool search,
-// interactive UI, task/queue management, plan mode, worktrees, scheduling. Slice 15
-// HITL: these used to fall to `other`, which hid most of `other`'s real composition.
+// interactive UI, task/queue management, plan mode, worktrees, scheduling. HITL: these
+// used to fall to `other`, which hid most of `other`'s real composition.
 const HARNESS_TOOLS = String.raw`Skill|ToolSearch|AskUserQuestion|TaskStop|TaskCreate|TaskUpdate|TaskList|` +
   String.raw`TodoWrite|ListAgents|EnterPlanMode|ExitPlanMode|EnterWorktree|ExitWorktree|CronCreate|` +
   String.raw`CronDelete|ScheduleWakeup`;
-// A bare interpreter or script-file run (Slice 15 HITL): `python foo.py`, `node x.mjs`,
+// A bare interpreter or script-file run (an HITL decision): `python foo.py`, `node x.mjs`,
 // `sh script.sh` — as opposed to a runner/checker (RUNNERS/CHECKERS above, e.g.
 // `python -m pytest`) or a screenshot script (SHOT_RUN above), both of which are
 // checked first in ACTIVITY_RULES and so win. Catches the "rerun the same script while
@@ -323,7 +323,7 @@ const HARNESS_TOOLS = String.raw`Skill|ToolSearch|AskUserQuestion|TaskStop|TaskC
 // next command, so 40k chained `${CMD}python` segments with no whitespace between them
 // force one giant \S* match that then backtracks one char at a time hunting for
 // `(?: |$)` — O(n^2), ~21s on real data. Bounding the class at CMD (both marker chars,
-// CMD and CMD_PIPE — Slice 15 fix, see their definitions above) stops each attempt at
+// CMD and CMD_PIPE — see their definitions above) stops each attempt at
 // the very next command boundary, same fix as SCRIPT_FILE above.
 const SCRIPT_INTERP = String.raw`python[^\s${NOT_CMD}]*|py|node|deno|bun|tsx|ts-node|sh|bash|pwsh|powershell`;
 // Bare-file alternative's target, bounded like SHOT_TARGET above: `[^\s${NOT_CMD}]*`,
@@ -333,7 +333,7 @@ const SCRIPT_INTERP = String.raw`python[^\s${NOT_CMD}]*|py|node|deno|bun|tsx|ts-
 const SCRIPT_FILE = String.raw`[^\s${NOT_CMD}]*\.(?:m?js|py|sh|ps1)\b`;
 // `-{1,2}[\w]…`, not `-{1,2}[\w-]…`: a flag's leading dashes and its name must not both
 // be able to absorb `-`, or a repeated `--a --a --a …` has many ways to split the same
-// run of dashes between the two and the engine tries them all (exponential; Slice 30).
+// run of dashes between the two and the engine tries them all (exponential).
 const RUNNERS = String.raw`(?:pnpm|npm|yarn|bun)(?: -{1,2}\w[\w-]*(?:[ =][^\s${NOT_CMD}-]\S*)?)*(?: run| exec)? ` +
   String.raw`(?:test|lint|build|typecheck|vitest|jest|eslint|prettier|tsc|playwright test)`;
 const CHECKERS = String.raw`vitest|jest|pytest|unittest|ruff|mypy|eslint|prettier|tsc|playwright test|` +
@@ -360,14 +360,14 @@ const ACTIVITY_RULES = [
   [rx`${ANY_CMD}git\b`, 'git'],
   [rx`${ANY_CMD}(?:${BUSY_POLLERS})\b`, 'wait/poll'],
   [rx`^(?:Edit|Write|MultiEdit|NotebookEdit) |${ANY_CMD}(?:sed -i|cat >|tee )`, 'edit'],
-  // Slice 15 fix (review, real data, BLOCKER): READERS uses the strict CMD marker, not
+  // Fix (review, real data, BLOCKER): READERS uses the strict CMD marker, not
   // ANY_CMD — a reader word reached only via a `|` filter (`… | tail -20`) is a filter
   // on some other command's output, not a read of its own, so it must NOT count as
   // `read`; that CMD_PIPE-marked occurrence simply doesn't match this branch and falls
   // through to `script run` (or whatever the piped-from command is). `ls; python x.py`
   // still stays `read`: `;` keeps the plain CMD marker, unaffected by this change.
   [rx`^(?:Read|Grep|Glob) |${CMD}(?:${READERS})\b`, 'read'],
-  // Slice 15 fix (review, real data): `script run` below edit/read, not above. A
+  // Fix (review, real data): `script run` below edit/read, not above. A
   // `python - <<EOF … EOF` heredoc editing a file, or `python -c "…"` reading one,
   // is edit/read work, not "run a script" — but SCRIPT_INTERP's bare `python[^\s CMD]*`
   // also matches the interpreter token at the front of those, so when this rule ran
@@ -382,8 +382,8 @@ const ACTIVITY_RULES = [
   [rx`${ANY_CMD}(?:${SCRIPT_INTERP})(?: |$)|${ANY_CMD}${SCRIPT_FILE}`, 'script run'],
 ];
 const ACTIVITY_OTHER = 'other';
-// A turn with no tool_use at all (final answer, plan, question to the user) — Slice 15
-// HITL: split out of `other` so `other` reflects only genuinely uncategorized tool calls.
+// A turn with no tool_use at all (final answer, plan, question to the user) — an HITL
+// decision: split out of `other` so `other` reflects only genuinely uncategorized tool calls.
 const ACTIVITY_REPLY = 'reply';
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 // Sticky (sticks to lastIndex, no scanning forward to find a match) so a chain of wrapper
@@ -405,7 +405,7 @@ const WRAP_RE = new RegExp(String.raw`(?:${WRAPPERS}) `, 'iy');
 //     `(?!${CMD})` — it is already a command boundary, so re-marking it would duplicate CMD.
 function markCommands(key) {
   const at = [0];
-  // Slice 15 fix: remember which marker each boundary gets — CMD_PIPE for a bare `|`,
+  // Fix: remember which marker each boundary gets — CMD_PIPE for a bare `|`,
   // CMD for every other separator (`;`, `&&`, `||`, newline, `(`) — so a piped-into
   // filter (`| tail`) is distinguishable from a real new command (`; tail`).
   const markers = [CMD];
@@ -427,7 +427,7 @@ function markCommands(key) {
     // THEIR marker is absent from the remainder — e.g. all-`;` input has no CMD_PIPE, so
     // indexOf(CMD_PIPE, i) scans to the end on every iteration, i²-many chars total
     // (O(n²): measured 'a;'×80k 77ms → 1411ms, 'a|'×80k 62ms → 1392ms). Checking both
-    // marker chars in one forward pass per boundary keeps this O(n) — Slice 15 fix.
+    // marker chars in one forward pass per boundary keeps this O(n) — this fix.
     let mark = -1;
     for (let j = i; j < s.length; j++) {
       if (s[j] === CMD || s[j] === CMD_PIPE) { mark = j; break; }
@@ -440,7 +440,7 @@ function markCommands(key) {
       WRAP_RE.lastIndex = i;
       const wm = WRAP_RE.exec(s);
       if (!wm || s[WRAP_RE.lastIndex] === CMD || s[WRAP_RE.lastIndex] === CMD_PIPE) break;
-      // Re-emit the SAME marker the wrapper's boundary got (Slice 15 fix): a wrapper
+      // Re-emit the SAME marker the wrapper's boundary got (this fix): a wrapper
       // right after a pipe (`| timeout 5 tail`, `| xargs grep foo`) must stay CMD_PIPE
       // so the wrapped command is still read as piped-into filter, not a fresh command.
       out.push(wm[0], markChar);
@@ -680,7 +680,7 @@ function summarize(rows) {
     s.model = Object.keys(mc).sort((a, b) => mc[b] - mc[a])[0];
   }
   const msgs = rows.length;
-  // Slice 15 HITL: SESSIONS' median/p90 and LONG_SESSION are main-threads-only — a
+  // HITL decision: SESSIONS' median/p90 and LONG_SESSION are main-threads-only — a
   // subagent's own turn distribution is LONG_AGENT's / subagentDistribution()'s job,
   // and mixing the two double-counted the same sessions under both flags.
   const mainList = list.filter(s => !s.isSub);
@@ -762,7 +762,7 @@ function eachPluginDir(fn) {
 // or transcript, so this script (which only reads static files, never
 // connects to a live server) cannot measure them the way PLUGIN_BLOAT
 // measures agent/skill frontmatter. Counting `mcp__<server>__*` names seen in
-// transcripts was the alternative (Slice 14) but undercounts
+// transcripts was the alternative but undercounts
 // (a server usually exposes more tools than were ever called) and reads zero
 // for a configured-but-unused server — exactly the "paying for it, not using
 // it" case this line exists to surface. So: a flat per-server estimate,
@@ -771,7 +771,7 @@ function eachPluginDir(fn) {
 const MCP_SERVER_TOKENS = 800;
 
 // Configured MCP servers for the scoped project, from the three places Claude
-// Code stores them (design decision Q9, Slice 14):
+// Code stores them (design decision Q9):
 //   - user scope:    the user-config file (USER_CONFIG_PATH below) ->
 //                     top-level `mcpServers` (NOT settings.json — checked
 //                     against a real `~/.claude.json` at implementation time;
@@ -785,7 +785,7 @@ const MCP_SERVER_TOKENS = 800;
 // scopeDir is SCOPE_DIR (null under --all — no single project to check, so
 // only user scope applies).
 //
-// USER_CONFIG_PATH (Slice 23): real Claude Code keeps `.claude.json` beside
+// USER_CONFIG_PATH: real Claude Code keeps `.claude.json` beside
 // `~/.claude` by default, but MOVES it INSIDE the dir when CLAUDE_CONFIG_DIR
 // relocates ~/.claude (verified against a real CLAUDE_CONFIG_DIR install).
 // --claude-dir is this script's own test/scoping override, not a real Claude
@@ -878,19 +878,19 @@ function config() {
 
 // ------------------------------------------------------------------- flags
 const DAY = 86400e3;
-// LONG_AGENT thresholds (design decision Q5) — Slice 15 HITL decision, re-tuned on real,
+// LONG_AGENT thresholds (design decision Q5) — an HITL decision, re-tuned on real,
 // deduped, all-history data (see REFERENCE.md "LONG_AGENT" for the percentiles).
 const LONG_AGENT_TURNS = 150; // "over N turns" -> strictly greater than N
 const LONG_AGENT_CTX = 400e3; // "peak context > 400k" -> strictly greater than
-// LONG_SESSION threshold (Slice 15 HITL decision) — main threads only; a long
+// LONG_SESSION threshold (an HITL decision) — main threads only; a long
 // subagent is LONG_AGENT's job instead (the two flags used to double-count the
 // same sessions). See REFERENCE.md "LONG_SESSION".
 const LONG_SESSION_TURNS = 200; // ">= N turns" on a main (non-subagent) session fires
-// POLLING threshold (design decision Q9) — Slice 15 HITL decision, re-tuned on real data.
+// POLLING threshold (design decision Q9) — an HITL decision, re-tuned on real data.
 const POLL_MIN_CALLS = 10; // same command key >= N calls in one session
 // Categories whose repeat is a wait. A repeated test run, commit or edit is
-// the work itself, not polling (Slice 11 real-data check: those were most of
-// the false positives). `script run` (Slice 15) is deliberately excluded too:
+// the work itself, not polling (an earlier real-data check: those were most of
+// the false positives). `script run` is deliberately excluded too:
 // a re-run of the same script while iterating is work, not a wait — see
 // REFERENCE.md "POLLING".
 const POLL_CATEGORIES = new Set(['wait/poll', 'github', 'read', ACTIVITY_OTHER]);
@@ -1275,7 +1275,7 @@ function polling(rows) {
     .map(g => ({ ...g, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.count - a.count);
 }
-// BOILERPLATE threshold (design decision Q9) — provisional, Slice 15 re-tunes it.
+// BOILERPLATE threshold (design decision Q9) — provisional, later re-tuned.
 const BOILER_MIN_SESSIONS = 5; // same setup prefix in >= N distinct sessions
 // Setup prefixes of a command key: each top-level segment of its leading run of
 // variable assignments (`NAME=…`, `export NAME=…`, PowerShell `$env:NAME=…`), when a
@@ -1344,12 +1344,12 @@ function boilerplate(rows) {
     .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions || (a.prefix < b.prefix ? -1 : 1)) };
 }
 // ------------------------------------------------------------ GitHub polling
-// GH_POLLING threshold (Slice 31, HITL-set final value — see REFERENCE.md "GH_POLLING"
+// GH_POLLING threshold (an HITL-set final value — see REFERENCE.md "GH_POLLING"
 // threshold" for the percentile data behind it). One endpoint shape with >= N read calls
 // summed over every session and subagent in the window fires, however few of them land
 // in any one session.
 const GH_POLL_MIN_CALLS = 20;
-// Same two categories Slice 15 considered for a per-session any-key count: a status poll
+// Same two categories considered earlier for a per-session any-key count: a status poll
 // (`check-runs`, `actions/runs`, `gh pr checks`, `gh run view`) is wait/poll, any other
 // `api.github.com` / `gh` call is github. Everything else (git push, plain sleep) never counts.
 const GH_POLL_CATEGORIES = new Set(['wait/poll', 'github']);
@@ -1645,8 +1645,8 @@ function githubReadShapes(key) {
   }
   return [...out];
 }
-// True when ANY occurrence in this key changes state rather than queries it (HITL decision,
-// Slice 31) — an explicit write HTTP method, an implicit-POST curl body flag, or a `gh
+// True when ANY occurrence in this key changes state rather than queries it (an HITL
+// decision) — an explicit write HTTP method, an implicit-POST curl body flag, or a `gh
 // <group> <verb>` whose verb is in GH_WRITE_VERBS. No method/body flag and no matching verb
 // defaults to a read. Scoped per occurrence, so an unrelated flag elsewhere in
 // the same compound command (`grep -x post f && gh pr view`) can't false-positive this.
@@ -1696,7 +1696,7 @@ function ghPolling(rows) {
     .sort((a, b) => b.cost - a.cost || b.calls - a.calls || (a.shape < b.shape ? -1 : 1)) };
 }
 // `amount` is the dollar figure each flag represents, used by rankFlags() for
-// the summary's top-N cap (Slice 28). REGRESSION: extra cost vs the previous
+// the summary's top-N cap. REGRESSION: extra cost vs the previous
 // window's cost/message; POLLING/BOILERPLATE: cost of those turns (the saving's
 // upper bound, REFERENCE.md); the rest: the flagged spend (0 when a flag has no
 // dollar figure). Not printed in text; --json carries it.
@@ -1711,7 +1711,7 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }, gh = {
       `${(span(w) / DAY).toFixed(1)}d ${money(w.cost)}`,
       multiday.reduce((a, s) => a + s.cost, 0));
   }
-  // Slice 15 HITL: main threads only — a long subagent fires LONG_AGENT instead
+  // HITL decision: main threads only — a long subagent fires LONG_AGENT instead
   // (mixing the two double-counted the same sessions under both flags).
   const long = cur.mainSessions.filter(s => s.msgs >= LONG_SESSION_TURNS);
   if (long.length) {
@@ -1748,7 +1748,7 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }, gh = {
       amount: cost, groups: boilers });
   }
   if (gh.groups.length) {
-    // Slice 31: the cross-session counterpart of POLLING — GitHub read calls by endpoint
+    // The cross-session counterpart of POLLING — GitHub read calls by endpoint
     // shape summed over every session/subagent (REFERENCE.md "GH_POLLING").
     const { groups, ...tot } = gh;
     const g = groups[0];
@@ -1767,7 +1767,7 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }, gh = {
       cur.sessions.slice(0, 5).reduce((a, s) => a + s.cost, 0));
   }
   if (prev && prev.costPerMsg > 0 && cur.costPerMsg > prev.costPerMsg * 1.25) {
-    // amount = extra cost vs the previous window's cost/message (Slice 28 HITL Q-B).
+    // amount = extra cost vs the previous window's cost/message (HITL decision Q-B).
     add('REGRESSION', `cost/message +${(100 * (cur.costPerMsg / prev.costPerMsg - 1)).toFixed(0)}% vs previous window`,
       Math.max(0, cur.cost - prev.costPerMsg * cur.msgs));
   }
@@ -1776,7 +1776,7 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }, gh = {
       cur.byFamily.Opus || 0);
   }
   if (cfg.agentDefs > 20 || cfg.prefixTokens > 5000) {
-    // Slice 20 3rd review, finding 6 (pre-existing): p.name is attacker/author
+    // Review finding (pre-existing): p.name is attacker/author
     // controlled (same as elsewhere in CONFIG) and was printed here with no length
     // cap — fit it same as the CONFIG plugin listing does, so 3 worst-case names
     // can't alone blow the FLAGS line (wrapWords()'s hard-break below is the
@@ -1874,7 +1874,7 @@ function wrapWords(text, width) {
   const lines = [];
   let cur = '';
   for (let w of words) {
-    // Slice 20 3rd review, finding 6 (pre-existing): a single "word" longer than
+    // Review finding (pre-existing): a single "word" longer than
     // width (e.g. an attacker-controlled plugin/MCP-server name with no spaces)
     // can't be wrapped by breaking *between* words — the old loop just let it
     // ride through as its own overlong line. Hard-break it into width-sized
@@ -1910,7 +1910,7 @@ function flagLines(f) {
   const lines = wrapWords(f.text, FLAG_TEXT_WIDTH);
   return [`  ${f.id.padEnd(14)} ${lines[0] ?? ''}`, ...lines.slice(1).map(l => `${' '.repeat(17)}${l}`)];
 }
-// Slice 28 review, finding 1: SUMMARY_MAX_LINES/DETAIL_MAX_LINES are hard guards,
+// Review finding: SUMMARY_MAX_LINES/DETAIL_MAX_LINES are hard guards,
 // not just a hope that the pieces below happen to add up. The summary shows as
 // many flags (in rankFlags() order) as fit the lines left after every fixed
 // line — SPEND/CONFIG/... and the *whole* SECURITY block, computed first so
@@ -1920,9 +1920,9 @@ function flagLines(f) {
 // DETAIL_MAX_LINES, same fitFlags() guard) and always in --json.
 const SUMMARY_MAX_LINES = 24;
 const DETAIL_MAX_LINES = 40;
-// Slice 28 (design decision Q-B): rank by extra cost where that decision defines
+// Design decision Q-B: rank by extra cost where that decision defines
 // one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE/GH_POLLING
-// (cost of those turns; GH_POLLING Slice 31) share tier 0, by $ — then a fixed priority for flags
+// (cost of those turns) share tier 0, by $ — then a fixed priority for flags
 // whose $ is only the flagged spend, $ as tie-break inside a tier: LONG_AGENT
 // (Q5's main lever) above (LONG_SESSION, MULTIDAY — tied) above (OPUS_HEAVY,
 // CONCENTRATION — tied) above (BIG_CTX, PLUGIN_BLOAT — tied, no $) above CLEAN;
@@ -1952,7 +1952,7 @@ function moreIdsLine(moved, where) {
   return head + list + tail;
 }
 const flagsMoreLine = (moved, inDetail) => moreIdsLine(moved, inDetail ? 'DETAIL / --json' : '--json');
-// Slice 28 review, finding 6: appends the FLAGS "+N more" marker onto `flagRows`
+// Review finding: appends the FLAGS "+N more" marker onto `flagRows`
 // (mutating and returning it) whenever flags were moved out of the summary —
 // even if `flagRoom` (SUMMARY_MAX_LINES - preLen - postLen - 1, computed by the
 // caller) was clamped to 0 because pre/post already used the whole
@@ -1966,7 +1966,7 @@ function appendFlagsMore(flagRows, flagsMoved, inDetail) {
   if (flagsMoved.length) flagRows.push(flagsMoreLine(flagsMoved, inDetail));
   return flagRows;
 }
-// Shared hard-guard fitter (Slice 28 review, finding 1): fills `ranked` flags,
+// Shared hard-guard fitter (review finding): fills `ranked` flags,
 // in rank order, into `room` lines via flagLines() (1 line normally, more if a
 // flag's text wraps), reserving a line ahead of time for the eventual "+N more"
 // marker while any flag remains unshown — so the budget is enforced by
@@ -1996,7 +1996,7 @@ function continuedFlagLines(moved, room) {
   if (stillMoved.length) out.push(moreIdsLine(stillMoved, '--json'));
   return out;
 }
-// TREND (Slice 28): one line for the whole history. "span N wk" = calendar weeks
+// TREND: one line for the whole history. "span N wk" = calendar weeks
 // from the first to the last week with data; "(M with data)" = weeks with rows.
 function trendLine(wks) {
   if (!wks.length) return 'TREND        no data';
@@ -2010,10 +2010,10 @@ function trendLine(wks) {
   return `TREND        ${first.week} ${money(first.costPerMsg)}/msg → ${last.week} ${money(last.costPerMsg)}/msg ` +
     `${delta}   span ${span} wk (${wks.length} with data)   full table in --json`;
 }
-// Slice 28 (design decision Q3, HITL D): CONFIG, UNPRICED and the SPEND family split
+// Design decision Q3, HITL D: CONFIG, UNPRICED and the SPEND family split
 // print one line each (≤ 120 chars); a list that doesn't fit ends in one
 // "+N more" marker, and --json carries every entry. fit()/textOf() run here, at
-// print time, on the already show()n (redacted/sanitized) values (Slice 20/29).
+// print time, on the already show()n (redacted/sanitized) values.
 function joinFit(parts, budget, sep, more) {
   const out = [];
   for (let i = 0; i < parts.length; i++) {
@@ -2024,7 +2024,7 @@ function joinFit(parts, budget, sep, more) {
   if (out.length < parts.length) out.push(more(parts.length - out.length));
   return out.join(sep);
 }
-// Slice 28 review, finding 3: no model family this window (an empty cur, e.g. a
+// Review finding: no model family this window (an empty cur, e.g. a
 // scope/window with zero cost) used to print a bare "  " (two spaces, no text) —
 // return null instead so main() skips the line entirely rather than printing
 // nothing meaningful.
@@ -2077,7 +2077,7 @@ const TOP_ACTIVITIES = 6;
 // `peakCtx` = the single largest context hit by any session in the unit.
 // `span` = full-history first-seen -> last-seen across every session in the
 // unit (not clipped to the window, same convention as the per-session `span`
-// on cur.sessions/--json, Slice 28 dropped the printed table) — looked up from
+// on cur.sessions/--json, the summary rework dropped the printed table) — looked up from
 // `all`, not `cur`, so a unit whose
 // activity started before this window still reports its real span.
 function workUnits(cur, all) {
@@ -2191,7 +2191,7 @@ const DETAIL_SECTIONS = [
 ];
 
 const turnsText = t => (t > 0 && t < 1 ? '<1' : String(Math.round(t)));
-// Slice 28 review, finding 1: hard guard on DETAIL's own line count — capped
+// Review finding: hard guard on DETAIL's own line count — capped
 // here explicitly rather than relying on TOP_UNITS/TOP_SUBAGENTS/TOP_ACTIVITIES
 // happening to add up under DETAIL_MAX_LINES by construction. main()'s
 // continuedFlagLines() room is DETAIL_MAX_LINES - this result's length, so this
@@ -2205,10 +2205,10 @@ function renderDetail(d) {
 // ------------------------------------------------------------ redacted view
 // Every printed field that can carry a path or the user's identity (scope, project
 // folders, subagent task text, model / plugin / MCP server names) goes through
-// redactPaths(), in text and --json alike (Slice 29). Grouping and keys ran on the
+// redactPaths(), in text and --json alike. Grouping and keys ran on the
 // raw values; only the copies that get printed are rewritten.
 const shown = new Map();
-// Slice 20 review: an MCP server / plugin / modelSettings-key name can be
+// Review finding: an MCP server / plugin / modelSettings-key name can be
 // attacker- or author-controlled text (e.g. a stray key in a cloned repo's
 // .mcp.json or settings.json), not this machine's own data. A raw control
 // char (newline, etc.) in it must never reach console.log — it could inject
@@ -2216,13 +2216,13 @@ const shown = new Map();
 // block). Collapse to a single space here, once, for every show()n string;
 // callers that also need a length cap still run the result through fit()/
 // fitMiddle() at print time.
-// Slice 20 re-review: [\x00-\x1f\x7f] only covers C0 controls + DEL. C1 controls
+// Re-review finding: [\x00-\x1f\x7f] only covers C0 controls + DEL. C1 controls
 // (U+0080-U+009F, e.g. U+0085 NEL, U+009B CSI) and other Unicode format/bidi
 // characters (\p{Cf}, e.g. U+202E RIGHT-TO-LEFT OVERRIDE) sit outside that range
 // and could still forge layout or reorder printed text. \p{Cc} covers C0+C1,
 // \p{Cf} covers the format/bidi class; \u2028/\u2029 (line/paragraph separator)
 // aren't in either category but are still line breaks to a terminal.
-// Slice 20 3rd review: \p{Cf} is broad \- it also matches ZWNJ/ZWJ/SHY (U+200C,
+// Later review: \p{Cf} is broad \- it also matches ZWNJ/ZWJ/SHY (U+200C,
 // U+200D, U+00AD), which show up legitimately in Persian/Arabic names and emoji
 // ZWJ sequences. Collapsing them to a space is a display-only tradeoff (this
 // regex only runs inside show(), on the printed copy); grouping/keys are computed
@@ -2233,13 +2233,13 @@ const show = v => {
   if (!shown.has(v)) shown.set(v, redactPaths(v).replace(CONTROL_CHARS, ' '));
   return shown.get(v);
 };
-// Slice 20 3rd review, finding 2: fit()/fitMiddle() must run only at print time
+// Review finding: fit()/fitMiddle() must run only at print time
 // (text report) \- showConfig() feeds --json too, and truncating a value there
 // silently drops data from the JSON contract (REFERENCE.md:375, "the full prefix
 // is in --json"). This is the JSON-safe counterpart to show() for a config value
 // that isn't necessarily a string: strings/numbers/booleans/null pass through
 // show()/unchanged so --json keeps their real type.
-// Slice 20 4th review, finding 1: an object/array (a forged settings.json value
+// Review finding: an object/array (a forged settings.json value
 // where a string was expected) used to be JSON.stringify()'d *before* show() ran
 // \- turning a real control char (\n, \t, ...) into a literal backslash+letter
 // escape sequence first. That trailing letter then sits right next to a name/
@@ -2269,7 +2269,7 @@ const showAny = v => {
 // calls this: it prints the live object via the top-level JSON.stringify() of
 // the whole payload, keeping the real type per the dispatcher decision above.
 const textOf = v => (v == null || typeof v !== 'object') ? v : JSON.stringify(v);
-// Slice 20 re-review: settings.json is as untrusted as an MCP server / plugin
+// Review finding: settings.json is as untrusted as an MCP server / plugin
 // name (config(), :767/:773-774) — effortLevel and cleanupPeriodDays were
 // printed raw, letting a forged value inject a fake extra line (e.g. a bogus
 // SECURITY block) the same way an unsanitized key could. effortLevel is a
@@ -2313,8 +2313,8 @@ async function main() {
   const cur = showSessions(summarize(curRows));
   const prev = showSessions(summarize(rows.filter(r => r.ts >= prevFrom && r.ts < curFrom)));
   const all = summarize(rows);
-  // ALL-TIME (summary line + --json `all`) mixes two populations on purpose (Slice 15
-  // HITL, re-review decision): `cost` is all.cost — every row incl. subagents, over all
+  // ALL-TIME (summary line + --json `all`) mixes two populations on purpose (an HITL,
+  // re-review decision): `cost` is all.cost — every row incl. subagents, over all
   // history — so the invariant SPEND (cur.cost, which also includes subagents) ≤
   // ALL-TIME cost always holds; `sessions`/`msgs` stay main-sessions-only, the same
   // population SESSIONS' count/median/p90 uses, so "N sessions" never counts a subagent
@@ -2338,7 +2338,7 @@ async function main() {
   const det = DETAIL ? showDetail(detail(cur, tasks, all, curRows)) : null;
 
   if (JSON_OUT) {
-    // mainSessions (Slice 15: SESSIONS/LONG_SESSION's main-threads-only view) is an
+    // mainSessions (SESSIONS/LONG_SESSION's main-threads-only view) is an
     // internal computation detail, dropped here rather than redacted+trimmed like
     // sessions — it holds the same objects sessions does, just filtered, and no
     // --json field currently reads it (median/p90/LONG_SESSION are already their own
@@ -2356,7 +2356,7 @@ async function main() {
     return;
   }
 
-  // Slice 28 review, finding 1 (hard guard): the summary is assembled into `pre`
+  // Review finding (hard guard): the summary is assembled into `pre`
   // (everything up to and including the "FLAGS" header) and `post` (the blank
   // line + the *entire* SECURITY block) before a single flag-row is chosen, so
   // the room left for FLAGS is whatever SUMMARY_MAX_LINES minus those two
@@ -2366,13 +2366,13 @@ async function main() {
 
   // Budget the project name against whatever's left of the 120-char line after the
   // fixed prefix/suffix (window range width varies with DAYS's digit count), rather
-  // than a static guess that could itself run the line past 120 (Slice 20 review).
+  // than a static guess that could itself run the line past 120 (a review finding).
   const bannerPrefix = 'TOKEN AUDIT   scope ';
   const bannerSuffix = `   window ${date(curFrom)} → ${date(now)} (${DAYS}d)   list-price equivalent`;
   const bannerBudget = Math.max(10, 120 - [...bannerPrefix].length - [...bannerSuffix].length);
   const shownProject = scope.project ? fitMiddle(scope.project, bannerBudget) : 'all projects';
 
-  // Slice 28 review, finding 5: familyLine(cur) is not free (sorts + joinFit()s
+  // Review finding: familyLine(cur) is not free (sorts + joinFit()s
   // byFamily) and its result is used twice below (the line itself, and the
   // conditional that decides whether to include it) — compute it once.
   const famLine = familyLine(cur);
@@ -2388,15 +2388,15 @@ async function main() {
     '',
     `PER MESSAGE  ctx ${k(cur.avgCtx)} avg   cost ${money(cur.costPerMsg)}` +
       (prev.msgs ? `   prev ${k(prev.avgCtx)} / ${money(prev.costPerMsg)}` : ''),
-    // Slice 15 HITL: main threads only (see LONG_SESSION_TURNS) — subagents are
+    // HITL decision: main threads only (see LONG_SESSION_TURNS) — subagents are
     // LONG_AGENT's / DETAIL's "Subagent distribution" territory.
     `SESSIONS     ${cur.mainSessions.length}   median ${cur.medianMsgs} msgs   p90 ${cur.p90Msgs}   ` +
       `≥${LONG_SESSION_TURNS} msgs: ${cur.mainSessions.filter(s => s.msgs >= LONG_SESSION_TURNS).length}`,
-    // Slice 15 HITL (re-review decision): cost is all-time incl. subagents (all.cost,
+    // HITL re-review decision: cost is all-time incl. subagents (all.cost,
     // so SPEND ≤ ALL-TIME always holds); sessions/messages stay main-only, matching
     // SESSIONS above (all.mainSessions) — see the comment where allMainMsgs is built.
     `ALL-TIME     ${money(all.cost)} over ${all.mainSessions.length} sessions, ${allMainMsgs} messages`,
-    // Slice 28 (design decision Q3, HITL decision): TOP SESSIONS dropped from the summary —
+    // Design decision Q3, HITL decision: TOP SESSIONS dropped from the summary —
     // it overlapped WORK UNITS / TOP SUBAGENTS in DETAIL and was one of the two biggest
     // overrun sources on real --all data. Still in --json as cur.sessions (trimmed to
     // --top, unchanged). WEEKS (a full per-week table, unbounded with history length)
@@ -2417,7 +2417,7 @@ async function main() {
   // suffix differs (see `flagsMoreLine` below).
   const detSeparator = det ? [''] : [];
 
-  // Slice 28 (design decision Q3, HITL Q-B/Q-C): flags in rankFlags() order fill
+  // Design decision Q3, HITL Q-B/Q-C: flags in rankFlags() order fill
   // whatever room is left (fitFlags(), same hard guard DETAIL's "FLAGS
   // (continued)" uses); the rest continue there within its own line budget.
   // --json's `flags` always carries every flag (unranked).
@@ -2445,7 +2445,7 @@ module.exports = {
   // Test-only: lets tests (activity.test.js) probe the `script run` rule's own regex in
   // isolation, without going through the whole ACTIVITY_RULES priority chain — the
   // `screenshot/image` rule (checked first) has its own, separate, still-unbounded
-  // `python\S*` inside SHOT_EXEC (pre-Slice-15, out of scope here) that would otherwise
+  // `python\S*` inside SHOT_EXEC (predates this fix, out of scope here) that would otherwise
   // dominate the timing of any input built to stress SCRIPT_INTERP's own fix.
   SCRIPT_INTERP,
 };
