@@ -1335,15 +1335,24 @@ function boilerplate(rows) {
     .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions || (a.prefix < b.prefix ? -1 : 1)) };
 }
 // ------------------------------------------------------------ GitHub polling
-// GH_POLLING threshold (Slice 31) — PROVISIONAL, awaiting the user's HITL choice from
-// real-data percentiles (see REFERENCE.md "GH_POLLING"). One endpoint shape with >= N
-// calls summed over every session and subagent in the window fires, however few of them
-// land in any one session.
+// GH_POLLING threshold (Slice 31, HITL-set final value — see REFERENCE.md "GH_POLLING"
+// threshold" for the percentile data behind it). One endpoint shape with >= N read calls
+// summed over every session and subagent in the window fires, however few of them land
+// in any one session.
 const GH_POLL_MIN_CALLS = 20;
 // Same two categories Slice 15 considered for a per-session any-key count: a status poll
 // (`check-runs`, `actions/runs`, `gh pr checks`, `gh run view`) is wait/poll, any other
 // `api.github.com` / `gh` call is github. Everything else (git push, plain sleep) never counts.
 const GH_POLL_CATEGORIES = new Set(['wait/poll', 'github']);
+// GH_POLLING counts state QUERIES only (HITL decision): an explicit write HTTP method or a
+// `gh <group> <verb>` that changes state is excluded, even though its category is still
+// wait/poll or github. Keeps `gh pr create`/`gh pr merge` spam from ever tripping the flag.
+const GH_WRITE_METHOD = /-x\s*['"]?(post|put|patch|delete)\b|--method[=\s]+['"]?(post|put|patch|delete)\b/i;
+// `gh <group> <verb>` verbs that write; anything else in a whitelisted GH_GROUPS command is
+// a query (`checks`, `view`, `watch`, `list`, `status`, `diff`, …), so an unlisted verb
+// defaults to read rather than needing its own whitelist entry.
+const GH_WRITE_VERBS = new Set(('create merge close delete edit comment reopen lock unlock transfer review ' +
+  'approve ready draft rerun cancel sync upload pin unpin disable enable request-review').split(' '));
 // REST path words kept in a shape. Any other segment (owner, repo, PR number, SHA, branch,
 // file path, `$VAR`, `<id>`) becomes `*`, so a shape never prints a name — only these words.
 const GH_PATH_WORDS = new Set(('pulls commits check-runs check-suites actions runs jobs logs workflows ' +
@@ -1413,6 +1422,23 @@ function githubShapes(key) {
   }
   return [...out];
 }
+// True when a GitHub call changes state rather than queries it (HITL decision, Slice 31):
+// an explicit write HTTP method (`-X POST`, `--method PUT`, case-insensitive, on a curl or
+// `gh api` call) or a `gh <group> <verb>` whose verb is in GH_WRITE_VERBS (`gh pr merge`,
+// `gh issue create`). No method flag and no matching verb defaults to a read — `gh api
+// repos/o/r/pulls/1` and `gh pr checks`/`view`/`list` all count. Limitation: `gh api -f
+// k=v` implicitly POSTs without `-X`; not detected here (no case in the real-data sample).
+function isGhWrite(key) {
+  const s = String(key);
+  if (GH_WRITE_METHOD.test(s)) return true;
+  if (/(?:^|[^\w-])gh /.test(s)) {
+    for (const m of markCommands(s).matchAll(GH_CLI)) {
+      const verb = /^ +([a-z][a-z-]{0,19})(?=\s|$)/.exec(m[2]);
+      if (verb && GH_WRITE_VERBS.has(verb[1].toLowerCase())) return true;
+    }
+  }
+  return false;
+}
 // GitHub polling in this window: Bash/PowerShell calls of a GH_POLL_CATEGORIES category,
 // grouped by githubShapes() over ALL sessions and subagents (sessionKey) — not per session
 // like POLLING, so a few calls per subagent across many subagents add up. A shape with
@@ -1427,6 +1453,7 @@ function ghPolling(rows) {
     total += r.cost;
     for (const c of r.calls) {
       if (!SHELL_TOOLS.has(c.tool) || !GH_POLL_CATEGORIES.has(categorize(c))) continue;
+      if (isGhWrite(c.key)) continue;
       const shapes = githubShapes(c.key);
       if (!shapes.length) continue;
       const call = { shapes, part: r.cost / r.calls.length, sk: sessionKey(r), isSub: r.isSub };
@@ -1503,8 +1530,8 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }, gh = {
       amount: cost, groups: boilers });
   }
   if (gh.groups.length) {
-    // Slice 31: the cross-session counterpart of POLLING — GitHub calls by endpoint shape
-    // summed over every session/subagent (REFERENCE.md "GH_POLLING").
+    // Slice 31: the cross-session counterpart of POLLING — GitHub read calls by endpoint
+    // shape summed over every session/subagent (REFERENCE.md "GH_POLLING").
     const { groups, ...tot } = gh;
     const g = groups[0];
     const more = groups.length > 1 ? ` +${groups.length - 1} more` : '';
@@ -2192,7 +2219,7 @@ async function main() {
 if (require.main === module) main();
 module.exports = {
   projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, githubShapes,
-  GH_POLL_MIN_CALLS,
+  isGhWrite, GH_POLL_MIN_CALLS,
   rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags, appendFlagsMore,
   familyLine, renderDetail,
   SUMMARY_MAX_LINES, DETAIL_MAX_LINES,

@@ -1,13 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
-const { commandKey, githubShapes, rankFlags, GH_POLL_MIN_CALLS } =
+const { commandKey, githubShapes, isGhWrite, rankFlags, GH_POLL_MIN_CALLS } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// Slice 31: GH_POLLING = GitHub API / `gh` calls (wait/poll + github categories) grouped by
-// endpoint shape over every session and subagent in the window — catches polling spread as
-// a few calls per session across many subagents, which POLLING (one key ≥ N× in ONE session)
-// cannot see. Tests are written against GH_POLL_MIN_CALLS, not a literal threshold.
+// Slice 31: GH_POLLING = GitHub read (state-query) calls (wait/poll + github categories,
+// write calls excluded — HITL decision) grouped by endpoint shape over every session and
+// subagent in the window — catches polling spread as a few calls per session across many
+// subagents, which POLLING (one key ≥ N× in ONE session) cannot see. Tests are written
+// against GH_POLL_MIN_CALLS, not a literal threshold.
 const N = GH_POLL_MIN_CALLS;
 
 const USAGE = { input_tokens: 1e6, output_tokens: 0 }; // Opus 5.5: $4 per turn
@@ -104,6 +105,57 @@ test('GH_POLLING: N−1 calls do not fire (>= boundary), however many sessions',
 test('GH_POLLING: counts only wait/poll + github calls — git push / plain sleep never count', () => {
   const files = spread(3 * N, 3, i => (i % 2 ? `git push origin feature-${i}` : `sleep ${i}`));
   assert.equal(ghFlag(audit(tmpClaudeDir(files))), undefined);
+});
+
+// HITL decision: GH_POLLING counts state queries (reads) only, not writes.
+test('isGhWrite: explicit write HTTP method or a writing gh verb is a write; view/checks/watch/GET read', () => {
+  assert.equal(isGhWrite('curl -X POST https://api.github.com/repos/jdoe/demo-proj/pulls -d @b.json'), true);
+  assert.equal(isGhWrite('curl -s -X PUT https://api.github.com/repos/jdoe/demo-proj/pulls/4242/merge'), true);
+  assert.equal(isGhWrite('gh api --method DELETE repos/jdoe/demo-proj/issues/comments/1'), true);
+  assert.equal(isGhWrite('gh pr merge 4242 --squash'), true);
+  assert.equal(isGhWrite('gh issue create --title x --body y'), true);
+  assert.equal(isGhWrite('gh pr checks 4242 --watch'), false);
+  assert.equal(isGhWrite('gh pr view 4242'), false);
+  assert.equal(isGhWrite('gh run view 991 --log'), false);
+  assert.equal(isGhWrite('gh run watch 991'), false);
+  assert.equal(isGhWrite('curl -s https://api.github.com/repos/jdoe/demo-proj/pulls/4242'), false);
+  assert.equal(isGhWrite('gh api repos/jdoe/demo-proj/pulls/4242'), false);
+});
+
+test('GH_POLLING: N write calls (create/merge/-X POST), spread thin, never fire the flag', () => {
+  const writeCmds = [
+    i => `gh pr merge ${4000 + i} --squash`,
+    i => `gh issue create --title issue-${i} --body x`,
+    i => `curl -s -X POST https://api.github.com/repos/jdoe/demo-proj/pulls -d @b${i}.json`,
+  ];
+  for (const cmd of writeCmds) {
+    assert.equal(ghFlag(audit(tmpClaudeDir(spread(N, 3, cmd)))), undefined, String(cmd));
+  }
+});
+
+test('GH_POLLING: N read calls (checks/view/watch/GET), spread thin, fire the flag', () => {
+  const readCmds = [
+    i => `gh pr checks ${4000 + i} --watch`,
+    i => `gh pr view ${4000 + i}`,
+    i => `gh run view ${900 + i} --log`,
+    i => `gh run watch ${900 + i}`,
+  ];
+  for (const cmd of readCmds) {
+    const f = ghFlag(audit(tmpClaudeDir(spread(N, 3, cmd))));
+    assert.ok(f, String(cmd));
+    assert.equal(f.calls, N);
+  }
+});
+
+test('GH_POLLING: mixed reads and writes — only the read shape is counted, writes excluded', () => {
+  const total = 2 * N;
+  const files = spread(total, 2, i => (i % 2
+    ? `gh pr checks ${4000 + i} --watch`    // read
+    : `gh pr merge ${4000 + i} --squash`)); // write
+  const f = ghFlag(audit(tmpClaudeDir(files)));
+  assert.ok(f);
+  assert.equal(f.calls, N);
+  assert.deepEqual(f.groups.map(g => g.shape), ['gh pr checks']);
 });
 
 test('GH_POLLING: a call hitting two shapes counts once in the totals, in both groups', () => {
