@@ -1,9 +1,10 @@
 # Design decisions
 
-Architecture decision records for `token-audit` v2. Each entry gives the context, the decision,
+Architecture decision records for `token-audit`. Each entry gives the context, the decision,
 the alternatives that were rejected, and the consequences. Q1–Q10 come from the original design
-review; the later entries record decisions made during implementation (Slices 15, 27, 28 and
-31) plus a few smaller ones. REFERENCE.md cites these as "design decision Q<n>".
+review; the later entries record decisions made during implementation (the threshold re-tune,
+the publication-and-privacy work, the summary line-budget rework and the GH_POLLING work) plus
+a few smaller ones. REFERENCE.md cites these as "design decision Q<n>".
 
 Decisions and reasons only. Threshold values are named where the code uses them; measurements
 behind them are not reproduced here.
@@ -23,16 +24,16 @@ See also: [architecture.md](architecture.md), [roadmap.md](roadmap.md),
 - [Q8 Fixture tests with node:test](#q8-fixture-tests-with-nodetest)
 - [Q9 Cost by activity, POLLING, BOILERPLATE, MCP config](#q9-cost-by-activity-polling-boilerplate-mcp-config)
 - [Q10 Cross-session GitHub polling](#q10-cross-session-github-polling)
-- [Slice 15 Thresholds re-tuned on deduped history](#slice-15-thresholds-re-tuned-on-deduped-history)
-- [Slice 27 Publication and privacy](#slice-27-publication-and-privacy)
-- [Slice 28 Summary back to 24 lines](#slice-28-summary-back-to-24-lines)
-- [Slice 31 GH_POLLING details](#slice-31-gh_polling-details)
+- [Thresholds re-tuned on deduped history](#thresholds-re-tuned-on-deduped-history)
+- [Publication and privacy](#publication-and-privacy)
+- [Summary back to 24 lines](#summary-back-to-24-lines)
+- [GH_POLLING details](#gh_polling-details)
 - [Smaller decisions](#smaller-decisions)
 
-## Background: what v2 fixed
+## Background: what this rewrite fixed
 
-v1 of the script was checked against hand-written analysis of a real, subagent-heavy project and
-four transcript-shape bugs turned up:
+The original script was checked against hand-written analysis of a real, subagent-heavy project
+and four transcript-shape bugs turned up:
 
 1. **No dedupe by `message.id`.** One API response is written as several JSONL lines sharing one
    `usage`; every line was priced, so cost and message counts were inflated, and every
@@ -40,18 +41,20 @@ four transcript-shape bugs turned up:
 2. **Unknown models dropped.** A model missing from the price table returned no rate and its rows
    silently vanished.
 3. **Subagent project = session id.** The subagent layout
-   `projects/<project>/<session>/subagents/agent-*.jsonl` puts the project two levels up; v1 took
-   one level, which broke per-project filtering and the session-to-subagent link.
+   `projects/<project>/<session>/subagents/agent-*.jsonl` puts the project two levels up; the
+   original script took one level, which broke per-project filtering and the
+   session-to-subagent link.
 4. **`effortLevel` read only at the settings root**, missing per-model
    `modelSettings.<model>.effortLevel`.
 
-The same check showed the main cost lever there was long-running subagents, which the v1
+The same check showed the main cost lever there was long-running subagents, which the original
 playbook called a non-lever, and that the top-sessions list gave no hint of what a subagent was
 doing. The decisions below come from that review.
 
 ## Q1 Fix and extend token-audit, no new tool
 
-- **Context.** Ad-hoc scripts had the detail v1 lacked, but no verdict, trend or cost.
+- **Context.** Ad-hoc scripts had detail the original script lacked, but no verdict, trend or
+  cost.
 - **Decision.** Fix and extend `token-audit`; no new script or skill.
 - **Rejected.** A separate analysis tool next to it.
 - **Consequences.** Keeps what already worked: one script run, a short fixed-size verdict,
@@ -93,8 +96,8 @@ doing. The decisions below come from that review.
 - **Context.** Habits differ per project (one subagent-heavy, another main-thread-heavy); mixing
   all projects hides that.
 - **Decision.** Default scope = the current working directory, mapped to its `projects/` folder
-  name. `--project <path>` picks another project; `--all` scans everything (the v1 behaviour).
-  The banner states the scope. An unknown project is an error.
+  name. `--project <path>` picks another project; `--all` scans everything (the original default
+  behaviour). The banner states the scope. An unknown project is an error.
 - **Rejected.** All projects by default.
 - **Consequences.** Needs the exact Claude Code folder-name mapping, including long-name
   truncation; subagents must resolve to their real project (bug 3).
@@ -105,8 +108,8 @@ doing. The decisions below come from that review.
   main lever and the playbook had no entry for them.
 - **Decision.** `LONG_AGENT` fires for subagents over `LONG_AGENT_TURNS` turns or over
   `LONG_AGENT_CTX` peak context and prints their share of spend. `LONG_AGENT_CTX` was originally
-  300k at design time; [Slice 15](#slice-15-thresholds-re-tuned-on-deduped-history) raised it to
-  400k (`LONG_AGENT_CTX = 400e3`) after the lower value flagged ordinary agents that had simply
+  300k at design time; [the threshold re-tune](#thresholds-re-tuned-on-deduped-history) raised it
+  to 400k (`LONG_AGENT_CTX = 400e3`) after the lower value flagged ordinary agents that had simply
   read a lot. Playbook:
   - a hard `maxTurns` in agent frontmatter (a limit hit returns a partial result);
   - one sub-task per agent → commit → short report → stop; hand off through git and the report,
@@ -114,13 +117,14 @@ doing. The decisions below come from that review.
   - review findings go to a **fresh** fix agent, not back into the large implementer;
   - after `maxTurns`, start a new agent with the report and `git log` instead of resuming.
 - **Rejected.** Counting only main-thread length.
-- **Consequences.** Values were provisional until [Slice 15](#slice-15-thresholds-re-tuned-on-deduped-history).
-  Flag ranking is recorded under [Slice 28](#slice-28-summary-back-to-24-lines).
+- **Consequences.** Values were provisional until
+  [the threshold re-tune](#thresholds-re-tuned-on-deduped-history). Flag ranking is recorded
+  under [the summary rework](#summary-back-to-24-lines).
 
 ## Q6 Measured non-levers are reported, not asserted
 
-- **Context.** v1's REFERENCE listed subagents as a measured non-lever. That held for one project
-  and was false for another.
+- **Context.** The original REFERENCE listed subagents as a measured non-lever. That held for one
+  project and was false for another.
 - **Decision.** Subagents are a non-lever only when their measured share is small and they run on
   a cheaper model; otherwise report the measured share and model mix. File reads, tool output and
   screenshots stay non-levers (re-confirmed). The old baseline is replaced by one computed after
@@ -131,7 +135,7 @@ doing. The decisions below come from that review.
 
 ## Q7 Plugin and marketplace packaging
 
-- **Context.** v1 lived as a loose skill in one user's skills folder.
+- **Context.** The script started as a loose skill in one user's skills folder.
 - **Decision.** Plugin plus marketplace in one GitHub repository; nothing installed by hand.
   Install is `/plugin marketplace add <owner>/token-audit` then `/plugin install`. `SKILL.md`
   resolves its folder from `${CLAUDE_PLUGIN_ROOT}`. Plugin content lives under `plugin/` and the
@@ -157,7 +161,8 @@ doing. The decisions below come from that review.
 ## Q9 Cost by activity, POLLING, BOILERPLATE, MCP config
 
 - **Context.** Because cost is turns × context, what matters is how many turns went to polling or
-  repeated setup, not how large a tool's output was. v1 had no view of tool-driven turns.
+  repeated setup, not how large a tool's output was. The original script had no view of
+  tool-driven turns.
 - **Decision.**
   - **Cost by activity.** Each deduped turn's cost goes to the category of its tool calls, split
     evenly when a turn makes several. Categories come from one ordered regex table in the
@@ -180,7 +185,7 @@ doing. The decisions below come from that review.
 - **Rejected.** Pricing tool output size (measured as noise, Q6); counting MCP tools from
   transcripts (undercounts, reads zero for a configured but unused server).
 - **Consequences.** Classification order matters and is tested. Thresholds were provisional until
-  [Slice 15](#slice-15-thresholds-re-tuned-on-deduped-history).
+  [the threshold re-tune](#thresholds-re-tuned-on-deduped-history).
 
 ## Q10 Cross-session GitHub polling
 
@@ -197,9 +202,9 @@ doing. The decisions below come from that review.
 - **Rejected.** A per-session any-key count (still misses thinly spread polling); grouping by full
   command key (the inline ids keep calls apart).
 - **Consequences.** `POLLING` and `GH_POLLING` count independently; a session can appear in both.
-  Details in [Slice 31](#slice-31-gh_polling-details).
+  Details in [the GH_POLLING work](#gh_polling-details).
 
-## Slice 15 Thresholds re-tuned on deduped history
+## Thresholds re-tuned on deduped history
 
 - **Context.** Every threshold had been set on inflated (pre-dedupe) counts.
 - **Decision.** Re-measure on the author's whole local history plus per-project cuts, reusing the
@@ -223,7 +228,7 @@ doing. The decisions below come from that review.
   [roadmap](roadmap.md). Model ids in unknown formats (Bedrock, Vertex) land in `UNPRICED`, which
   is the safe default.
 
-## Slice 27 Publication and privacy
+## Publication and privacy
 
 - **Context.** The repository was about to become public, but its history carried personal data.
 - **Decision.** Before the first push:
@@ -234,16 +239,16 @@ doing. The decisions below come from that review.
   - keep private design notes out of git, with no references to them from published files;
   - MIT license; README with install, requirements, flags and a privacy note (read-only, local,
     redaction is best effort);
-  - a test that fails if a manifest or README carries a personal e-mail. (Extended in Slice 32,
+  - a test that fails if a manifest or README carries a personal e-mail. (Extended later,
     alongside publishing `docs/`, to also cover the `docs/` pages and known private names.)
 - **Rejected.** Publishing with the history as it was; keeping private notes in the repository.
 - **Consequences.** REFERENCE keeps its anonymized example numbers (a separate decision: they are
   examples, not leakage). Design notes are published only as these `docs/` pages, rewritten
   without evidence.
 
-## Slice 28 Summary back to 24 lines
+## Summary back to 24 lines
 
-- **Context.** Features added over earlier slices pushed the summary far past its 24-line budget
+- **Context.** Features added over earlier work pushed the summary far past its 24-line budget
   on real data.
 - **Decision.**
   - **B.** TOP SESSIONS leaves the summary (DETAIL's work units and top subagents cover it;
@@ -269,7 +274,7 @@ doing. The decisions below come from that review.
   `--json` `flags` stays unranked and complete, each entry with `amount`. Open: a saveable part
   for `OPUS_HEAVY` or `CONCENTRATION` would move them into tier 0 ([roadmap](roadmap.md)).
 
-## Slice 31 GH_POLLING details
+## GH_POLLING details
 
 - **Context.** Implementing Q10 raised four questions: aggregation unit, threshold, whether
   writes count, and overlap with other tier-0 flags.
@@ -299,18 +304,18 @@ doing. The decisions below come from that review.
 
 ## Smaller decisions
 
-- **Shared `message.id` across files** (Slice 22): credited to the occurrence with the earliest
+- **Shared `message.id` across files**: credited to the occurrence with the earliest
   timestamp, not the first file in path order. Totals are unchanged; attribution is right.
-- **Claude dir precedence** (Slice 23): `--claude-dir`, then `CLAUDE_CONFIG_DIR`, then
+- **Claude dir precedence**: `--claude-dir`, then `CLAUDE_CONFIG_DIR`, then
   `~/.claude`. With `CLAUDE_CONFIG_DIR` the user config file lives inside that dir, as in Claude
   Code.
-- **Exact model matching** (Slice 25): known ids only, after stripping `claude-`, a date suffix
+- **Exact model matching**: known ids only, after stripping `claude-`, a date suffix
   and dots. An unlisted version goes to `UNPRICED` with a warning instead of borrowing a
   neighbour's price; `<synthetic>` zero-usage rows are ignored.
-- **Redaction everywhere** (Slice 29): every printed field that can carry a path or identity
+- **Redaction everywhere**: every printed field that can carry a path or identity
   goes through the same redaction, in text and `--json`; grouping stays on raw values. The
   identity layer matches name parts as whole words, accent-insensitive.
-- **Linear-time parsing** (Slice 30): command-key and classification code must stay linear on
+- **Linear-time parsing**: command-key and classification code must stay linear on
   pathological input; each known blow-up has a timing test.
-- **Output width** (Slice 20): every text line ≤ 120 characters; advice text wraps instead of
+- **Output width**: every text line ≤ 120 characters; advice text wraps instead of
   being cut; untrusted names are sanitized so they cannot forge report lines.

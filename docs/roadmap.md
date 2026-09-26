@@ -1,6 +1,6 @@
 # Roadmap
 
-Open work and known limitations of `token-audit` v2. Finished work is in `git log`; the reasons
+Open work and known limitations of `token-audit`. Finished work is in `git log`; the reasons
 behind the design are in [decisions.md](decisions.md), the code map in
 [architecture.md](architecture.md).
 
@@ -8,11 +8,11 @@ behind the design are in [decisions.md](decisions.md), the code map in
 
 ### Final review
 
-`/review` of the whole v2 against [architecture.md](architecture.md) and
+`/review` of the whole script against [architecture.md](architecture.md) and
 [decisions.md](decisions.md), plus a hands-on run on real data.
 
-- [ ] The four v1 transcript bugs (dedupe, unknown models, subagent project, per-model effort)
-      are fixed and pinned by fixtures.
+- [ ] The four transcript bugs found in the original script (dedupe, unknown models, subagent
+      project, per-model effort) are fixed and pinned by fixtures.
 - [ ] Q1–Q10 and the later decisions are implemented as recorded.
 - [ ] Confirm the subagent-distribution population (every subagent in the window, not only the
       top 10; Q3).
