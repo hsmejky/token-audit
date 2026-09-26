@@ -53,42 +53,41 @@ audit any project (or all of them) from wherever you are.
 
 ## Sample report
 
-Generated from synthetic fixture data (`--all --days 7`), not a real project. Names, sessions
-and paths below are made up for illustration:
+This is what `/token-audit` actually puts on screen, not just the script's raw text: the
+banner and the `DO NEXT` fixes are Claude's own rendering, drawn from the script's numbers
+per the skill's report template; the `TOKEN AUDIT` header line, `TREND` line and everything
+from `DETAIL` down are the script's own output, unedited. Generated from synthetic fixture
+data (`--all --days 7`), not a real project. Names, sessions and paths below are made up for
+illustration:
 
 ```
-TOKEN AUDIT   scope all projects   window 2026-09-18 → 2026-09-25 (7d)   list-price equivalent
+┌──────────────────────┐
+│  REGRESSION  ▓▓▓▓▓    │
+└──────────────────────┘
 
-SPEND        $3.86   prev window $0.288  +1242%
-  Opus $3.12 80.7%   Sonnet $0.744 19.3%
-  main $3.86 (100.0%)   subagents $0.000 (0.0%)
+TOKEN AUDIT   scope all projects   window 2026-09-19 → 2026-09-26 (7d)   list-price equivalent
+TREND        ▃▁▃█ 2026-08-24 $0.012/msg → 2026-09-21 $0.023/msg +96%   span 5 wk (4 with data)   full table in --json
 
-PER MESSAGE  ctx 108k avg   cost $0.034   prev 8k / $0.010
-SESSIONS     3   median 40 msgs   p90 60   ≥200 msgs: 0
-ALL-TIME     $4.15 over 4 sessions, 144 messages
-TREND        ▁█ 2026-09-14 $0.010/msg → 2026-09-21 $0.034/msg +253%   span 2 wk (2 with data)   full table in --json
-CONFIG       model=(unset — harness default) effort=unset plugins=0 prefix≈0.0k retention=30
+SPEND     $1.52 / 7d (+585%)         Opus 40% Sonnet 60%      main 100% sub 0%
+HABIT     ctx/msg 68k (16k)          worst: sess-build $0.92, <1d span, 34 msgs
+CONFIG    model=unset (harness default)  effort=unset  prefix≈0.0k tok/req
+SECURITY  cleanupPeriodDays=30 — nothing flagged
 
-FLAGS
-  REGRESSION     cost/message +253% vs previous window
-  POLLING        1 run(s) ≥10×/session = $0.224, 6% of spend; top 14× gh pr checks N
-  CONCENTRATION  top 5 sessions = 100% of spend
-
-SECURITY (confidentiality, not cost)
-  none
+DO NEXT   1 ▓▓▓▓▓░░░░░ 55%  cost/msg +122% vs last window ($0.84 extra) — check TREND, then sess-build
+          2 ▓▓▓░░░░░░░ 30%  25x poll loop in sess-polling ($0.47) — swap for Monitor/run_in_background, one turn not 25
 
 DETAIL
 TOP 10 WORK UNITS (this window, parent + subagents; span = full history)
   sid          cost    sub%  #ag  turns   peak   span  project
-  sess-02     $3.12    0.0%    0     60   180k    <1d  demo-webapp
-  sess-01    $0.520    0.0%    0     40    25k    <1d  demo-webapp
-  sess-03    $0.224    0.0%    0     14    40k    <1d  demo-webapp
+  sess-bui   $0.921    0.0%    0     34   171k   0.0d  demo-webapp
+  sess-pol   $0.465    0.0%    0     25    92k   0.0d  demo-webapp
+  sess-qui   $0.139    0.0%    0      9    37k   0.0d  demo-webapp
 TOP SUBAGENTS  none in this window
 SUBAGENT DISTRIBUTION  none in this window
 COST BY ACTIVITY (this window, top 6; a turn's cost split evenly over its tool calls)
   category           turns  avg ctx     cost   share
-  reply                100     118k    $3.64   94.2%
-  wait/poll             14      40k   $0.224    5.8%
+  reply                 43      74k    $1.06   69.5%
+  wait/poll             25      56k   $0.465   30.5%
 ```
 
 Costs are **list-price equivalents** (Claude API $/MTok): on Pro/Max nothing is billed per
