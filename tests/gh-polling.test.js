@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
-const { commandKey, githubShapes, isGhWrite, rankFlags, GH_POLL_MIN_CALLS } =
+const { commandKey, githubShapes, githubReadShapes, isGhWrite, rankFlags, GH_POLL_MIN_CALLS } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 31: GH_POLLING = GitHub read (state-query) calls (wait/poll + github categories,
@@ -39,6 +39,7 @@ const checkRuns = i => `${CRED} && for i in $(seq 1 6); do out=$(curl -s -H "Aut
   `echo "$out" | grep -q completed && break; sleep 20; done`;
 const ghFlag = r => r.flags.find(f => f.id === 'GH_POLLING');
 const shapes = cmd => githubShapes(commandKey(cmd));
+const readShapes = cmd => githubReadShapes(commandKey(cmd));
 
 test('githubShapes: REST path → endpoint shape, ids / owner / repo / branch never kept', () => {
   assert.deepEqual(shapes(checkRuns(1)), ['commits/*/check-runs']);
@@ -186,4 +187,81 @@ test('GH_POLLING: ranks in tier 0 with POLLING/BOILERPLATE by its cost', () => {
   assert.ok(boil >= 0, 'fixture also fires BOILERPLATE (same credential prefix)');
   assert.ok(ids.indexOf('GH_POLLING') < ids.indexOf('MULTIDAY') || !ids.includes('MULTIDAY'));
   assert.ok(Math.abs(ids.indexOf('GH_POLLING') - boil) === 1, ids.join(' '));
+});
+
+// Review finding 1: a call is excluded PER OCCURRENCE/shape, not whole — a read and a write
+// gh/curl invocation in the same Bash call must keep the read shape and drop only the write.
+test('githubReadShapes: one call with a read gh loop AND a write gh call keeps only the read ' +
+  'shape (review finding 1)', () => {
+  const cmd = 'until gh pr checks 4242; do sleep 30; done && gh pr merge 4242';
+  assert.deepEqual(readShapes(cmd), ['gh pr checks']);
+  assert.deepEqual(shapes(cmd).sort(), ['gh pr checks', 'gh pr merge']);
+  assert.equal(isGhWrite(commandKey(cmd)), true); // the key still HAS a write occurrence
+});
+
+test('githubReadShapes: one call with a read curl loop AND a write curl (-X PUT …/merge) ' +
+  'keeps only the read shape (review finding 1)', () => {
+  const cmd = 'for i in $(seq 1 3); do curl -s https://api.github.com/repos/jdoe/demo-proj/' +
+    'commits/$i/check-runs; sleep 5; done && curl -s -X PUT https://api.github.com/repos/' +
+    'jdoe/demo-proj/pulls/4242/merge';
+  assert.deepEqual(readShapes(cmd), ['commits/*/check-runs']);
+});
+
+test('GH_POLLING: a call with a read AND a write occurrence counts once, only under the ' +
+  'read shape (review finding 1)', () => {
+  const cmd = i => `until gh pr checks ${4000 + i}; do sleep 5; done && gh pr merge ${4000 + i}`;
+  const f = ghFlag(audit(tmpClaudeDir(spread(N, 2, cmd))));
+  assert.ok(f);
+  assert.equal(f.calls, N);
+  assert.deepEqual(f.groups.map(g => g.shape), ['gh pr checks']);
+});
+
+// Review finding 3 (privacy): the word after `gh <group>` is free text unless it is on that
+// group's read-verb whitelist — anything else (a branch/repo name) must never be printed.
+test('githubReadShapes: unknown word after `gh <group>` never printed, becomes `*` ' +
+  '(review finding 3)', () => {
+  assert.deepEqual(readShapes('gh browse fix-login-bug'), ['gh browse *']);
+  assert.deepEqual(readShapes('gh repo acme-secret'), ['gh repo *']);
+  const dump = JSON.stringify(readShapes('gh browse fix-login-bug')) +
+    JSON.stringify(readShapes('gh repo acme-secret'));
+  assert.doesNotMatch(dump, /fix-login-bug|acme-secret/);
+});
+
+test('GH_POLLING --json groups[]: unknown gh word never appears (review finding 3)', () => {
+  const cmd = i => `gh browse fix-login-bug-${i}`;
+  const f = ghFlag(audit(tmpClaudeDir(spread(N, 2, cmd))));
+  assert.ok(f);
+  assert.deepEqual(f.groups.map(g => g.shape), ['gh browse *']);
+  assert.doesNotMatch(JSON.stringify(f), /fix-login-bug/);
+});
+
+// Review finding 7: global/local gh flags before the group/verb, and write-method regex
+// scoped to its own command (not the whole compound key).
+test('isGhWrite/githubReadShapes: --repo/-R before or after the group (review finding 7)', () => {
+  assert.equal(isGhWrite(commandKey('gh pr --repo jdoe/demo-proj merge 4242')), true);
+  assert.equal(isGhWrite(commandKey('gh -R jdoe/demo-proj pr merge 4242')), true);
+  assert.deepEqual(readShapes('gh -R jdoe/demo-proj pr view 4242'), ['gh pr view']);
+  assert.deepEqual(readShapes('gh pr --repo jdoe/demo-proj view 4242'), ['gh pr view']);
+});
+
+test('isGhWrite: write-method regex scoped to its own command — an unrelated `-x post` in a ' +
+  'different command must not false-positive (review finding 7)', () => {
+  assert.equal(isGhWrite(commandKey('grep -x post f && gh pr view 4242')), false);
+});
+
+// Review finding 2: extended write detection.
+test('isGhWrite: curl --request/-XPOST/--data*/--method=POST, gh api field flags (graphql ' +
+  'exception), gh workflow run / secret|variable set / repo fork (review finding 2)', () => {
+  assert.equal(isGhWrite('curl --request POST https://api.github.com/repos/jdoe/demo-proj/issues'), true);
+  assert.equal(isGhWrite('curl -d @b.json https://api.github.com/repos/jdoe/demo-proj/issues'), true);
+  assert.equal(isGhWrite('curl -G -d "state=open" https://api.github.com/repos/jdoe/demo-proj/pulls'), false);
+  assert.equal(isGhWrite('curl -XPOST https://api.github.com/repos/jdoe/demo-proj/issues'), true);
+  assert.equal(isGhWrite('gh api --method=POST repos/jdoe/demo-proj/issues'), true);
+  assert.equal(isGhWrite('gh api -f title=x repos/jdoe/demo-proj/issues'), true);
+  assert.equal(isGhWrite("gh api graphql -f query='{ viewer { login } }'"), false);
+  assert.equal(isGhWrite("gh api graphql -f query='mutation { addComment(x:1) }'"), true);
+  assert.equal(isGhWrite('gh workflow run ci.yml'), true);
+  assert.equal(isGhWrite('gh secret set FOO --body x'), true);
+  assert.equal(isGhWrite('gh variable set FOO --body x'), true);
+  assert.equal(isGhWrite('gh repo fork'), true);
 });

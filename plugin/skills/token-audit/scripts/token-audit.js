@@ -1347,12 +1347,82 @@ const GH_POLL_CATEGORIES = new Set(['wait/poll', 'github']);
 // GH_POLLING counts state QUERIES only (HITL decision): an explicit write HTTP method or a
 // `gh <group> <verb>` that changes state is excluded, even though its category is still
 // wait/poll or github. Keeps `gh pr create`/`gh pr merge` spam from ever tripping the flag.
-const GH_WRITE_METHOD = /-x\s*['"]?(post|put|patch|delete)\b|--method[=\s]+['"]?(post|put|patch|delete)\b/i;
+// Slice 31 review finding 2: `--request` (curl's `-X` alias) alongside `--method`, both
+// `NAME value` and `NAME=value`; `-x` with or without a space covers `-XPOST` too.
+const GH_WRITE_METHOD = /-x\s*['"]?(post|put|patch|delete)\b|--(?:request|method)[=\s]+['"]?(post|put|patch|delete)\b/i;
+// Slice 31 review finding 2: curl sends an implicit POST whenever a body flag is present and
+// `-G`/`--get` doesn't turn it back into a query-string GET.
+const GH_DATA_FLAG = /(?:^|\s)(?:-d\b|--data(?:-raw|-binary|-urlencode)?\b)/i;
+const GH_GET_FLAG = /(?:^|\s)(?:-G|--get)\b/i;
+// `gh api` flags that imply a write body (Slice 31 review finding 2): `-f`/`-F`/`--field`/
+// `--raw-field` post form/JSON fields unless an explicit `--method GET` overrides it.
+// Exception: `gh api graphql -f query=…` is itself a query endpoint — a read UNLESS the
+// query text is a `mutation`.
+const GH_API_FIELD_FLAG = /(?:^|\s)(?:-f|-F|--field|--raw-field)\b/i;
 // `gh <group> <verb>` verbs that write; anything else in a whitelisted GH_GROUPS command is
 // a query (`checks`, `view`, `watch`, `list`, `status`, `diff`, …), so an unlisted verb
-// defaults to read rather than needing its own whitelist entry.
+// defaults to read rather than needing its own whitelist entry. `run`/`set`/`fork` write
+// only for the groups that actually have them (`gh workflow run`, `gh secret|variable set`,
+// `gh repo fork` — Slice 31 review finding 2); no other whitelisted group has that verb.
 const GH_WRITE_VERBS = new Set(('create merge close delete edit comment reopen lock unlock transfer review ' +
-  'approve ready draft rerun cancel sync upload pin unpin disable enable request-review').split(' '));
+  'approve ready draft rerun cancel sync upload pin unpin disable enable request-review run set fork')
+  .split(' '));
+// Slice 31 review finding 3 (privacy): the word after `gh <group>` is free text in real use
+// (a branch name for `gh browse`, a mistyped repo name, an issue title, …) unless it is one
+// of these known read verbs for that group — anything else becomes `*`, in text and in
+// `--json groups[]`. A group missing here always prints `*` (its own next word is never a
+// verb). A write verb (GH_WRITE_VERBS) is excluded before this table is consulted, so it
+// only ever needs to list reads.
+const GH_GROUP_VERBS = {
+  pr: new Set('checks view status list diff'.split(' ')),
+  issue: new Set('view status list'.split(' ')),
+  run: new Set('view watch list'.split(' ')),
+  workflow: new Set('view list'.split(' ')),
+  repo: new Set('view list'.split(' ')),
+  release: new Set('view list'.split(' ')),
+  gist: new Set('view list'.split(' ')),
+  label: new Set('list'.split(' ')),
+  project: new Set('view list'.split(' ')),
+  org: new Set('list'.split(' ')),
+  secret: new Set('list'.split(' ')),
+  variable: new Set('list'.split(' ')),
+  ruleset: new Set('view list'.split(' ')),
+  search: new Set('issues prs repos code'.split(' ')),
+  auth: new Set('status'.split(' ')),
+};
+// gh global/local flags that take a separate value token, skipped along with it when
+// scanning past them for the group/verb words (Slice 31 review finding 7): `-R o/r`,
+// `--repo o/r`, `--hostname h`, wherever they land — `gh -R o/r pr merge`, `gh pr --repo o/r
+// merge`. Any other `-`-flag (`--json`, `-w`, `--repo=o/r`) is skipped alone.
+const GH_VALUE_FLAGS = new Set(['-R', '--repo', '--hostname']);
+// First non-flag word after `gh` is the group; for `api` the rest is the path argument
+// (parsed by ghApiPath); for any other group, the next non-flag word after the group is
+// the verb. Returns `{ group, verb }` or `{ group, restWords }` for `api`; either can be
+// `undefined`/missing when the command has no more words.
+function ghGroupVerb(words) {
+  let i = 1;
+  const skip = () => {
+    while (i < words.length && words[i].startsWith('-')) i += GH_VALUE_FLAGS.has(words[i]) ? 2 : 1;
+  };
+  skip();
+  const group = words[i] !== undefined ? words[i].toLowerCase() : undefined;
+  if (group === undefined) return { group };
+  i++;
+  if (group === 'api') return { group, restWords: words.slice(i) };
+  skip();
+  const verb = words[i] !== undefined ? words[i].toLowerCase() : undefined;
+  return { group, verb };
+}
+// Shape text for a non-`api` `gh <group> <verb>` call: the verb is only printed when it is
+// a known word — that group's own read whitelist, or a write verb (GH_WRITE_VERBS, a bounded
+// vocabulary too, e.g. `gh pr create`) — anything else (Slice 31 review finding 3: a branch
+// name, a mistyped repo name, an issue title, …) falls back to `*`; no verb at all stays as
+// just the group.
+function ghGroupShape(group, verb) {
+  if (verb === undefined) return `gh ${group}`;
+  const known = (GH_GROUP_VERBS[group] && GH_GROUP_VERBS[group].has(verb)) || GH_WRITE_VERBS.has(verb);
+  return `gh ${group} ${known ? verb : '*'}`;
+}
 // REST path words kept in a shape. Any other segment (owner, repo, PR number, SHA, branch,
 // file path, `$VAR`, `<id>`) becomes `*`, so a shape never prints a name — only these words.
 const GH_PATH_WORDS = new Set(('pulls commits check-runs check-suites actions runs jobs logs workflows ' +
@@ -1371,9 +1441,15 @@ const GH_API_VALUE_FLAGS = new Set(['-X', '--method', '-H', '--header', '-f', '-
 // One literal anchor, then one negated class up to the first char that can't be in a URL
 // path in a shell key (whitespace, quote, `?`/`#`, shell metachar) — linear.
 const GH_URL = /api\.github\.com(\/[^\s'"`?#|;&()\\]*)?/gi;
-// A `gh` command start (CMD marker from markCommands()), its first word and the rest of
-// that command up to the next marker — non-overlapping, one negated class, linear.
-const GH_CLI = new RegExp(String.raw`${ANY_CMD}gh +([a-z][\w-]*)([^${NOT_CMD}]*)`, 'g');
+// Each command occurrence in a (possibly compound) key: the text from right after one
+// markCommands() marker to right before the next — one per `&&`/`;`/`|`/subshell-opened
+// command, wrapper words already collapsed into it. One negated class, linear; used to
+// scope write detection to the ONE command it belongs to (Slice 31 review finding 7 — a
+// `grep -x post f && gh pr view` must not read `-x post` as this `gh`'s method flag).
+const CMD_OCC = new RegExp(`${ANY_CMD}([^${NOT_CMD}]*)`, 'g');
+function commandOccurrences(key) {
+  return [...markCommands(String(key)).matchAll(CMD_OCC)].map(m => m[1]);
+}
 function githubPathShape(p) {
   let segs = p.split('/').filter(Boolean);
   if (!segs.length) return null;
@@ -1397,54 +1473,96 @@ function ghApiPath(rest) {
   }
   return '';
 }
-// Command key → the distinct GitHub endpoint shapes it calls: a REST URL's path with ids,
-// owner/repo, branches and paths collapsed to `*` (`commits/*/check-runs`, `pulls/*/merge`,
-// `repos/*` for the repository itself), `gh api <path>` the same way, any other `gh`
-// command as `gh <group> <verb>` (`gh pr checks`). See REFERENCE.md "GH_POLLING".
+// `gh api`'s write test (Slice 31 review finding 2): an explicit write method wins outright;
+// an explicit `--method GET` always reads; otherwise a field flag (`-f`/`-F`/`--field`/
+// `--raw-field`) implies POST — except `graphql`, itself a query endpoint, which is a write
+// only when the body text contains `mutation`.
+function isGhApiWrite(rest) {
+  if (GH_WRITE_METHOD.test(rest)) return true;
+  if (/--method[=\s]+['"]?get\b/i.test(rest)) return false;
+  if (!GH_API_FIELD_FLAG.test(rest)) return false;
+  const path = ghApiPath(rest).replace(/^\/+/, '').toLowerCase();
+  return path === 'graphql' ? /\bmutation\b/i.test(rest) : true;
+}
+// curl's write test (Slice 31 review finding 2): an explicit write method, or a body flag
+// (`-d`/`--data*`) not turned back into a GET by `-G`/`--get`.
+function isCurlWrite(occText) {
+  return GH_WRITE_METHOD.test(occText) || (GH_DATA_FLAG.test(occText) && !GH_GET_FLAG.test(occText));
+}
+// One command occurrence (commandOccurrences()) → its GitHub shape(s) and whether each is a
+// write, scoped to just that command (Slice 31 review finding 1/7) — a REST URL's path with
+// ids, owner/repo, branches and paths collapsed to `*` (`commits/*/check-runs`,
+// `pulls/*/merge`, `repos/*` for the repository itself; write test = isCurlWrite() on this
+// occurrence's own text), `gh api <path>` the same way (write test = isGhApiWrite()), any
+// other `gh` command as `gh <group> <verb>` (write test = GH_WRITE_VERBS, verb printed only
+// if that group's read whitelist has it — GH_GROUP_VERBS, finding 3). `gh` need not open the
+// occurrence (`until gh pr checks 12; do … done` keeps `gh` mid-text). See REFERENCE.md
+// "GH_POLLING".
+function occurrenceGithub(occText) {
+  const out = [];
+  const urls = [...occText.matchAll(GH_URL)];
+  if (urls.length) {
+    const write = isCurlWrite(occText);
+    for (const m of urls) {
+      const s = githubPathShape(m[1] || '');
+      if (s) out.push({ shape: s, isWrite: write });
+    }
+  }
+  const ghAt = /(?:^|\s)gh(?=\s)/i.exec(occText);
+  if (ghAt) {
+    const words = occText.slice(ghAt.index === 0 ? 0 : ghAt.index + 1).trim().split(/\s+/);
+    const { group, verb, restWords } = ghGroupVerb(words);
+    if (group && GH_GROUPS.has(group)) {
+      if (group === 'api') {
+        const rest = (restWords || []).join(' ');
+        out.push({ shape: githubPathShape(ghApiPath(rest)) || 'gh api', isWrite: isGhApiWrite(rest) });
+      } else {
+        out.push({ shape: ghGroupShape(group, verb), isWrite: verb !== undefined && GH_WRITE_VERBS.has(verb) });
+      }
+    }
+  }
+  return out;
+}
+// Command key → the distinct GitHub endpoint shapes it calls, write and read alike (used
+// where read/write doesn't matter, e.g. REFERENCE examples). See occurrenceGithub().
 function githubShapes(key) {
   const out = new Set();
-  for (const m of String(key).matchAll(GH_URL)) {
-    const s = githubPathShape(m[1] || '');
-    if (s) out.add(s);
-  }
-  if (/(?:^|[^\w-])gh /.test(key)) {
-    for (const m of markCommands(key).matchAll(GH_CLI)) {
-      const group = m[1].toLowerCase();
-      if (!GH_GROUPS.has(group)) continue;
-      if (group === 'api') {
-        const s = githubPathShape(ghApiPath(m[2]));
-        out.add(s || 'gh api');
-        continue;
-      }
-      const verb = /^ +([a-z][a-z-]{0,19})(?=\s|$)/.exec(m[2]);
-      out.add(`gh ${group}${verb ? ' ' + verb[1] : ''}`);
-    }
+  for (const occ of commandOccurrences(key)) {
+    for (const { shape } of occurrenceGithub(occ)) out.add(shape);
   }
   return [...out];
 }
-// True when a GitHub call changes state rather than queries it (HITL decision, Slice 31):
-// an explicit write HTTP method (`-X POST`, `--method PUT`, case-insensitive, on a curl or
-// `gh api` call) or a `gh <group> <verb>` whose verb is in GH_WRITE_VERBS (`gh pr merge`,
-// `gh issue create`). No method flag and no matching verb defaults to a read — `gh api
-// repos/o/r/pulls/1` and `gh pr checks`/`view`/`list` all count. Limitation: `gh api -f
-// k=v` implicitly POSTs without `-X`; not detected here (no case in the real-data sample).
+// Command key → only the shapes of its READ (non-write) occurrences — what GH_POLLING
+// counts. A compound call mixing a read and a write (`until gh pr checks 12; do sleep 30;
+// done && gh pr merge 12`, a curl check-runs loop next to `curl -X PUT …/merge`) keeps the
+// read occurrence's shape and drops only the write one (Slice 31 review finding 1), instead
+// of the whole call.
+function githubReadShapes(key) {
+  const out = new Set();
+  for (const occ of commandOccurrences(key)) {
+    for (const { shape, isWrite } of occurrenceGithub(occ)) if (!isWrite) out.add(shape);
+  }
+  return [...out];
+}
+// True when ANY occurrence in this key changes state rather than queries it (HITL decision,
+// Slice 31) — an explicit write HTTP method, an implicit-POST curl body flag, or a `gh
+// <group> <verb>` whose verb is in GH_WRITE_VERBS. No method/body flag and no matching verb
+// defaults to a read. Scoped per occurrence (finding 7), so an unrelated flag elsewhere in
+// the same compound command (`grep -x post f && gh pr view`) can't false-positive this.
 function isGhWrite(key) {
-  const s = String(key);
-  if (GH_WRITE_METHOD.test(s)) return true;
-  if (/(?:^|[^\w-])gh /.test(s)) {
-    for (const m of markCommands(s).matchAll(GH_CLI)) {
-      const verb = /^ +([a-z][a-z-]{0,19})(?=\s|$)/.exec(m[2]);
-      if (verb && GH_WRITE_VERBS.has(verb[1].toLowerCase())) return true;
-    }
+  for (const occ of commandOccurrences(key)) {
+    if (occurrenceGithub(occ).some(o => o.isWrite)) return true;
   }
   return false;
 }
 // GitHub polling in this window: Bash/PowerShell calls of a GH_POLL_CATEGORIES category,
-// grouped by githubShapes() over ALL sessions and subagents (sessionKey) — not per session
-// like POLLING, so a few calls per subagent across many subagents add up. A shape with
-// >= GH_POLL_MIN_CALLS calls is a hit. Per group: calls, sessions (main + subagent),
+// grouped by githubReadShapes() over ALL sessions and subagents (sessionKey) — not per
+// session like POLLING, so a few calls per subagent across many subagents add up. A shape
+// with >= GH_POLL_MIN_CALLS calls is a hit. Per group: calls, sessions (main + subagent),
 // subagents, cost = 1/n of each n-call turn (as in activity()), share = of window spend.
-// Top-level totals count a call once even when it hits two shapes. Most expensive first.
+// Top-level totals count a call once even when it hits two shapes (or a read and a write in
+// the same call — the write contributes no shape, so it never inflates the count). Most
+// expensive first.
 function ghPolling(rows) {
   const groups = new Map();
   const found = []; // { shapes, part, sk, isSub } per call with a shape
@@ -1453,8 +1571,7 @@ function ghPolling(rows) {
     total += r.cost;
     for (const c of r.calls) {
       if (!SHELL_TOOLS.has(c.tool) || !GH_POLL_CATEGORIES.has(categorize(c))) continue;
-      if (isGhWrite(c.key)) continue;
-      const shapes = githubShapes(c.key);
+      const shapes = githubReadShapes(c.key);
       if (!shapes.length) continue;
       const call = { shapes, part: r.cost / r.calls.length, sk: sessionKey(r), isSub: r.isSub };
       found.push(call);
@@ -2219,7 +2336,7 @@ async function main() {
 if (require.main === module) main();
 module.exports = {
   projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, githubShapes,
-  isGhWrite, GH_POLL_MIN_CALLS,
+  githubReadShapes, isGhWrite, GH_POLL_MIN_CALLS,
   rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags, appendFlagsMore,
   familyLine, renderDetail,
   SUMMARY_MAX_LINES, DETAIL_MAX_LINES,

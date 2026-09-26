@@ -204,6 +204,10 @@ test('summary FLAGS: top 4 by rank, "+N more" names the rest (DETAIL / --json vs
     'PLUGIN_BLOAT'];
   const want = ranked.slice(0, 4);
   const moved = ranked.slice(4);
+  // Review finding 8: explicit assert alongside the computed `ranked` order above — tier 0
+  // now has 4 members (REGRESSION/POLLING/BOILERPLATE/GH_POLLING) in this fixture, filling
+  // every top-4 slot, so LONG_AGENT is pushed out to "+N more" (the comment above).
+  assert.ok(!want.includes('LONG_AGENT') && moved.includes('LONG_AGENT'), want.join(','));
   const sum = summaryLines(auditText(dir, '--days', '7'));
   assert.deepEqual(flagRows(sum), want, sum.join('\n'));
   const more = `  … +${moved.length} more: ${moved.join(', ')}`;

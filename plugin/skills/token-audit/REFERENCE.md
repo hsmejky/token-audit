@@ -253,9 +253,9 @@ own `script run` activity category (below) and leaving it out of `POLL_CATEGORIE
 `check-runs` + 23 `actions/runs` + 107 `pulls` calls, ~$33 = 2.5% of the second project's spend) still
 does not trip `POLLING` even at N = 10 — it is spread over 33 sessions (max 8 calls/session)
 behind ~87 distinct per-call keys (a fresh PR/commit id each time), so no single key repeats
-enough in one session. A cross-session version of this detector — flagging the same
-polling shape spread across many sessions instead of repeated within one — is out of
-scope for a per-session threshold and remains a possible future addition.
+enough in one session. `GH_POLLING` (Slice 31) is that cross-session detector — flagging the
+same polling shape spread across many sessions instead of repeated within one; see its own
+section below.
 
 **Do:** turn the wait into one waiting turn instead of dozens:
 - `gh pr checks --watch` (or `gh run watch`) — blocks until CI finishes, one call, one turn.
@@ -497,23 +497,41 @@ spend; top 37× pulls +4 more`. `--json`: the flag carries `calls`, `sessions`, 
 expensive first. Tier 0 like `POLLING`, `amount` = the cost of those calls' turns.
 
 - **Counted calls**: Bash/PowerShell calls in the `wait/poll` or `github` activity category
-  that name a GitHub endpoint *and query state rather than change it* (HITL decision).
-  `-X POST`/`PUT`/`PATCH`/`DELETE` (or `--method` with one of those, case-insensitive) and a
-  `gh <group> <verb>` whose verb writes (`create`, `merge`, `close`, `edit`, `comment`,
-  `reopen`, `rerun`, …) are excluded even though their category is still `wait/poll`/`github`;
-  no method flag and no matching verb defaults to a read. So `gh pr checks`/`view`, `gh run
-  view`/`watch`, a bare `gh api repos/…/pulls/1` and any GET curl count; `gh pr create`,
-  `gh pr merge`, `gh issue create`, `pulls/*/merge` and any explicit write method never do,
-  however many times they run. `git push`, a plain `sleep`, `Monitor` never count either.
-- **Endpoint shape** (`githubShapes()`): an `api.github.com/<path>` URL loses `repos/<owner>/
-  <repo>/` and its query; every other segment that is not a known REST word (`pulls`,
-  `commits`, `check-runs`, `actions`, `runs`, `jobs`, `merge`, `branches`, …) becomes `*`,
-  consecutive `*` collapse — `…/commits/<sha|branch|$SHA>/check-runs` → `commits/*/check-runs`,
-  `…/pulls/4242/merge` → `pulls/*/merge`, the repository itself → `repos/*`. `gh api <path>`
-  gets the same path shape; any other `gh` call is `gh <group> <verb>` (`gh pr checks`,
-  `gh run view`). Only whitelisted words are ever printed, so a shape never carries an owner,
-  repo, branch, file path or id. One literal anchor plus one negated character class per
-  pattern — linear on 200k-char input.
+  that name a GitHub endpoint *and query state rather than change it* (HITL decision),
+  decided **per command occurrence, not per whole Bash call** (review finding 1/7) — a
+  compound call mixing a read and a write (`until gh pr checks 12; do sleep 30; done && gh
+  pr merge 12`, a `check-runs` curl loop next to a `curl -X PUT …/merge`) keeps the read
+  occurrence's shape and drops only the write one; a write-method regex match in one
+  occurrence (e.g. an unrelated `grep -x post f`) never taints another occurrence in the
+  same call. A write is: an explicit `-X`/`--request`/`--method` `POST`/`PUT`/`PATCH`/
+  `DELETE` (case-insensitive, fused or spaced, `=` or space before the value); a curl
+  `-d`/`--data`/`--data-raw`/`--data-binary`/`--data-urlencode` body with no `-G`/`--get`
+  (implicit POST); a `gh <group> <verb>` whose verb writes (`create`, `merge`, `close`,
+  `edit`, `comment`, `reopen`, `rerun`, `run` — only for `gh workflow run` — `set` — `gh
+  secret|variable set` — `fork` — `gh repo fork` — …); or `gh api` with `-f`/`-F`/
+  `--field`/`--raw-field` and no explicit `--method GET` (implicit POST) — **except** `gh
+  api graphql -f query=…`, itself a query endpoint, which is a write only when the query
+  text contains `mutation`. No method/body flag and no matching verb/field defaults to a
+  read. So `gh pr checks`/`view`, `gh run view`/`watch`, a bare `gh api repos/…/pulls/1`,
+  a **GET** on `pulls/N/merge` (checking mergeability) and any other GET curl count; `gh pr
+  create`, `gh pr merge`, `gh issue create`, a **write** (`PUT`) to `pulls/*/merge` and any
+  other explicit write method never do, however many times they run. `git push`, a plain
+  `sleep`, `Monitor` never count either.
+- **Endpoint shape** (`githubShapes()`/`githubReadShapes()`): an `api.github.com/<path>` URL
+  loses `repos/<owner>/<repo>/` and its query; every other segment that is not a known REST
+  word (`pulls`, `commits`, `check-runs`, `actions`, `runs`, `jobs`, `merge`, `branches`, …)
+  becomes `*`, consecutive `*` collapse — `…/commits/<sha|branch|$SHA>/check-runs` →
+  `commits/*/check-runs`, `…/pulls/4242/merge` → `pulls/*/merge`, the repository itself →
+  `repos/*`. `gh api <path>` gets the same path shape; any other `gh` call is `gh <group>
+  <verb>` (`gh pr checks`, `gh run view`), the group and verb read past any flag that comes
+  before them (`gh -R o/r pr merge`, `gh pr --repo o/r merge` — review finding 7). The verb
+  is only printed when it is on that group's own read-verb whitelist or a known write verb
+  (`gh pr create`); any other word — a branch name (`gh browse <branch>`), a mistyped repo
+  name (`gh repo <name>`), an issue title, … — becomes `*` instead (review finding 3,
+  privacy: `gh browse fix-login-bug` → `gh browse *`, never the branch name, in text or
+  `--json groups[]`). Only whitelisted words are ever printed, so a shape never carries an
+  owner, repo, branch, file path or id. One literal anchor plus one negated character class
+  per pattern — linear on 200k-char input.
 - **Hit**: a shape with ≥ `GH_POLL_MIN_CALLS` calls in the window (a named constant; a count
   per window, so `--days 30` sees roughly twice the calls of the default 14 days). A call that
   hits two shapes counts in both groups and once in the flag totals. In `--all` scope a shape
@@ -537,18 +555,25 @@ poll; ≤ 5 starts flagging auth checks (`gh auth status`, `user`) — false pos
 polling, so 20 is comfortably clear of that floor too.
 
 **Scope — reads only (HITL decision).** Write calls (`gh pr create`/`merge`, `gh issue
-create`, any explicit `-X POST`/`PUT`/`PATCH`/`DELETE`) are excluded from `GH_POLLING`
-regardless of category, per the "Counted calls" rule above. Re-measured on the same
-all-history data with writes excluded (`--all --days 3650`): only 2 shapes now clear
-`T = 20` — `commits/*/check-runs` (73 calls) and `pulls/*` (20 GET calls) — 87 calls, 33
-sessions (13 subagents), $8.56 = 0.65 % of the second project's spend (all of it; 0 hits in
-any other project). That is roughly a third of the earlier writes-included figure (5 shapes,
-183 calls, 46 sessions, $25.8 = 1.96 %) — the flag now measures spread-out CI/status
-polling specifically, not general `gh`/API traffic. At lower T the same reads-only data
-gives: `T=5` 6 shapes, 118 calls, $12.24 (0.09 %); `T=10` 3 shapes, 102 calls, $10.40
-(0.08 %); `T=30`/`T=40` 1 shape (the 73 `check-runs`), $7.17 (0.05 %). `T=20` still lands in
-the same 10–25 empty band as before, so the finalized value is unchanged by the scope
-decision.
+create`, any explicit write method or body, per the extended "Counted calls" rule above) are
+excluded from `GH_POLLING` regardless of category, decided per occurrence (review finding
+1/7), not per whole call. Re-measured on the same all-history data with writes excluded and
+the review fixes live (`--all --days 3650`): 3 shapes clear `T = 20` — `commits/*/
+check-runs` (76 calls), `repos/*` (28 GET calls) and `pulls/*` (23 GET calls) — 121 calls, 37
+sessions (13 subagents), $13.67 = 1.03 % of the second project's spend (all of it; 0 hits in
+any other project). That is higher than this same reads-only measurement before the review
+fixes (2 shapes, 87 calls, 33 sessions, $8.56 = 0.65 %) — the per-call exclusion had been
+dropping whole compound calls (a read loop next to an unrelated write, or a write-verb regex
+tripped by an unrelated flag elsewhere in the same call) that the per-occurrence fix now
+correctly keeps the read part of. Against the writes-included figure from before the reads-
+only scope decision (5 shapes, 183 calls, 46 sessions, $25.8 = 1.96 %) it is a bit over half —
+the flag still measures spread-out CI/status polling specifically, not general `gh`/API
+traffic. At lower T the same reads-only, review-fixed data gives: `T=5` 5 shapes, 132 calls,
+$14.78 (1.12 %); `T=10` 3 shapes, 121 calls, $13.67 (1.03 %, same as `T=20`); `T=30`/`T=40` 1
+shape (the 76 `check-runs`), $7.55 (0.57 %). `T=20` still lands in the same empty band
+between the largest ordinary shape and the case shapes as before, so the finalized value is
+unchanged by either the scope decision or the review fixes — only the flag's reported impact
+changed.
 
 **Playbook**: install and authenticate `gh` (removes the per-call `git credential fill` +
 `curl` + JSON-body boilerplate) and wait with one call — `gh pr checks --watch`,
@@ -872,7 +897,7 @@ of the second project's spend, screenshots ≈ 2.6%. Measured with the finished 
   itself a wait. No bug — a definition gap, not a measurement gap. This case (89 `check-runs`
   + 23 `actions/runs` + 107 `pulls`, ~$33 = 2.5% of the second project's spend, spread across 33
   sessions with ≤ 8 calls/session and ~87 distinct keys) is also why `POLLING` itself never
-  fires on it — catching this would need a cross-session detector, out of scope here.
+  fires on it — `GH_POLLING` (Slice 31) is the cross-session detector that catches it.
 - **Screenshots: `screenshot/image` table row = 4.89% of the second project's spend.** Higher than the
   2.6% hand estimate because the table charges the *whole turn* (full context) to the
   category, not just the image's own tokens. A second, narrower measure — the tokens a
