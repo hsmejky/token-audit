@@ -113,10 +113,10 @@ one `… +N more: IDs` line for the rest:
 | 4 — no dollar figure | `BIG_CTX`, `PLUGIN_BLOAT` | id |
 | 5 | `CLEAN` | — |
 
-Tier 0 holds the flags whose saving design decision Q5 defines: `REGRESSION`'s `amount` is the extra
+Tier 0 holds the flags whose saving design decision Q-B (Slice 28) defines: `REGRESSION`'s `amount` is the extra
 cost vs the previous window's cost/message, `cur.cost − prev.costPerMsg × cur.msgs` (clamped
 ≥ 0); `POLLING`/`BOILERPLATE`/`GH_POLLING`'s is the cost of those turns (the saving's upper bound, see
-below). Design decision Q5 defines no saveable part for `OPUS_HEAVY` (its `amount` is all Opus spend)
+below). Design decision Q-B defines no saveable part for `OPUS_HEAVY` (its `amount` is all Opus spend)
 or `CONCENTRATION` (top-5 session spend), nor for `LONG_AGENT`/`LONG_SESSION`/`MULTIDAY`
 (their flagged spend), so those rank by the fixed tier and use `amount` only as a tie-break
 inside a tier — a large Opus bill never outranks a smaller extra-cost flag. Ties fall back to
@@ -613,7 +613,7 @@ history nobody is reading. Correlates with context rot — quality drops with it
 context 185k → 112k, cost per message halved, 4.4× more messages handled per week at
 2.5× the cost, with quality up rather than down.
 
-### `CONCENTRATION` — top 5 sessions ≥ 50 % of spend
+### `CONCENTRATION` — top 5 sessions > 50 % of spend
 
 Confirms the distribution is the problem, not the volume. Fixing the handful of long
 sessions moves the total; trimming everything else does not.
@@ -636,8 +636,8 @@ mechanics.
 
 **Do:**
 - Opus: `/grill-me`, `/review`, `/review-design`, `/review-plan`, orchestrating `/tdd`.
-- Sonnet: `/commit`, `/gitlab-issue`, changelogs, scaffolding, CI YAML fixes, mechanical
-  TDD loops, anything with a known shape.
+- Sonnet: `/commit`, opening issues/tickets, changelogs, scaffolding, CI YAML fixes,
+  mechanical TDD loops, anything with a known shape.
 
 Switch per phase with `/model`, not globally in `settings.json`.
 
@@ -736,6 +736,14 @@ not duplicated here.
 > 79.6 % / 20.4 % main/subagent split, sessions ≥ 250 msgs at 57.5 % of spend — do not
 > read a trend into old-baseline vs. this table; the dedupe fix and threshold re-tune
 > (Slices 2 and 15) both moved the numbers.
+>
+> **To check the dedupe factor on your own machine:** run
+> `node token-audit.js --all --days 3650 --json` and read `cur.msgs` from the output,
+> then separately count the JSONL lines across your `~/.claude/projects/**/*.jsonl` files
+> whose parsed `message` object has a `usage` field (that key marks an assistant-response
+> line, the thing the pre-dedupe count over-counted). The ratio of that line count to
+> `cur.msgs` is your machine's dedupe factor — it will differ from the figures above,
+> which are this machine's history, not a fixed constant.
 
 ## Summary layout (Slice 28)
 

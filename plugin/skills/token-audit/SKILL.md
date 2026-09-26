@@ -23,8 +23,9 @@ Requires Node.js 18 or newer.
 node <skill-dir>/scripts/token-audit.js --days 14
 ```
 `<skill-dir>` = `${CLAUDE_PLUGIN_ROOT}/skills/token-audit` if plugin, else this
-folder. `--top N` sessions (def 8) · `--json` · `--no-detail` (drop the DETAIL block below
-the summary: top subagents by cost with their task text). ~30-60s. Read-only.
+folder. `--top N` sessions (def 8, `--json` only) · `--json` · `--no-detail` (drop the DETAIL block below
+the summary: top work units, top subagents by cost with task text, subagent turn/peak-ctx
+distribution, and a cost-by-activity table — see "Report shape" below). ~30-60s. Read-only.
 
 Scope defaults to the **current project** (cwd mapped to its `projects/` folder name).
 `--project <path>` audits a different project; `--all` audits every project (habits differ
@@ -62,10 +63,10 @@ Banner first — verdict felt before a number is read. Box chars only, no emoji:
   no flag fired             beat prev window          cost/msg up >25%
 ```
 
-Then trend — one sparkline, oldest→newest, ▁▂▃▄▅▆▇█ scaled to $/week:
+Then trend — one line, first week vs last week cost/msg, the % change and the span:
 
 ```
-TREND   ▇▆▅▃▃▂▁   6wk, $/msg   ↓ falling = good, say the direction in prose
+TREND        2026-05-04 $0.12/msg → 2026-06-15 $0.09/msg -25%   span 6 wk (6 with data)
 ```
 
 Then data, fixed-width labels so it scans as a table:
