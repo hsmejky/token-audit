@@ -2001,11 +2001,15 @@ function continuedFlagLines(moved, room) {
 // mid-level bar per point instead of dividing by zero. Pure and unbounded — trendLine() below
 // is the one that caps how many points it feeds this, to stay inside the line-width budget.
 const SPARK_LEVELS = '▁▂▃▄▅▆▇█';
+// Shared by sparkline() (scales against its own input) and withSpark() (scales against the full
+// series while rendering only a trailing slice of it) so both round the same way.
+function sparkLevel(v, min, max) {
+  return max === min ? 3 : Math.round((v - min) / (max - min) * (SPARK_LEVELS.length - 1));
+}
 function sparkline(values) {
   if (!values.length) return '';
   const min = Math.min(...values), max = Math.max(...values);
-  if (max === min) return SPARK_LEVELS[3].repeat(values.length);
-  return values.map(v => SPARK_LEVELS[Math.round((v - min) / (max - min) * (SPARK_LEVELS.length - 1))]).join('');
+  return values.map(v => SPARK_LEVELS[sparkLevel(v, min, max)]).join('');
 }
 // Caps the sparkline to whatever room is left once the rest of the TREND line (built without
 // it) is measured, so the line stays inside the 120-char budget by construction no matter how
@@ -2017,7 +2021,13 @@ function withSpark(line, costsPerMsg) {
   const room = 120 - [...line].length - 1; // 1 for the separating space
   const n = Math.max(0, Math.min(room, MAX_SPARK_POINTS, costsPerMsg.length));
   if (n < 1) return line;
-  const spark = sparkline(costsPerMsg.slice(-n));
+  // Scale against the FULL series, not just the trailing slice shown: otherwise a flat run at
+  // the tail of a series with a wide overall range (e.g. a sharp drop that then holds steady)
+  // prints a flat mid-level bar instead of reflecting how low that run actually is relative to
+  // the rest of the history (review finding: a trailing flat low run next to a big "-99%" used
+  // to print unchanged mid-level bars).
+  const min = Math.min(...costsPerMsg), max = Math.max(...costsPerMsg);
+  const spark = costsPerMsg.slice(-n).map(v => SPARK_LEVELS[sparkLevel(v, min, max)]).join('');
   return line.replace('TREND        ', `TREND        ${spark} `);
 }
 // TREND: one line for the whole history. "span N wk" = calendar weeks

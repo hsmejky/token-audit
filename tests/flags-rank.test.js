@@ -128,6 +128,42 @@ test('trendLine: no data -> no sparkline at all', () => {
   assert.equal(trendLine([]), 'TREND        no data');
 });
 
+// Review finding: withSpark() used to scale the shown bars against just the trailing slice it
+// renders, not the full series — a flat run at the tail of a series with a wide overall range
+// printed unchanged mid-level bars instead of the lowest level. These extract the bar run from
+// TREND's sparkline (everything between the label and the first plain-text field) to check it.
+const sparkOf = line => line.match(/^TREND {8}([▁▂▃▄▅▆▇█]+) /)[1];
+const weeklyDates = (n, start = '2026-01-05') => Array.from({ length: n }, (_, i) => {
+  const d = new Date(Date.parse(`${start}T00:00:00Z`) + i * 7 * 86400000);
+  return d.toISOString().slice(0, 10);
+});
+
+test('withSpark: a flat low tail after a high spike shows the lowest level, not a flat mid bar', () => {
+  const dates = weeklyDates(20);
+  const wks = dates.map((d, i) => wk(d, i < 8 ? 1.00 : 0.01));
+  const bars = sparkOf(trendLine(wks));
+  assert.equal(bars, '▁'.repeat(bars.length));
+  assert.ok(bars.length >= 1, bars);
+});
+
+test('withSpark: never shows more than MAX_SPARK_POINTS (12) bars, whatever the history length', () => {
+  const dates = weeklyDates(60);
+  const wks = dates.map((d, i) => wk(d, (i % 7) + 1));
+  const bars = sparkOf(trendLine(wks));
+  assert.ok(bars.length <= 12, bars.length);
+});
+
+test('withSpark: shows the most recent weeks, scaled against the full series (not the tail alone)', () => {
+  const dates = weeklyDates(20);
+  const wks = dates.map((d, i) => wk(d, i)); // costPerMsg 0..19, monotonically increasing
+  const bars = sparkOf(trendLine(wks));
+  const n = bars.length;
+  const tail = Array.from({ length: n }, (_, i) => 20 - n + i); // the last n week indices, in order
+  const expected = tail.map(v => SPARK_LEVELS_FOR_TEST[Math.round((v - 0) / (19 - 0) * 7)]).join('');
+  assert.equal(bars, expected);
+});
+const SPARK_LEVELS_FOR_TEST = '▁▂▃▄▅▆▇█';
+
 test('trendLine: sparkline never pushes the line over the 120-char budget, however much history', () => {
   // A long span, many weeks with data, and large costPerMsg swings (wide money() output) —
   // the worst case for the fixed 120-char line budget.
