@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir } = require('./harness');
-const { commandKey, githubShapes, githubReadShapes, isGhWrite, rankFlags, GH_POLL_MIN_CALLS } =
+const { commandKey, activityCategory, githubShapes, githubReadShapes, isGhWrite, rankFlags, GH_POLL_MIN_CALLS } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 31: GH_POLLING = GitHub read (state-query) calls (wait/poll + github categories,
@@ -106,6 +106,25 @@ test('GH_POLLING: N−1 calls do not fire (>= boundary), however many sessions',
 test('GH_POLLING: counts only wait/poll + github calls — git push / plain sleep never count', () => {
   const files = spread(3 * N, 3, i => (i % 2 ? `git push origin feature-${i}` : `sleep ${i}`));
   assert.equal(ghFlag(audit(tmpClaudeDir(files))), undefined);
+});
+
+// Slice 32 fix: earlier tests only ran isGhWrite() on a raw command string (curl/gh
+// resolved by basename there already). This drives the SAME unquoted absolute path through
+// commandKey() -> activityCategory() (the `${ANY_CMD}gh `/`api.github.com` category rule)
+// and then the full audit pipeline, to confirm a path-invoked curl is still classified
+// `github` (not `other`, which GH_POLL_CATEGORIES would silently drop — see roadmap.md) and
+// still trips GH_POLLING end to end.
+test('GH_POLLING: curl invoked by an unquoted absolute path still categorizes as `github` ' +
+  'and fires the flag', () => {
+  const cmd = i => String.raw`C:\tools\curl.exe -s https://api.github.com/repos/jdoe/demo-proj/` +
+    `pulls/${4000 + i}`;
+  assert.equal(activityCategory('Bash', { command: cmd(1) }), 'github');
+  const r = audit(tmpClaudeDir(spread(N, 3, cmd)));
+  const f = ghFlag(r);
+  assert.ok(f, JSON.stringify(r.flags.map(x => x.id)));
+  assert.equal(f.calls, N);
+  assert.equal(f.groups.length, 1);
+  assert.equal(f.groups[0].shape, 'pulls/*');
 });
 
 // HITL decision: GH_POLLING counts state queries (reads) only, not writes.
