@@ -6,11 +6,9 @@ description: >
   session concentration and week-over-week trend, inspects settings.json and
   installed plugins for config drift, flags transcript-retention risk
   separately as a confidentiality issue (not cost), and returns a ranked
-  list of concrete habit fixes. Use when user says "token audit", "tokenomics", "check my
-  claude usage", "how many tokens am I burning", "where do my tokens go",
-  "am I wasting tokens", "cost report", "usage report", "weekly claude
-  checkup", "why did I hit the limit", asks how to spend fewer tokens or
-  make Claude Code cheaper, or invokes /token-audit.
+  list of concrete habit fixes.
+argument-hint: "[--days N] [--project <path>] [--all] [--no-detail] [--top N] [--claude-dir <path>]"
+disable-model-invocation: true
 ---
 
 # Token audit
@@ -38,7 +36,13 @@ per project — don't mix them by default).
  script   REFERENCE.md   top 3 only    vs prev + wk    ≤24 lines  never apply
 ```
 
-1. Run script, default window, full text output.
+1. Run the script. `$ARGUMENTS` is whatever the user typed after `/token-audit`, and it lands
+   in a shell command — never forward it verbatim. Pass through only the flags the script
+   accepts (`--days N`, `--project <path>`, `--all`, `--no-detail`, `--top N`,
+   `--claude-dir <path>`); drop anything else in `$ARGUMENTS`, recognized or not. Refuse
+   `--json`: it doesn't fit the summary's line budget here — tell the user to run the script
+   directly instead (see the README's "Machine-readable export"). With no recognized flags in
+   `$ARGUMENTS`, fall back to the default window, full text output.
 2. Each FLAGS id → playbook entry in [REFERENCE.md](REFERENCE.md). The summary shows as many as
    fit (ranked by extra cost, then fixed priority; typically 4-5, see REFERENCE.md "Summary cap
    and ranking"); the `… +N more: IDs` line names the rest, printed in full under
@@ -63,10 +67,11 @@ Banner first — verdict felt before a number is read. Box chars only, no emoji:
   no flag fired             beat prev window          cost/msg up >25%
 ```
 
-Then trend — one line, first week vs last week cost/msg, the % change and the span:
+Then trend — one line: a sparkline over the weeks with data, first week vs last week cost/msg,
+the % change and the span:
 
 ```
-TREND        2026-05-04 $0.12/msg → 2026-06-15 $0.09/msg -25%   span 6 wk (6 with data)
+TREND        ▅█▆▂▁ 2026-05-04 $0.120/msg → 2026-06-15 $0.090/msg -25%   span 7 wk (5 with data)   full table in --json
 ```
 
 Then data, fixed-width labels so it scans as a table:
