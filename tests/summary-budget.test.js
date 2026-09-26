@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { audit, auditText, tmpClaudeDir, tmpUserConfig } = require('./harness');
-const { fitFlags, flagsMoreLine, continuedFlagLines, appendFlagsMore, familyLine, renderDetail } =
+const { fitFlags, flagsMoreLine, continuedFlagLines, appendFlagsMore, familyLine, renderDetail,
+  GH_POLL_MIN_CALLS } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
 // Slice 28 / design decision Q3: the summary (everything above DETAIL) stays
@@ -31,10 +32,11 @@ const credCurl = i => `${CRED} && curl -s https://api.github.com/repos/o/r/pulls
 
 function everySection({ mcp = 8, unknownModels = 3 } = {}) {
   const files = {
-    // LONG_SESSION (≥250 msgs), POLLING (same command ≥20× in one session)
+    // LONG_SESSION (≥250 msgs), POLLING (same command ≥20× in one session), GH_POLLING (Slice 31:
+    // one GitHub endpoint shape ≥ GH_POLL_MIN_CALLS calls in the window, whatever that threshold is)
     'projects/C--proj-a/long.jsonl': [
       ...many(260, 'long'),
-      ...many(25, 'poll', { commands: ['gh api repos/o/r/commits/abc/check-runs'] }),
+      ...many(Math.max(25, GH_POLL_MIN_CALLS), 'poll', { commands: ['gh api repos/o/r/commits/abc/check-runs'] }),
     ],
     // MULTIDAY (span >1 day)
     'projects/C--proj-a/multi.jsonl': [...t('md-0', { ts: NOW - 5 * DAY }), ...t('md-1', { ts: NOW - DAY })],
@@ -86,8 +88,8 @@ function section(lines, headerRe) {
 test('fixture fires every section: all cost flags, UNPRICED, MCP, 3-model effortLevel, NO_RETENTION', () => {
   const r = audit(everySection(), '--days', '7');
   const ids = r.flags.map(f => f.id).sort();
-  assert.deepEqual(ids, ['BIG_CTX', 'BOILERPLATE', 'CONCENTRATION', 'LONG_AGENT', 'LONG_SESSION', 'MULTIDAY',
-    'OPUS_HEAVY', 'PLUGIN_BLOAT', 'POLLING', 'REGRESSION'], JSON.stringify(r.flags, null, 1));
+  assert.deepEqual(ids, ['BIG_CTX', 'BOILERPLATE', 'CONCENTRATION', 'GH_POLLING', 'LONG_AGENT', 'LONG_SESSION',
+    'MULTIDAY', 'OPUS_HEAVY', 'PLUGIN_BLOAT', 'POLLING', 'REGRESSION'], JSON.stringify(r.flags, null, 1));
   assert.deepEqual(r.securityFlags.map(f => f.id), ['NO_RETENTION']);
   assert.equal(r.unpriced.length, 3);
   assert.equal(r.config.mcpServers.length, 8);
@@ -195,13 +197,16 @@ const flagRows = lines => section(lines, /^FLAGS$/).slice(1).filter(l => /^ {2}[
 test('summary FLAGS: top 4 by rank, "+N more" names the rest (DETAIL / --json vs --json)', () => {
   const dir = everySection();
   const r = audit(dir, '--days', '7');
-  const tier0 = r.flags.filter(x => ['REGRESSION', 'POLLING', 'BOILERPLATE'].includes(x.id))
-    .sort((a, b) => b.amount - a.amount).map(x => x.id);
-  const want = [...tier0, 'LONG_AGENT'];
-  const moved = ['LONG_SESSION', 'MULTIDAY', 'OPUS_HEAVY', 'CONCENTRATION', 'BIG_CTX', 'PLUGIN_BLOAT'];
+  const tier0 = r.flags.filter(x => ['REGRESSION', 'POLLING', 'BOILERPLATE', 'GH_POLLING'].includes(x.id))
+    .sort((a, b) => b.amount - a.amount || (a.id < b.id ? -1 : 1)).map(x => x.id); // rankFlags() order
+  // Slice 31: GH_POLLING joined tier 0, so the 4 rows are all tier 0 and LONG_AGENT moves too.
+  const ranked = [...tier0, 'LONG_AGENT', 'LONG_SESSION', 'MULTIDAY', 'OPUS_HEAVY', 'CONCENTRATION', 'BIG_CTX',
+    'PLUGIN_BLOAT'];
+  const want = ranked.slice(0, 4);
+  const moved = ranked.slice(4);
   const sum = summaryLines(auditText(dir, '--days', '7'));
   assert.deepEqual(flagRows(sum), want, sum.join('\n'));
-  const more = `  … +6 more: ${moved.join(', ')}`;
+  const more = `  … +${moved.length} more: ${moved.join(', ')}`;
   assert.ok(sum.includes(`${more} (DETAIL / --json)`), sum.join('\n'));
   const compact = auditText(dir, '--days', '7', '--no-detail').split('\n');
   assert.ok(compact.includes(`${more} (--json)`), compact.join('\n'));

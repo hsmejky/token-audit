@@ -1334,12 +1334,128 @@ function boilerplate(rows) {
       cost: g.cost, share: total ? g.cost / total : 0 }))
     .sort((a, b) => b.cost - a.cost || b.sessions - a.sessions || (a.prefix < b.prefix ? -1 : 1)) };
 }
+// ------------------------------------------------------------ GitHub polling
+// GH_POLLING threshold (Slice 31) — PROVISIONAL, awaiting the user's HITL choice from
+// real-data percentiles (see REFERENCE.md "GH_POLLING"). One endpoint shape with >= N
+// calls summed over every session and subagent in the window fires, however few of them
+// land in any one session.
+const GH_POLL_MIN_CALLS = 20;
+// Same two categories Slice 15 considered for a per-session any-key count: a status poll
+// (`check-runs`, `actions/runs`, `gh pr checks`, `gh run view`) is wait/poll, any other
+// `api.github.com` / `gh` call is github. Everything else (git push, plain sleep) never counts.
+const GH_POLL_CATEGORIES = new Set(['wait/poll', 'github']);
+// REST path words kept in a shape. Any other segment (owner, repo, PR number, SHA, branch,
+// file path, `$VAR`, `<id>`) becomes `*`, so a shape never prints a name — only these words.
+const GH_PATH_WORDS = new Set(('pulls commits check-runs check-suites actions runs jobs logs workflows ' +
+  'artifacts attempts rerun cancel dispatches secrets variables merge reviews comments issues labels ' +
+  'milestones assignees events timeline branches protection contents readme releases latest tags ' +
+  'statuses status git refs heads trees blobs rulesets deployments environments hooks collaborators ' +
+  'compare files requested_reviewers repos user users orgs teams members graphql repositories search ' +
+  'code settings billing notifications gists forks stargazers topics languages pages rate_limit').split(' '));
+// `gh` command groups kept in a shape (`gh pr checks`); an unknown word is not printed.
+const GH_GROUPS = new Set(('alias api attestation auth browse cache codespace config copilot extension gist ' +
+  'issue label org pr project release repo ruleset run search secret ssh-key status variable ' +
+  'workflow').split(' '));
+// `gh api` flags that take a value, skipped when looking for the path argument.
+const GH_API_VALUE_FLAGS = new Set(['-X', '--method', '-H', '--header', '-f', '--raw-field', '-F', '--field',
+  '-q', '--jq', '-t', '--template', '--input', '-p', '--preview', '--hostname', '--cache']);
+// One literal anchor, then one negated class up to the first char that can't be in a URL
+// path in a shell key (whitespace, quote, `?`/`#`, shell metachar) — linear.
+const GH_URL = /api\.github\.com(\/[^\s'"`?#|;&()\\]*)?/gi;
+// A `gh` command start (CMD marker from markCommands()), its first word and the rest of
+// that command up to the next marker — non-overlapping, one negated class, linear.
+const GH_CLI = new RegExp(String.raw`${ANY_CMD}gh +([a-z][\w-]*)([^${NOT_CMD}]*)`, 'g');
+function githubPathShape(p) {
+  let segs = p.split('/').filter(Boolean);
+  if (!segs.length) return null;
+  if (segs[0].toLowerCase() === 'repos') {
+    if (segs.length <= 3) return 'repos/*'; // the repository itself (metadata, settings)
+    segs = segs.slice(3); // owner/repo are never printed
+  }
+  const out = [];
+  for (const s of segs) {
+    const w = GH_PATH_WORDS.has(s.toLowerCase()) ? s.toLowerCase() : '*';
+    if (w !== '*' || out[out.length - 1] !== '*') out.push(w);
+  }
+  return out.join('/');
+}
+function ghApiPath(rest) {
+  const words = rest.trim().split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    if (GH_API_VALUE_FLAGS.has(words[i])) { i++; continue; }
+    if (words[i].startsWith('-')) continue;
+    return words[i].replace(/^["']|["']$/g, '').split(/[?#]/)[0];
+  }
+  return '';
+}
+// Command key → the distinct GitHub endpoint shapes it calls: a REST URL's path with ids,
+// owner/repo, branches and paths collapsed to `*` (`commits/*/check-runs`, `pulls/*/merge`,
+// `repos/*` for the repository itself), `gh api <path>` the same way, any other `gh`
+// command as `gh <group> <verb>` (`gh pr checks`). See REFERENCE.md "GH_POLLING".
+function githubShapes(key) {
+  const out = new Set();
+  for (const m of String(key).matchAll(GH_URL)) {
+    const s = githubPathShape(m[1] || '');
+    if (s) out.add(s);
+  }
+  if (/(?:^|[^\w-])gh /.test(key)) {
+    for (const m of markCommands(key).matchAll(GH_CLI)) {
+      const group = m[1].toLowerCase();
+      if (!GH_GROUPS.has(group)) continue;
+      if (group === 'api') {
+        const s = githubPathShape(ghApiPath(m[2]));
+        out.add(s || 'gh api');
+        continue;
+      }
+      const verb = /^ +([a-z][a-z-]{0,19})(?=\s|$)/.exec(m[2]);
+      out.add(`gh ${group}${verb ? ' ' + verb[1] : ''}`);
+    }
+  }
+  return [...out];
+}
+// GitHub polling in this window: Bash/PowerShell calls of a GH_POLL_CATEGORIES category,
+// grouped by githubShapes() over ALL sessions and subagents (sessionKey) — not per session
+// like POLLING, so a few calls per subagent across many subagents add up. A shape with
+// >= GH_POLL_MIN_CALLS calls is a hit. Per group: calls, sessions (main + subagent),
+// subagents, cost = 1/n of each n-call turn (as in activity()), share = of window spend.
+// Top-level totals count a call once even when it hits two shapes. Most expensive first.
+function ghPolling(rows) {
+  const groups = new Map();
+  const found = []; // { shapes, part, sk, isSub } per call with a shape
+  let total = 0;
+  for (const r of rows) {
+    total += r.cost;
+    for (const c of r.calls) {
+      if (!SHELL_TOOLS.has(c.tool) || !GH_POLL_CATEGORIES.has(categorize(c))) continue;
+      const shapes = githubShapes(c.key);
+      if (!shapes.length) continue;
+      const call = { shapes, part: r.cost / r.calls.length, sk: sessionKey(r), isSub: r.isSub };
+      found.push(call);
+      for (const s of shapes) {
+        const g = groups.get(s) || { shape: s, calls: [] };
+        g.calls.push(call);
+        groups.set(s, g);
+      }
+    }
+  }
+  const sum = calls => {
+    const sess = new Map(calls.map(c => [c.sk, c.isSub]));
+    const cost = calls.reduce((a, c) => a + c.part, 0);
+    return { calls: calls.length, sessions: sess.size, subagents: [...sess.values()].filter(Boolean).length,
+      cost, share: total ? cost / total : 0 };
+  };
+  const hits = [...groups.values()].filter(g => g.calls.length >= GH_POLL_MIN_CALLS);
+  const hit = new Set(hits.map(g => g.shape));
+  return { ...sum(found.filter(c => c.shapes.some(s => hit.has(s)))), groups: hits
+    .map(g => ({ shape: g.shape, ...sum(g.calls) }))
+    .sort((a, b) => b.cost - a.cost || b.calls - a.calls || (a.shape < b.shape ? -1 : 1)) };
+}
 // `amount` is the dollar figure each flag represents, used by rankFlags() for
 // the summary's top-N cap (Slice 28). REGRESSION: extra cost vs the previous
 // window's cost/message; POLLING/BOILERPLATE: cost of those turns (the saving's
 // upper bound, REFERENCE.md); the rest: the flagged spend (0 when a flag has no
 // dollar figure). Not printed in text; --json carries it.
-function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
+function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }, gh = { groups: [] }) {
   const out = [];
   const add = (id, text, amount = 0) => out.push({ id, text, amount });
 
@@ -1385,6 +1501,18 @@ function flags(cur, prev, cfg, span, polls = [], boiler = { groups: [] }) {
       `top ${b.sessions} sess/${b.turns} turns `;
     out.push({ id: 'BOILERPLATE', text: head + fitPrefix(b.prefix, FLAG_TEXT_WIDTH - head.length),
       amount: cost, groups: boilers });
+  }
+  if (gh.groups.length) {
+    // Slice 31: the cross-session counterpart of POLLING — GitHub calls by endpoint shape
+    // summed over every session/subagent (REFERENCE.md "GH_POLLING").
+    const { groups, ...tot } = gh;
+    const g = groups[0];
+    const more = groups.length > 1 ? ` +${groups.length - 1} more` : '';
+    const head = `${tot.calls} calls in ${tot.sessions} sessions (${tot.subagents} subagents) = ` +
+      `${money(tot.cost)}, ${sharePct(tot.share)} of spend; top ${g.calls}× `;
+    const shape = fitMiddle(g.shape, FLAG_TEXT_WIDTH - head.length - more.length);
+    out.push({ id: 'GH_POLLING', text: head + shape + more,
+      amount: tot.cost, ...tot, groups });
   }
   if (cur.avgCtx > 150e3) {
     add('BIG_CTX', `avg context/message ${(cur.avgCtx / 1e3).toFixed(0)}k (threshold 150k)`);
@@ -1548,13 +1676,13 @@ function flagLines(f) {
 const SUMMARY_MAX_LINES = 24;
 const DETAIL_MAX_LINES = 40;
 // Slice 28 (design decision Q5, HITL Q-B): rank by extra cost where that decision defines
-// one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE
-// (cost of those turns) share tier 0, by $ — then a fixed priority for flags
+// one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE/GH_POLLING
+// (cost of those turns; GH_POLLING Slice 31) share tier 0, by $ — then a fixed priority for flags
 // whose $ is only the flagged spend, $ as tie-break inside a tier: LONG_AGENT
 // (Q5's main lever) > LONG_SESSION, MULTIDAY > OPUS_HEAVY, CONCENTRATION >
 // BIG_CTX, PLUGIN_BLOAT (no $) > CLEAN; id last, for a stable order.
-const FLAG_TIER = { REGRESSION: 0, POLLING: 0, BOILERPLATE: 0, LONG_AGENT: 1, LONG_SESSION: 2, MULTIDAY: 2,
-  OPUS_HEAVY: 3, CONCENTRATION: 3, BIG_CTX: 4, PLUGIN_BLOAT: 4, CLEAN: 5 };
+const FLAG_TIER = { REGRESSION: 0, POLLING: 0, BOILERPLATE: 0, GH_POLLING: 0, LONG_AGENT: 1, LONG_SESSION: 2,
+  MULTIDAY: 2, OPUS_HEAVY: 3, CONCENTRATION: 3, BIG_CTX: 4, PLUGIN_BLOAT: 4, CLEAN: 5 };
 const flagTier = f => FLAG_TIER[f.id] ?? 4;
 function rankFlags(fl) {
   return fl.slice().sort((a, b) => flagTier(a) - flagTier(b) || (b.amount || 0) - (a.amount || 0) ||
@@ -1956,7 +2084,8 @@ async function main() {
   // parents for a repeated subagent id.
   const spans = new Map(all.sessions.map(s => [sessionKey(s), s.last - s.first]));
   const span = s => spans.get(sessionKey(s)) || 0;
-  const fl = flags(cur, prev, cfg, span, polling(curRows), boilerplate(curRows));
+  const fl = flags(cur, prev, cfg, span, polling(curRows), boilerplate(curRows),
+    ghPolling(curRows));
   const secFl = securityFlags(cfg);
 
   const scope = { mode: SCOPE_PROJECT ? 'project' : 'all', project: show(SCOPE_PROJECT) };
@@ -2062,7 +2191,8 @@ async function main() {
 
 if (require.main === module) main();
 module.exports = {
-  projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes,
+  projectFolder, commandKey, shellSegments, activityCategory, redactPaths, setupPrefixes, githubShapes,
+  GH_POLL_MIN_CALLS,
   rankFlags, flagLines, flagsMoreLine, continuedFlagLines, trendLine, fitFlags, appendFlagsMore,
   familyLine, renderDetail,
   SUMMARY_MAX_LINES, DETAIL_MAX_LINES,
