@@ -741,9 +741,11 @@ not duplicated here.
 > `node token-audit.js --all --days 3650 --json` and read `cur.msgs` from the output,
 > then separately count the JSONL lines across your `~/.claude/projects/**/*.jsonl` files
 > whose parsed `message` object has a `usage` field (that key marks an assistant-response
-> line, the thing the pre-dedupe count over-counted). The ratio of that line count to
-> `cur.msgs` is your machine's dedupe factor — it will differ from the figures above,
-> which are this machine's history, not a fixed constant.
+> line, the thing the pre-dedupe count over-counted) — except a `<synthetic>` line with
+> all-zero usage and a line whose model isn't priced (`UNPRICED`), neither of which
+> `cur.msgs` counts, so both must be excluded from your manual count too. The ratio of
+> that line count to `cur.msgs` is your machine's dedupe factor — it will differ from the
+> figures above, which are this machine's history, not a fixed constant.
 
 ## Summary layout (Slice 28)
 
