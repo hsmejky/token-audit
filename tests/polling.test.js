@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir, perfLimit } = require('./harness');
 const { redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// Slice 12 / design decision Q9: POLLING = the same normalized command
-// (commandKey) >= POLL_MIN_CALLS (10, Slice 15 HITL decision) times in one session.
+// Design decision Q9: POLLING = the same normalized command
+// (commandKey) >= POLL_MIN_CALLS (10, an HITL decision) times in one session.
 // Only commands whose repeat is a wait count (not test/lint/build, git, edit):
 // see REFERENCE.md "POLLING".
 
@@ -125,11 +125,11 @@ test('POLLING: waits, status checks, log tails and other repeated commands do fi
   }
 });
 
-// Slice 15 HITL busy-polls, real data: `echo waiting-N`/`echo idle-check-N`, `tasklist`,
+// HITL busy-polls, real data: `echo waiting-N`/`echo idle-check-N`, `tasklist`,
 // `Get-Process` — added to BUSY_POLLERS so a repeated busy-poll counts as wait/poll instead
 // of falling to `other`/`read`. Kept in their own lower-priority rule (below git) — see
 // "POLLING: git wins over a bare busy-poll" below for why.
-test('POLLING: new Slice 15 busy-poll commands (echo waiting/idle, tasklist, Get-Process) fire on their own', () => {
+test('POLLING: busy-poll commands (echo waiting/idle, tasklist, Get-Process) fire on their own', () => {
   for (const cmd of [
     i => `echo waiting-${i}`,
     i => `echo idle-check-${i}`,
@@ -141,8 +141,8 @@ test('POLLING: new Slice 15 busy-poll commands (echo waiting/idle, tasklist, Get
   }
 });
 
-// Review finding (Slice 15): `script run` (a bare `python foo.py` re-run while iterating) is
-// deliberately excluded from POLL_CATEGORIES (Slice 15) — it is work, not a
+// Review finding: `script run` (a bare `python foo.py` re-run while iterating) is
+// deliberately excluded from POLL_CATEGORIES — it is work, not a
 // wait. 10 is POLL_MIN_CALLS itself (the boundary), so this also confirms the category
 // exclusion, not just the threshold, is what keeps it from firing.
 test('POLLING: `python x.py` repeated 10x (script run) does not fire — script run is not a poll category', () => {
@@ -150,7 +150,7 @@ test('POLLING: `python x.py` repeated 10x (script run) does not fire — script 
   assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
 });
 
-// Slice 15 fix (re-review, BLOCKER): before the CMD_PIPE fix, `python x.py 2>&1 | tail -20`
+// Fix (re-review, BLOCKER): before the CMD_PIPE fix, `python x.py 2>&1 | tail -20`
 // classified as `read` (the read rule's READERS alt matched the piped-in `tail`, and read is
 // checked before script run) — `read` IS a POLL_CATEGORIES member, so 10 piped re-runs of the
 // same script while iterating used to fire POLLING as a false positive. Now the whole compound
@@ -163,7 +163,7 @@ test('POLLING: piped script re-run (`python x.py 2>&1 | tail -N`) x10 does not f
   assert.equal(pollingFlags(r).length, 0, JSON.stringify(r.flags));
 });
 
-// Slice 15 fix (re-review): a compound of real work (`git status`) plus a Slice 15 busy-poll
+// Fix (re-review): a compound of real work (`git status`) plus a busy-poll
 // addition (`Get-Process`) must not fire POLLING — `git status; Get-Process` classifies as
 // `git` (real work wins, see activity.test.js), and `git` is not a POLL_CATEGORIES member.
 test('POLLING: `git status; Get-Process` repeated Nx does not fire', () => {

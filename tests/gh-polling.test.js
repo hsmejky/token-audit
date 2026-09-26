@@ -4,7 +4,7 @@ const { audit, auditText, tmpClaudeDir, perfLimit } = require('./harness');
 const { commandKey, activityCategory, githubShapes, githubReadShapes, isGhWrite, rankFlags, GH_POLL_MIN_CALLS } =
   require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// Slice 31: GH_POLLING = GitHub read (state-query) calls (wait/poll + github categories,
+// GH_POLLING = GitHub read (state-query) calls (wait/poll + github categories,
 // write calls excluded — HITL decision) grouped by endpoint shape over every session and
 // subagent in the window — catches polling spread as a few calls per session across many
 // subagents, which POLLING (one key ≥ N× in ONE session) cannot see. Tests are written
@@ -108,7 +108,7 @@ test('GH_POLLING: counts only wait/poll + github calls — git push / plain slee
   assert.equal(ghFlag(audit(tmpClaudeDir(files))), undefined);
 });
 
-// Slice 32 fix: earlier tests only ran isGhWrite() on a raw command string (curl/gh
+// Fix: earlier tests only ran isGhWrite() on a raw command string (curl/gh
 // resolved by basename there already). This drives the SAME unquoted absolute path through
 // commandKey() -> activityCategory() (the `${ANY_CMD}gh `/`api.github.com` category rule)
 // and then the full audit pipeline, to confirm a path-invoked curl is still classified

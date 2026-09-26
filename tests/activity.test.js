@@ -154,7 +154,7 @@ test('turn with 2 tool calls (git + Read) splits its cost 50/50', () => {
   assert.match(rows[0], /^\s+git\s+<1\s+0k\s+\$2\.00\s+50\.0%$/);
 });
 
-test('turn without tool_use -> reply (Slice 15); text-only lines of a tool turn do not dilute its split', () => {
+test('turn without tool_use -> reply; text-only lines of a tool turn do not dilute its split', () => {
   const thinking = { type: 'assistant', timestamp: '2026-09-01T10:00:00.000Z', message: { id: 'm2',
     model: 'claude-opus-5-5', role: 'assistant', usage: USAGE, content: [{ type: 'thinking', thinking: '' }] } };
   const dir = tmpClaudeDir({
@@ -202,7 +202,7 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [sh('curl -s https://api.github.com/repos/o/r/commits/abc1234/check-runs'), 'wait/poll'],
     [sh('for i in $(seq 1 40); do gh pr checks 12; sleep 30; done'), 'wait/poll'],
     [sh('for f in a b; do git add $f; done'), 'git'],
-    // Review finding (Slice 15): a compound of a real git command plus a Slice 15 busy-poll
+    // Review finding: a compound of a real git command plus a busy-poll
     // addition (`Get-Process`/`tasklist`) used to fall to wait/poll (BUSY_POLLERS lived inside
     // the high-priority wait/poll rule, above git) — git is the real work here, not a wait.
     [sh('git status; Get-Process'), 'git'],
@@ -234,13 +234,13 @@ test('activityCategory: one example per category, first matching rule wins', () 
     [['WebFetch', { url: 'https://x', prompt: 'y' }], 'web'],
     [['WebSearch', { query: 'y' }], 'web'],
     [sh('python - <<\'PY\'\nimport io\nPY'), 'script run'],
-    // Review finding (Slice 15): `script run` moved below edit/read in ACTIVITY_RULES.
+    // Review finding: `script run` moved below edit/read in ACTIVITY_RULES.
     // A Bash call with a `python - <<EOF … EOF` segment PLUS a real edit/read segment
     // used to classify as `script run` (that rule ran first and `.find()` picks the
     // first rule with a match anywhere in the subject, not the first segment in the
     // command) — on real data this stole ~503 read + ~284 edit calls from their true
     // categories. Now edit/read are checked first, so these compounds classify as
-    // they did before Slice 15 added the `script run` rule.
+    // they did before the `script run` rule was added.
     [sh('python - <<\'EOF\'\nprint(1)\nEOF\nsed -i \'s/a/b/\' out.py'), 'edit'],
     [sh('python - <<\'EOF\'\nprint(1)\nEOF\ncat out.py'), 'read'],
     // …but a bare script run with no edit/read segment alongside still wins.
@@ -290,14 +290,14 @@ test('activityCategory: one example per category, first matching rule wins', () 
     // quoted env value with a space must not corrupt the segment that follows it
     [sh("( TIMEFORMAT='%R sec'; time python -m pytest )"), 'test/lint/build'],
     [['NewToolWeNeverSaw', {}], 'other'],
-    // Slice 15 HITL: `script run` — a bare interpreter/script-file run, below
+    // HITL decision: `script run` — a bare interpreter/script-file run, below
     // test/lint/build, git and screenshot/image (all checked earlier and win)
     [sh('python scripts/report.py --days 7'), 'script run'],
     [sh('node scripts/build.mjs'), 'script run'],
     [sh('S=/tmp/x.mjs ; node $S'), 'script run'],
     [sh('./run.sh --flag'), 'script run'],
     [sh('python -m pytest tests/'), 'test/lint/build'], // runner wrapper still wins over script run
-    // Slice 15 HITL: `harness` — CC's own tools, not agent spawn / real work
+    // HITL decision: `harness` — CC's own tools, not agent spawn / real work
     [['Skill', { skill: 'commit' }], 'harness'],
     [['ToolSearch', { query: 'x' }], 'harness'],
     [['TodoWrite', { todos: [] }], 'harness'],
@@ -315,7 +315,7 @@ test('script source: no inline regex modifier groups (?i:…) / (?-i:…) / (?m:
 
 test('activityCategory: a long non-matching command after `ruby ` does not blow up (linear, not quadratic)', () => {
   // `ruby` is not in any rule (SCRIPT_INTERP included) — stays a genuine non-match, unlike
-  // `node`, which Slice 15's `script run` rule now catches on its own.
+  // `node`, which the `script run` rule now catches on its own.
   const command = 'ruby ' + 'x'.repeat(200000);
   const t0 = Date.now();
   const cat = activityCategory('Bash', { command });
@@ -331,14 +331,14 @@ test('activityCategory: `node ` script run classifies a long trailing arg in wel
   assert.equal(cat, 'script run');
 });
 
-// Review finding (Slice 15): SCRIPT_INTERP's `python\S*` alternative was unbounded — it
+// Review finding: SCRIPT_INTERP's `python\S*` alternative was unbounded — it
 // could cross a CMD (‣) marker into the next command, so many adjacent `‣python` runs with
 // no whitespace between them forced one giant \S* match that then backtracked one char at a
 // time hunting for `(?: |$)`, O(n^2) (measured ~21s on 40k reps before the fix). Fixed to
 // `python[^\s‣]*`, bounded at CMD same as SCRIPT_FILE. Tested against the `script run` rule's
 // own regex (`SCRIPT_INTERP`, exported test-only) rather than through `activityCategory()`:
 // the `screenshot/image` rule runs first and has its own separate, still-unbounded `python\S*`
-// inside SHOT_EXEC (pre-Slice-15, explicitly out of scope for this fix) that would dominate
+// inside SHOT_EXEC (predates this fix, explicitly out of scope for it) that would dominate
 // the timing of any input shaped to stress this one instead.
 test('SCRIPT_INTERP: `python[^\\s CMD]*` stays linear on many adjacent `‣python` runs (was O(n^2) unbounded)', () => {
   const { SCRIPT_INTERP } = require('../plugin/skills/token-audit/scripts/token-audit.js');
@@ -374,7 +374,7 @@ test('activityCategory: many `py -3` version flags do not blow up (linear, not q
   assert.equal(cat, 'test/lint/build');
 });
 
-// Slice 30: known pathological inputs that used to blow up the RUNNERS regex / markCommands()
+// Known pathological inputs that used to blow up the RUNNERS regex / markCommands()
 // (exponential or quadratic on the old code — see PY_OPT / RUNNERS / markCommands comments).
 test('activityCategory: `pnpm` + `--a ` x40 with a non-matching tail classifies in < 1s (was exponential)', () => {
   const command = 'pnpm ' + '--a '.repeat(40) + 'run foo';
@@ -490,7 +490,7 @@ test('DETAIL prints the top 6 categories by cost: category, turns, avg ctx, cost
 
 test('--json detail.activity: every category (zeros included), with turns / avgCtx / cost / share', () => {
   const act = audit(eightCategoryDir()).detail.activity;
-  // Slice 15 HITL added harness / script run / reply; zero-cost categories keep
+  // The HITL re-tune added harness / script run / reply; zero-cost categories keep
   // ACTIVITY_RULES table order (stable sort) after the nonzero ones.
   assert.deepEqual(act.map(a => a.category), ['web', 'agent spawn', 'edit', 'read', 'wait/poll', 'github',
     'test/lint/build', 'git', 'harness', 'screenshot/image', 'script run', 'other', 'reply']);
@@ -504,6 +504,6 @@ test('no turns in the window -> one "none" line; --json lists every category at 
   const dir = tmpClaudeDir({ 'projects/p/s1.jsonl': toolTurn('m1', [['Read', { file_path: 'a' }]]) });
   assert.ok(detailLines(auditText(dir, '--days', '1')).includes('COST BY ACTIVITY  none in this window'));
   const act = audit(dir, '--days', '1').detail.activity;
-  assert.equal(act.length, 13); // Slice 15 HITL: + harness, script run, reply
+  assert.equal(act.length, 13); // HITL decision: + harness, script run, reply
   assert.ok(act.every(a => a.turns === 0 && a.cost === 0 && a.share === 0 && a.avgCtx === 0));
 });

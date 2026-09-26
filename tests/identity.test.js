@@ -6,7 +6,7 @@ const path = require('node:path');
 const { auditEnv, tmpClaudeDir, tmpUserConfig, turn, perfLimit } = require('./harness');
 const { projectFolder } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// Slice 29: every printed field that can carry a path or the user's identity goes
+// Every printed field that can carry a path or the user's identity goes
 // through redactPaths(). Identity is injected through the environment: home folder
 // "Petr Svarc" (HOME/USERPROFILE), an empty git config (no user.name).
 const NAME = /petr|svarc/i;

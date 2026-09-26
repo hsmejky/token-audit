@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, auditText, tmpClaudeDir, turn, turns } = require('./harness');
 
-// design decision Q9 (Slice 15 HITL decision): LONG_SESSION fires for a MAIN
+// design decision Q9 (an HITL decision): LONG_SESSION fires for a MAIN
 // (non-subagent) session with >= LONG_SESSION_TURNS (200) turns; a long
 // subagent is LONG_AGENT's job instead — the two flags used to double-count
 // the same sessions when LONG_SESSION counted every session. SESSIONS' count/

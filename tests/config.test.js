@@ -115,7 +115,7 @@ test('root effortLevel + modelSettings entries: CONFIG prints default= alongside
   }
 });
 
-// Slice 20 review: a hostile/oversized modelSettings key (attacker-controlled
+// Review finding: a hostile/oversized modelSettings key (attacker-controlled
 // settings.json, or just a weird real model id) must not blow the 120-char
 // budget, and a newline in the key must not inject a fake extra CONFIG line.
 test('CONFIG: an oversized or control-char modelSettings key is fit and sanitized, never breaks the layout', () => {
@@ -145,7 +145,7 @@ test('CONFIG: an oversized or control-char modelSettings key is fit and sanitize
     'expected the sanitized modelSettings key on the CONFIG line, got:\n' + out);
 });
 
-// Slice 20 re-review: root/per-model `effortLevel` and `cleanupPeriodDays` come
+// Re-review finding: root/per-model `effortLevel` and `cleanupPeriodDays` come
 // straight from settings.json — attacker- or author-controlled, same as a
 // modelSettings key above — but were printed raw, unlike the key. A forged
 // value can inject a fake SECURITY line the same way a forged key could.
@@ -202,7 +202,7 @@ test('CONFIG: a hostile cleanupPeriodDays cannot forge a SECURITY block, valid n
   assert.ok(out2.includes(' retention=30'), out2);
 });
 
-// Slice 20 review: settings.model is free text from settings.json too. show()
+// Review finding: settings.model is free text from settings.json too. show()
 // already runs on it, but nothing capped its length — a long model string
 // pushes the `  model=...` CONFIG line past 120 chars.
 test('CONFIG: an oversized settings.model is fit to the line budget', () => {
@@ -219,7 +219,7 @@ test('CONFIG: an oversized settings.model is fit to the line budget', () => {
   }
 });
 
-// Slice 20 review: a plugin name is a cache-dir path segment, not a random
+// Review finding: a plugin name is a cache-dir path segment, not a random
 // path fs.readdirSync happily returns as-is (control bytes 0-31 aren't legal
 // in a directory name on NTFS/most filesystems, but Unicode format/bidi
 // characters like U+202E are). It must still go through show(), same as
@@ -237,7 +237,7 @@ test('CONFIG: a long plugin name with an embedded bidi-override char is sanitize
   assert.ok(!name.includes('\u202E'), `bidi-override char survived sanitization: ${JSON.stringify(name)}`);
 });
 
-// Slice 20 re-review: show()'s control-char strip was [\x00-\x1f\x7f], which only
+// Re-review finding: show()'s control-char strip was [\x00-\x1f\x7f], which only
 // covers C0 + DEL. C1 controls (U+0080-U+009F, e.g. U+0085 NEL, U+009B CSI) and
 // other Unicode format/bidi characters (e.g. U+202E RIGHT-TO-LEFT OVERRIDE) are
 // not in that range and passed through untouched.
@@ -260,7 +260,7 @@ test('show(): bidi override (U+202E) is stripped so it cannot reorder printed te
   assert.ok(!out.includes('\u202E'), 'U+202E (RLO) survived show()');
 });
 
-// Slice 20 3rd review, finding 1: the one-line CONFIG row (no modelSettings, so
+// Review finding: the one-line CONFIG row (no modelSettings, so
 // just `model=`/`retention=`/`effort=`) prints all three fields together. Three
 // hostile-long values at once must still fit the 120-char budget (dynamic
 // budget, not a static per-field guess that assumes they're never all maxed
@@ -286,7 +286,7 @@ test('CONFIG: hostile-long model + cleanupPeriodDays + effortLevel together stil
     `expected a CONFIG line with model=, got:\n${out}`);
 });
 
-// Slice 20 3rd review, finding 2: fit()/fitMiddle() only run at print time (text
+// Review finding: fit()/fitMiddle() only run at print time (text
 // report); --json carries the full show()n (redacted/sanitized) value, per
 // REFERENCE.md:375 and the "fit at print time" contract at token-audit.js. A long
 // settings.model must come through whole in --json, with no '...' truncation.
@@ -320,7 +320,7 @@ test('CONFIG --json: an object value for settings.model keeps its live type, not
     `expected live nested structure, got: ${JSON.stringify(r.config.model)}`);
 });
 
-// Slice 20 3rd review, finding 6 (pre-existing): PLUGIN_BLOAT's "worst: ..." plugin
+// Review finding (pre-existing): PLUGIN_BLOAT's "worst: ..." plugin
 // name list had no per-name fit, and wrapWords() didn't hard-break a single word
 // longer than the wrap width -- an extreme plugin name (no separators) could still
 // push a FLAGS line past 120 chars.

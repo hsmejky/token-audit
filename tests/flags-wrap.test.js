@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { auditText, tmpClaudeDir, turn } = require('./harness');
 const { flagLines } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// Slice 20 review: NO_RETENTION's advice text (112 chars) is longer than
+// Review finding: NO_RETENTION's advice text (112 chars) is longer than
 // FLAG_TEXT_WIDTH (103), so it must wrap rather than overrun 120 chars — and
 // the wrap must not drop "indefinitely" or misindent the continuation.
 test('NO_RETENTION: cleanupPeriodDays unset wraps onto a 17-space-indented continuation line', () => {
@@ -27,7 +27,7 @@ test('NO_RETENTION: cleanupPeriodDays unset wraps onto a 17-space-indented conti
   }
 });
 
-// Slice 20 review: POLLING/BOILERPLATE text is a literal shell command,
+// Review finding: POLLING/BOILERPLATE text is a literal shell command,
 // already fit to width upstream (fitMiddle/fitPrefix) — flagLines() must
 // render it unchanged (no re-wrap, no space-collapsing), unlike a prose flag
 // like NO_RETENTION which is expected to wrap and normalize whitespace.
@@ -45,7 +45,7 @@ test('flagLines: a non-command flag still wraps and normalizes whitespace as bef
   assert.ok(!lines[0].includes('  b'), 'expected internal whitespace runs collapsed for a prose flag');
 });
 
-// Slice 20 3rd review, finding 6: wrapWords() only broke between words, so a
+// Review finding: wrapWords() only broke between words, so a
 // single "word" longer than the wrap width (e.g. an attacker-controlled plugin
 // name with no separators, PLUGIN_BLOAT's "worst: ..." list) rode straight
 // through unwrapped and overran 120 chars. It must now hard-break.

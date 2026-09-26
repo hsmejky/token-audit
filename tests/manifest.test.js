@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-// Repo is public: manifests (and, since Slice 27, README.md) must not carry
+// Repo is public: manifests (and README.md) must not carry
 // a personal email. Any email present must be a GitHub noreply address.
 const ROOT = path.join(__dirname, '..');
 const JSON_MANIFESTS = ['plugin/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json'];
@@ -30,12 +30,12 @@ for (const rel of TEXT_FILES) {
   });
 }
 
-// Slice 32: public design docs (docs/*.md) were rewritten from private notes. Guard them
+// Public design docs (docs/*.md) were rewritten from private notes. Guard them
 // (and README.md) against a personal email and two private terms: a local account name and
 // the name of the author's other, unrelated project.
 //
 // The two private terms are matched by hashing whole words, not by a literal substring
-// regex (Slice 32 fixup: the earlier version spelled the terms out in a regex and a comment,
+// regex (fixup: an earlier version spelled the terms out in a regex and a comment,
 // right here in the file meant to guard against exactly that). Text is lower-cased and split
 // on runs of non-alphanumeric characters, so only a word that is *exactly* one of the private
 // terms is flagged — a shared prefix (the public GitHub handle) hashes differently and passes.
@@ -84,7 +84,7 @@ const toRel = (abs) => path.relative(ROOT, abs).split(path.sep).join('/');
 
 const DOC_FILES = fs.existsSync(DOCS_DIR)
   ? fs.readdirSync(DOCS_DIR).filter((n) => n.endsWith('.md')).map((n) => `docs/${n}`) : [];
-// Slice 32 minor: the guard originally covered only docs/ and README.md. Extend it to the
+// The guard originally covered only docs/ and README.md; it was extended to the
 // published plugin content (REFERENCE.md, SKILL.md, the manifest, the script) and the test
 // fixtures, since any of those could just as easily carry a leaked private word or path.
 const PLUGIN_FILES = fs.existsSync(PLUGIN_DIR)

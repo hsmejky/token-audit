@@ -220,7 +220,7 @@ test('BOILERPLATE: grouping stays on the raw value — two different literal val
   assert.equal(flagOf(audit(tmpClaudeDir(files)), 'BOILERPLATE'), undefined);
 });
 
-// Slice 29: shapes that leaked or got mangled after Slice 13.
+// Shapes that leaked or got mangled in earlier redaction passes.
 test('secret layer: quoted mysql path (PowerShell `& "…\mysql.exe"`) still redacts -pX', () => {
   for (const cmd of [String.raw`& "C:\Program Files\MySQL\bin\mysql.exe" -p${S} db`,
     String.raw`& 'C:\Program Files\MySQL\bin\mysql.exe' -p${S}`, `"/usr/bin/mysql" -p${S}`]) {
@@ -241,7 +241,7 @@ test('secret layer: a literal part glued after a reference (-p$X\'lit\') still r
   assert.equal(redactPaths(`mysql -p"$X"${S} db`, NO_ID), 'mysql -p"$X"<secret> db');
 });
 
-test('secret + path layers stay linear on 200k-char escape / quoted-path runs (Slice 29)', () => {
+test('secret + path layers stay linear on 200k-char escape / quoted-path runs', () => {
   for (const s of ['\\$'.repeat(100000), ' \\"'.repeat(66000), '"/a\\$'.repeat(40000),
     '& "C:\\x\\mysql.exe" -p'.repeat(9000), "mysql -p$X'a'".repeat(15000)]) {
     const t0 = Date.now();

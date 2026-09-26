@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { tmpClaudeDir, tmpDir, turn, auditEnv } = require('./harness');
 
-// Slice 23: --claude-dir gets a documented precedence — explicit flag wins,
+// --claude-dir gets a documented precedence — explicit flag wins,
 // then CLAUDE_CONFIG_DIR, then ~/.claude as the default. Each test proves the
 // script actually read transcripts from the winning directory (not just that
 // it didn't crash) by giving each candidate directory a distinguishable
@@ -54,7 +54,7 @@ test('neither flag nor CLAUDE_CONFIG_DIR set → ~/.claude (HOME/.claude) used',
   assert.equal(r.cur.msgs, 3, `expected the default ~/.claude's 3 turns, got: ${out}`);
 });
 
-// Slice 14's mcpConfig() reads the user-scope MCP config from a file next to
+// mcpConfig() reads the user-scope MCP config from a file next to
 // --claude-dir (`<claude-dir>.json`, mirroring the real `~/.claude` +
 // `~/.claude.json` sibling layout). Real Claude Code moves that file INSIDE
 // the dir when CLAUDE_CONFIG_DIR relocates it instead — so under

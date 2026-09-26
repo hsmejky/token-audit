@@ -390,7 +390,7 @@ test('SUBAGENT DISTRIBUTION: text report shows turns and peak-ctx lines, <= 120 
   });
 });
 
-// Slice 11 raised the budget from 30 to 40 (design decision Q9: "the DETAIL
+// An earlier review raised the budget from 30 to 40 (design decision Q9: "the DETAIL
 // block is ~40 lines") — every section at full size, incl. 6 activity rows.
 test('DETAIL block stays <= 40 lines, <= 120 chars, with full sections: 10 units, 10 subagents, ' +
   'distribution, 6 activity rows', () => {

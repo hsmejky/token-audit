@@ -5,7 +5,7 @@ const path = require('node:path');
 const { auditCwd, tmpClaudeDir, tmpUserConfig, tmpDir, turn } = require('./harness');
 const { projectFolder } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
-// Slice 14: CONFIG lists MCP servers from 3 sources — `.mcp.json` in the
+// CONFIG lists MCP servers from 3 sources — `.mcp.json` in the
 // scoped project, the user-scope
 // top-level `mcpServers` in the sibling `~/.claude.json`-equivalent file, and
 // that same file's per-project `local`-scope `projects[<path>].mcpServers`.
@@ -72,7 +72,7 @@ test('no MCP config anywhere → no mcp servers line, summary stays short', () =
   assert.equal(r.config.mcpPrefixTokens, 0);
 });
 
-// Slice 20 review: an MCP server name (e.g. a stray key in a cloned repo's
+// Review finding: an MCP server name (e.g. a stray key in a cloned repo's
 // .mcp.json) is attacker/author-controlled text, not this machine's own data.
 // A long one must not push the CONFIG line past 120 chars, and a newline must
 // not inject a fake extra line (e.g. forging a bogus "SECURITY ... none"

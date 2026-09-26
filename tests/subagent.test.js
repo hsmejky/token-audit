@@ -28,7 +28,7 @@ test('each subagent session carries its parent session id; main sessions have no
   assert.equal(byId['3ac91e04-uuid'].parent, null);
 });
 
-// Slice 15 HITL (re-review decision): ALL-TIME (--json `all`) mixes populations on
+// HITL re-review decision: ALL-TIME (--json `all`) mixes populations on
 // purpose — `sessions`/`msgs` count main sessions only, same population as SESSIONS
 // (all.mainSessions), but `cost` is all-time spend INCLUDING subagents, so the
 // invariant SPEND (cur.cost, which also includes subagents) ≤ ALL-TIME cost holds.
@@ -47,7 +47,7 @@ test('--json `all` (ALL-TIME): sessions/msgs are main-only, cost includes subage
     'ALL-TIME cost must include subagent spend, so SPEND <= ALL-TIME always holds');
 });
 
-// re-review finding (Slice 15): the previous test above used the harness default
+// re-review finding: the previous test above used the harness default
 // --days 36500, so every fixture row landed in BOTH `cur` and `all` — it couldn't
 // tell "all.cost happens to include subagents" apart from "all.cost is scoped to
 // all-time history, wider than the --days window". This test uses a tight --days
@@ -84,7 +84,7 @@ test('--json `all`: includes cost from sessions outside the --days window', () =
   assert.ok(r.cur.cost <= r.all.cost, 'SPEND <= ALL-TIME must hold even with rows outside the window');
 });
 
-// re-review finding (Slice 15): pin the actual printed ALL-TIME line shape, not just
+// re-review finding: pin the actual printed ALL-TIME line shape, not just
 // the --json fields behind it — a formatting slip (wrong label, dropped "sessions"/
 // "messages" word, money() not applied) would pass every --json-only test above.
 test('ALL-TIME summary line: "ALL-TIME     $X.XX over N sessions, M messages"', () => {
@@ -126,7 +126,7 @@ test('same subagent id under two different parents stays two sessions, not merge
     'each session must total only its own turns, not the merged pair');
 });
 
-// Slice 28 (design decision Q3, HITL decision): TOP SESSIONS was dropped from the
+// Design decision Q3, HITL decision: TOP SESSIONS was dropped from the
 // summary (it overlapped DETAIL's WORK UNITS / TOP SUBAGENTS) — this project-
 // name-not-uuid guarantee now lives in DETAIL's WORK UNITS project column
 // instead (a subagent-only unit is keyed by its parent dir, sid = first 8

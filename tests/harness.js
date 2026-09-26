@@ -17,7 +17,7 @@ const fixture = name => path.join(__dirname, 'fixtures', name);
 // Window wide enough that every fixture row lands in `cur`, unless the
 // caller passes its own --days (e.g. to test window filtering).
 //
-// Scope: since Slice 6, default scope (no --project/--all) is the *current
+// Scope: default scope (no --project/--all) is the *current
 // working directory's* project — but these fixtures live under arbitrary
 // project folder names ("p", "C--proj-a", ...) that have nothing to do with
 // the test process's real cwd. Callers here almost never care about scoping,
@@ -66,7 +66,7 @@ function auditRaw(claudeDir, args) {
     { encoding: 'utf8' });
 }
 
-// Full control over both argv and env, for Slice 23's --claude-dir /
+// Full control over both argv and env, for --claude-dir /
 // CLAUDE_CONFIG_DIR precedence tests. Starts from a copy of the real
 // process.env with CLAUDE_CONFIG_DIR, HOME and USERPROFILE all deleted first
 // (so neither the dev machine's real CLAUDE_CONFIG_DIR nor its real home

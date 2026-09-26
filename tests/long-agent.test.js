@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { audit, tmpClaudeDir, turn, turns } = require('./harness');
 
-// design decision Q5 (Slice 10, thresholds re-tuned Slice 15): LONG_AGENT fires for
+// design decision Q5 (thresholds re-tuned later): LONG_AGENT fires for
 // a subagent over 150 turns OR with peak context > 400k. Thresholds are named constants
 // in the script (LONG_AGENT_TURNS, LONG_AGENT_CTX) — see REFERENCE.md "LONG_AGENT".
 

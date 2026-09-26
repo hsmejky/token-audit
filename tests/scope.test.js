@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { audit, auditText, auditCwd, auditRaw, tmpClaudeDir, tmpDir, turn } = require('./harness');
-// Printed project names are identity-redacted (Slice 29): a tmp cwd under the real home
+// Printed project names are identity-redacted: a tmp cwd under the real home
 // shows as its redactPaths() form, so compare against that.
 const { projectFolder, redactPaths } = require('../plugin/skills/token-audit/scripts/token-audit.js');
 
@@ -39,9 +39,9 @@ test('projectFolder maps underscore, dot, and space to dash (not just \\ / :)', 
   assert.equal(projectFolder(input), expected);
 });
 
-// Slice 20 review: real project folder names can run well past the header's
+// Review finding: real project folder names can run well past the header's
 // own budget (~38 chars) before hitting the 120-char line cap — the header must
-// fitMiddle() the project name rather than overrun it. (Slice 28: TOP SESSIONS,
+// fitMiddle() the project name rather than overrun it. (TOP SESSIONS,
 // the other line this test used to check, was dropped from the summary —
 // design decision Q3; DETAIL's WORK UNITS project column replaces it, but that one
 // uses a fixed 40-char fit() cap, not a dynamic budget, so it can't overrun
