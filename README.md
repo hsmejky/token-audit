@@ -1,19 +1,60 @@
 # Token Audit
 
-A Claude Code plugin that runs a periodic checkup of your token spend and habits: cost,
-context-per-message, session concentration, week-over-week trend, config drift (model,
-effort, MCP servers, plugin count, transcript retention), and a ranked list of concrete
-habit fixes. For anyone running Claude Code regularly who wants a measured answer to "where
-do my tokens go" instead of a guess — everything printed comes from the script, nothing is
-inferred.
+```
+┌────────────────────────────────────────────────────────────┐
+│  TOKEN AUDIT              where do my tokens actually go?  │
+│                                                            │
+│  cost ▓▓▓▓▓▓░░░░   ctx/msg ▓▓▓░░░░░░░   habits ▓▓▓▓▓▓▓▓░░  │
+└────────────────────────────────────────────────────────────┘
+ RUN ──▶ MEASURE ──▶ FLAG ──▶ RANK BY $ ──▶ DO NEXT (top 3)
+```
 
-It reads your local transcripts under `~/.claude/projects` and your `settings.json`; it
-never sends anything anywhere (see [Privacy](#privacy) below).
+A checkup for your Claude Code habits. Type `/token-audit` and get a one-screen report: what you
+spent, how fat each message's context is, which sessions ate the budget, whether this week beat
+last week, what drifted in your config (model, effort, MCP servers, plugin count, transcript
+retention), and a ranked list of the three fixes worth your time.
+
+No vibes. Every number comes from a script that reads your transcripts; Claude only turns the
+measured flags into advice, and says "all clear" when there's nothing to fix.
+
+It reads your local transcripts under `~/.claude/projects` and your `settings.json`, and never
+sends anything anywhere (see [Privacy](#privacy)).
+
+## Install
+
+Install it once, at **user scope**, and it works in every project:
+
+```
+/plugin marketplace add hsmejky/token-audit
+/plugin install token-audit@token-audit
+```
+
+If the `/plugin` menu asks for a scope, pick **user**. From a terminal, the same thing is
+`claude plugin install token-audit@token-audit --scope user` (user is the default there too).
+
+Then, from a fresh session:
+
+```
+/token-audit
+```
+
+### Why user scope, and why it's free to keep around
+
+```
+ installed, not invoked    0 tokens      nothing in the prompt, not even a description
+ /token-audit              1 run         script counts outside the context, Claude reads the report
+```
+
+The skill sets `disable-model-invocation: true`, so Claude never auto-loads it and its
+description isn't in your context. It only wakes up when you type `/token-audit`. The plugin
+ships no agents, hooks or MCP servers either. An uninvoked skill costs **zero tokens at rest**,
+so there's nothing to gain by installing it per project, and a user-scope install lets you
+audit any project (or all of them) from wherever you are.
 
 ## Sample report
 
-Generated from synthetic fixture data (`--all --days 7`), not a real project — names,
-sessions and paths below are made up for illustration:
+Generated from synthetic fixture data (`--all --days 7`), not a real project. Names, sessions
+and paths below are made up for illustration:
 
 ```
 TOKEN AUDIT   scope all projects   window 2026-09-18 → 2026-09-25 (7d)   list-price equivalent
@@ -53,18 +94,61 @@ COST BY ACTIVITY (this window, top 6; a turn's cost split evenly over its tool c
 Costs are **list-price equivalents** (Claude API $/MTok): on Pro/Max nothing is billed per
 token, so the number is a proxy for what eats the plan limit, not a bill.
 
-## Install
+## Pick your audit
+
+Plain `/token-audit` is the weekly checkup. For anything else, add flags after the command
+(`/token-audit --days 7 --no-detail`) and Claude passes them on to the script:
 
 ```
-/plugin marketplace add hsmejky/token-audit
-/plugin install token-audit@token-audit
+ you want...                        run
+ ─────────────────────────────────  ──────────────────────────────────────────────
+ the weekly checkup                 /token-audit
+ a quick glance, summary only       /token-audit --days 7 --no-detail
+ to see if a habit fix worked       /token-audit --days 3        (3 = days since the fix)
+ a deep-dive into another project   /token-audit --project ../demo-webapp --days 30
+ the whole machine at once          /token-audit --all --days 7
+ the long view                      /token-audit --days 90
+ numbers for a spreadsheet/script   node <skill-dir>/scripts/token-audit.js --json ...
 ```
 
-Then run:
+**The weekly checkup** (`/token-audit`). This project, the last 14 days against the 14 before,
+summary plus the DETAIL block (top work units, costliest subagents, cost by activity). Run it
+from a fresh session: auditing from inside a long, fat-context session is exactly the habit it
+is built to catch.
+
+**A quick glance** (`--days 7 --no-detail`). This week against last week, summary only: the
+banner, trend, flags and at most three next steps.
+
+**Did the fix work?** (`--days N`). The window is always the last N days compared with the N
+days before them. Set N to the number of days since you changed a habit and the report is a
+clean before/after. Keep N at 3 or more; a day or two holds too few messages to say much.
+
+**Another project** (`--project PATH`). Scope defaults to the project you're in. `--project`
+points at a different one without leaving your session; relative paths like `../demo-webapp`
+work. A longer window (`--days 30`) gives a quieter project enough data to flag anything.
+
+**The whole machine** (`--all`). Every project in one report: the true total, and the one place
+to see which project dominates (the `project` column in DETAIL). Habits differ per project, so
+treat the flags as a pointer and follow up with `--project` on the project that stands out.
+
+**The long view** (`--days 90`). `ALL-TIME` and `TREND` already cover your entire history
+whatever window you pick; a wide `--days` makes SPEND, FLAGS and DETAIL cover a quarter too.
+The full week-by-week table is `weeks` in `--json`.
+
+**Machine-readable export** (`--json`). Run the script yourself instead of through the skill,
+so a large JSON dump doesn't land in Claude's context. `<skill-dir>` is
+`plugin/skills/token-audit` in a clone of this repo:
 
 ```
-/token-audit
+node <skill-dir>/scripts/token-audit.js --all --days 30 --json --top 25 > audit.json
 ```
+
+`--top N` sets how many sessions `cur.sessions`/`prev.sessions` keep (default 8);
+`--no-detail` drops the `detail` key for a smaller file. Run directly, the default scope is
+your shell's current directory, so `cd` into the project first or pass `--project`/`--all`.
+
+**A different Claude folder** (`--claude-dir DIR`). Audit a copied or relocated `.claude`
+folder. If you set `CLAUDE_CONFIG_DIR`, the script already follows it without the flag.
 
 ## Requirements
 
