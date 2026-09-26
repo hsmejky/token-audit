@@ -34,7 +34,7 @@ legacy pricing on the same page. The script gives `opus-5-5` its own rate row
 (`PRICES.opus55`) so its actual (cheaper) cost is used, but keeps it in the same
 `Opus` family bucket in SPEND/`byFamily` — only Fable was meant to show as
 its own SPEND family, and splitting the SPEND bucket too would move `OPUS_HEAVY`'s
-threshold behaviour out of scope for this slice.
+threshold behaviour out of scope here.
 
 Likewise `fable-5` (legacy) does **not** match `fable-5-1`/`fable-5.1` (current):
 input, cache write and output are identical, but cache read is $1/MTok for Fable 5
@@ -79,7 +79,8 @@ every run just from these, drowning out a real new-model warning. A `<synthetic>
 with non-zero usage (unexpected, but not ruled out) is not excluded — it still goes
 through the normal UNPRICED + warning path below.
 
-The text report prints `UNPRICED` as **one line** (HITL decision D):
+The text report prints `UNPRICED` as **one line** (the summary rework decision,
+[docs/decisions.md#summary-back-to-24-lines](../../../docs/decisions.md#summary-back-to-24-lines)):
 `UNPRICED     <n> model(s) <tokens>M tok: <model>, <model>, +N more (--json) -- add prices to
 PRICES + REFERENCE.md`. It names as many models as fit the 120-char line (each fit to 40
 chars) and ends the list in one `+N more (--json)` marker when they don't all fit; `--json`
@@ -728,13 +729,10 @@ not duplicated here.
 > **Supersedes an earlier, pre-dedupe-fix baseline.** The first full measurement counted
 > every transcript line as a message; one API response is written as several lines
 > (thinking / text / tool_use) sharing one `message.id`, so its spend and message counts
-> were inflated by roughly the dedupe factor (≈ 1.9× on this machine's history) before the
-> fix. The all-time recount right after the fix landed dropped both the deduped turn count
-> and the total spend by about that same factor; the further rise to the total above is
+> were inflated by roughly the dedupe factor before the fix. The all-time recount right
+> after the fix landed replaced that inflated raw-line count with the deduped turn count,
+> and cut the total spend by about the same factor; the further rise to the total above is
 > newer history accumulating since then, not a method change.
-> The old baseline's model-share and main/subagent-split numbers moved by a similar margin
-> — do not read a trend into old-baseline vs. this table; the dedupe fix and the threshold
-> re-tune both moved the numbers on their own, independent of any real change in usage.
 >
 > **To check the dedupe factor on your own machine:** run
 > `node token-audit.js --all --days 3650 --json` and read `cur.msgs` from the output,
@@ -935,8 +933,8 @@ of the second project's spend, screenshots ≈ 2.6%. Measured with the finished 
   category, not just the image's own tokens. A second, narrower measure — the tokens a
   screenshot actually carries forward in context (image tokens × remaining turns in that
   session, at the session's cache-read price) — comes to ≈ 1.4% (the original hand estimate,
-  2.6%, was computed on non-deduped turns; 2.6 / 1.9, the dedupe factor, ≈ 1.4%, i.e. the
-  gap there was the pre-dedupe-fix bug, not a real difference). The conclusion from
+  2.6%, was computed on non-deduped turns; dividing by the dedupe factor gives ≈ 1.4%, i.e.
+  the gap there was the pre-dedupe-fix bug, not a real difference). The conclusion from
   design decision Q6 stands either way: screenshots are a non-lever (≈ 1.4% actually carried in
   context); the table's 4.9% is turn cost that the verification step would spend regardless
   of whether it looked at a screenshot.
@@ -1051,7 +1049,7 @@ last resort = agent id.
 `agent-<id>.meta.json` next to every `agent-<id>.jsonl` (`{ agentType, description,
 toolUseId, model, … }`). Its `description` is exactly the parent's `Agent` tool_use
 `input.description` (verified via `toolUseId`), so it gives the parent's label without
-scanning the parent transcript. It is short and author-chosen ("Re-review slice 4 fix"),
+scanning the parent transcript. It is short and author-chosen ("Re-review pipe-boundary fix"),
 whereas the first prompt line is usually boilerplate ("Repo C:\Users\… Read-only task, do not
 commit", "You are reviewer C for …"), which says where, not what. 640/642 metas had a
 description; 11 transcripts start with an `attachment` line, not the prompt, hence "first
@@ -1094,7 +1092,7 @@ run only when building the text report, on a `JSON.stringify()` of the
 already-redacted structure at that point — see `showAny()`/`textOf()` in
 token-audit.js.
 
-### CONFIG — one line (HITL decision D)
+### CONFIG — one line (the summary rework decision, see docs/decisions.md#summary-back-to-24-lines)
 
 CONFIG prints one ≤ 120-char line, right under `TREND`:
 `CONFIG       model=<model> effort=<root>,<model>:<level>,… plugins=N mcp=N prefix≈N.Nk
@@ -1134,7 +1132,8 @@ project, tagged `user` / `project` / `mcp.json` for which of the 3 sources above
 prompt prefix (`mcpServers.length * MCP_SERVER_TOKENS`, see "Weight estimate" below) — the
 same number folded into the text report's `prefix≈` figure, exposed on its own for callers
 that want the MCP-only portion split out from plugin agent/skill weight.
-Under HITL decision D, the text report only counts them (`mcp=N` on the one CONFIG
+Under the summary rework decision (docs/decisions.md#summary-back-to-24-lines), the text
+report only counts them (`mcp=N` on the one CONFIG
 line, their estimated tool-definition tokens folded into `prefix≈`); no `mcp=` at all when
 nothing is configured.
 Under `--all` (no single scoped project), only `user`-scope servers are listed —
