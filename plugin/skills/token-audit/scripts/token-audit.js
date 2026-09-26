@@ -998,13 +998,17 @@ function currentIdentity() {
   let username = '', name = '';
   try { username = os.userInfo().username; } catch { /* no passwd entry */ }
   try {
-    name = require('child_process').execFileSync('git', ['config', 'user.name'],
-      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+    // --global (not the repo-local value) and cwd: home, not the caller's cwd: this
+    // reads the machine's identity, not a repo's, and a cwd inside an untrusted cloned
+    // repo must never be allowed to supply the `git` executable that runs here.
+    name = require('child_process').execFileSync('git', ['config', '--global', 'user.name'],
+      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+        cwd: os.homedir() }).trim();
   } catch { /* no git or no user.name */ }
   return (machineIdentity = { username, home: os.homedir(), name });
 }
 // Secret layer (runs first): a credential typed or pasted into a command → <secret>,
-// so a secret repeated in ≥ 20 calls (POLLING) or ≥ 5 sessions (BOILERPLATE) never
+// so a secret repeated in ≥ 10 calls (POLLING) or ≥ 5 sessions (BOILERPLATE) never
 // prints. commandKey() already turned digits into N, so shapes allow any word char.
 // A value that is a reference (`$VAR`, `${VAR}`, `$(…)`) is not a secret and stays;
 // a single-quoted `'$foo'` is a shell literal (no expansion), not a reference.
@@ -1911,7 +1915,7 @@ function flagLines(f) {
 // DETAIL_MAX_LINES, same fitFlags() guard) and always in --json.
 const SUMMARY_MAX_LINES = 24;
 const DETAIL_MAX_LINES = 40;
-// Slice 28 (design decision Q5, HITL Q-B): rank by extra cost where that decision defines
+// Slice 28 (design decision Q-B): rank by extra cost where that decision defines
 // one — REGRESSION (extra cost vs previous cost/msg) and POLLING/BOILERPLATE/GH_POLLING
 // (cost of those turns; GH_POLLING Slice 31) share tier 0, by $ — then a fixed priority for flags
 // whose $ is only the flagged spend, $ as tie-break inside a tier: LONG_AGENT

@@ -59,7 +59,7 @@ function findPrivateWord(text) {
 // forward-slash spellings of the drive form: `C:\Users\bob`, `C:\\Users\\bob`, `C:/Users/bob`.
 const WIN_USER_PATH = /C:(?:\\{1,2}|\/)Users(?:\\{1,2}|\/)[^\\/:*?"<>|\r\n]+/i;
 // POSIX form: `/home/bob`, `/Users/bob` (macOS).
-const POSIX_USER_PATH = /\/(?:home|Users)\/[^\\/:*?"<>|\r\n]+/i;
+const POSIX_USER_PATH = /\/(?:home|Users)\/[^\\/:*?"<>|\r\n]+/;
 const SESSION_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
 
 const DOCS_DIR = path.join(ROOT, 'docs');

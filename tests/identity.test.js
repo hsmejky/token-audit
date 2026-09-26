@@ -92,6 +92,18 @@ test('identity: accent folding stays linear on a 200k-char accented input', () =
   assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
 });
 
+test('security: git config read for identity is --global and pinned to a safe cwd', () => {
+  // A cloned/malicious repo could plant its own `git`/`git.exe` in its working tree;
+  // on Windows, an unpinned cwd lets that shadow the real git for execFileSync.
+  // currentIdentity() must fix `cwd` (not inherit the caller's) and read --global,
+  // not whatever a repo-local config in that cwd would otherwise layer in.
+  const src = fs.readFileSync(
+    require.resolve('../plugin/skills/token-audit/scripts/token-audit.js'), 'utf8');
+  const call = src.slice(src.indexOf("execFileSync('git'"), src.indexOf("execFileSync('git'") + 300);
+  assert.match(call, /--global/);
+  assert.match(call, /cwd:\s*os\.homedir\(\)/);
+});
+
 test('source: every line of the script and the tests is ≤ 120 chars', () => {
   const files = [require.resolve('../plugin/skills/token-audit/scripts/token-audit.js'),
     ...fs.readdirSync(__dirname).filter(f => f.endsWith('.js')).map(f => path.join(__dirname, f))];
