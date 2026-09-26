@@ -1362,7 +1362,17 @@ const CURL_LONG_VAL = new Set(('--data --data-raw --data-binary --data-ascii --d
   '--proxy --proxy-user --referer --cert --key --cacert --capath --config --range --upload-file ' +
   '--dump-header --resolve --connect-to --limit-rate --max-filesize --max-redirs --oauth2-bearer ' +
   '--variable --interface --continue-at --time-cond --speed-limit --speed-time --trace --trace-ascii ' +
-  '--stderr --unix-socket').split(' '));
+  '--stderr --unix-socket --proxy-header --aws-sigv4 --request-target --doh-url --dns-servers --noproxy ' +
+  '--preproxy --socks4 --socks4a --socks5 --socks5-hostname --proxy-cacert --proxy-cert --proxy-key ' +
+  '--proxy-pass --proxy-service-name --cert-type --key-type --ciphers --pass --pinnedpubkey --pubkey ' +
+  '--crlfile --tls-max --tlsuser --tlspassword --proto --proto-redir --proto-default --netrc-file ' +
+  '--local-port --keepalive-time --expect100-timeout --happy-eyeballs-timeout-ms --parallel-max --rate ' +
+  '--create-file-mode --etag-compare --etag-save --hsts --alt-svc --login-options --sasl-authzid ' +
+  '--service-name --delegation --mail-from --mail-rcpt --mail-auth --ftp-port --ftp-account ' +
+  '--ftp-method --ftp-alternative-to-user --hostpubmd5 --hostpubsha256 --krb --ech --ipfs-gateway ' +
+  '--trace-config --engine --random-file --egd-file').split(' '));
+// curl upload options: an implicit PUT (a write) unless an explicit `-X`/`--request` says otherwise.
+const CURL_UPLOAD = new Set(['-T', '--upload-file']);
 // curl request-body options: an implicit POST unless `-G`/`--get` turns them into a query string.
 const CURL_BODY = new Set(('-d -F --data --data-raw --data-binary --data-ascii --data-urlencode --json ' +
   '--form --form-string').split(' '));
@@ -1409,7 +1419,7 @@ const GH_GROUP_VERBS = {
 // merge`. Any other `-`-flag (`--json`, `-w`, `--repo=o/r`) is skipped alone.
 const GH_VALUE_FLAGS = new Set(['-R', '--repo', '--hostname']);
 // First non-flag word after `gh` is the group; for `api` the rest is the path argument
-// (parsed by ghApiPath); for any other group, the next non-flag word after the group is
+// argv (parsed by ghApiCall()); for any other group, the next non-flag word after the group is
 // the verb. Returns `{ group, verb }` or `{ group, restWords }` for `api`; either can be
 // `undefined`/missing when the command has no more words.
 function ghGroupVerb(words) {
@@ -1475,21 +1485,30 @@ function githubPathShape(p) {
   return out.join('/');
 }
 // One command occurrence → its shell words, quotes removed: `'…'`/`"…"` group (whitespace and
-// newlines inside stay in the word), a backslash escapes the next char, backslash-newline joins
-// lines. One pass, no regex — linear however many quotes; an unclosed quote runs to the end.
+// newlines inside stay in the word). As in bash, inside `"…"` a backslash escapes only `"`, `\`,
+// `$`, a backtick or a newline (dropped) and otherwise stays; inside `'…'` nothing is escaped.
+// Outside quotes a backslash escapes the next char and backslash-newline joins lines — except
+// before a letter/digit, where it stays (a Windows path `C:\tools\curl.exe`; bash would only
+// drop it). One pass, no regex — linear however many quotes; an unclosed quote runs to the end.
 function argWords(s) {
   const out = [];
   let cur = null, q = '';
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
-    if (q) { if (c === q) q = ''; else cur += c; continue; }
+    if (q) {
+      if (c === q) q = '';
+      else if (q === '"' && c === '\\' && i + 1 < s.length && '"\\$`\n'.includes(s[i + 1])) {
+        if (s[++i] !== '\n') cur += s[i];
+      } else cur += c;
+      continue;
+    }
     if (c === "'" || c === '"') { q = c; if (cur === null) cur = ''; continue; }
     if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
       if (cur !== null) out.push(cur);
       cur = null;
       continue;
     }
-    if (c === '\\' && i + 1 < s.length && s[++i] === '\n') continue;
+    if (c === '\\' && i + 1 < s.length && !/[A-Za-z0-9]/.test(s[i + 1]) && s[++i] === '\n') continue;
     cur = (cur === null ? '' : cur) + s[i];
   }
   if (cur !== null) out.push(cur);
@@ -1519,31 +1538,36 @@ function walkArgs(words, shortVal, longVal, onOpt, onArg = () => {}) {
 }
 // curl's write test over its argv: an explicit `-X`/`--request` method (the last one) wins
 // outright — POST/PUT/PATCH/DELETE write, anything else (GET, HEAD) reads even alongside a body;
-// with no method, a body option (CURL_BODY) writes unless `-G`/`--get` is also present.
+// with no method, an upload (`-T`/`--upload-file`, implicit PUT) writes, and a body option
+// (CURL_BODY) writes unless `-G`/`--get` is also present.
 function isCurlWrite(args) {
-  let method, body = false, get = false;
+  let method, body = false, get = false, upload = false;
   walkArgs(args, CURL_SHORT_VAL, CURL_LONG_VAL, (f, v) => {
     if (f === '-X' || f === '--request') method = v;
     else if (CURL_BODY.has(f)) body = true;
+    else if (CURL_UPLOAD.has(f)) upload = true;
     else if (f === '-G' || f === '--get') get = true;
   });
-  return method !== undefined ? GH_WRITE_HTTP.test(method) : body && !get;
+  return method !== undefined ? GH_WRITE_HTTP.test(method) : upload || (body && !get);
 }
 // `gh api` argv (after `api`) → { path, isWrite }. Path = first positional; a full
 // `https://api.github.com/…` URL keeps only its path; query/fragment dropped. An explicit
 // `-X`/`--method` wins outright (POST/PUT/PATCH/DELETE write; GET reads even with fields or
 // `--input`). Otherwise `graphql` writes only when an inline `query=` field value contains the
-// word `mutation` — a `@file` or `$(…)` value's text is not visible, so it reads — and any other
+// word `mutation` (case-sensitive: `__type(name: "Mutation")` reads) — a `@file` or `$(…)`
+// value's text is not visible, so it reads — and any other
 // path writes on a field flag (GH_API_FIELDS) or `--input` (implicit POST).
 function ghApiCall(args) {
   let method, path, body = false, mutation = false;
   walkArgs(args, GH_API_SHORT_VAL, GH_API_LONG_VAL, (f, v) => {
+    // pflag drops one `=` after a shorthand: `-X=POST`, `-f=query=…` (curl has no such form).
+    if (f.length === 2 && typeof v === 'string' && v[0] === '=') v = v.slice(1);
     if (f === '-X' || f === '--method') method = v;
     else if (f === '--input') body = true;
     else if (GH_API_FIELDS.has(f)) {
       body = true;
       const q = typeof v === 'string' && v.startsWith('query=') ? v.slice(6) : '';
-      if (!/^[@$]/.test(q) && /\bmutation\b/i.test(q)) mutation = true;
+      if (!/^[@$]/.test(q) && /\bmutation\b/.test(q)) mutation = true; // GraphQL keyword: lowercase
     }
   }, w => { if (path === undefined) path = w; });
   path = (path || '').replace(/^https?:\/\/api\.github\.com(?![^/?#])/i, '').split(/[?#]/)[0];
@@ -1570,15 +1594,18 @@ function explicitWriteMethod(words) {
 // explicitWriteMethod() otherwise). See REFERENCE.md "GH_POLLING".
 function occurrenceGithub(occText) {
   const words = argWords(occText);
-  const k = words.findIndex(w => /^(?:gh|curl(?:\.exe)?)$/i.test(w));
-  const cmd = k < 0 ? '' : words[k].toLowerCase();
+  // The command word by basename, `.exe` dropped: `/usr/bin/curl`, `C:\…\curl.exe`, `gh.exe` (a
+  // URL ending in `/gh` is an argument, not the command).
+  const base = w => (w.includes('://') ? '' : w.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, ''));
+  const k = words.findIndex(w => base(w) === 'gh' || base(w) === 'curl');
+  const cmd = k < 0 ? '' : base(words[k]);
   const gv = cmd === 'gh' ? ghGroupVerb(words.slice(k)) : {};
   if (gv.group === 'api') {
     const { path, isWrite } = ghApiCall(gv.restWords);
     return [{ shape: githubPathShape(path) || 'gh api', isWrite }];
   }
   const out = [];
-  const write = cmd.startsWith('curl') ? isCurlWrite(words.slice(k + 1)) : explicitWriteMethod(words);
+  const write = cmd === 'curl' ? isCurlWrite(words.slice(k + 1)) : explicitWriteMethod(words);
   for (const m of occText.matchAll(GH_URL)) {
     const s = githubPathShape(m[1] || '');
     if (s) out.push({ shape: s, isWrite: write });

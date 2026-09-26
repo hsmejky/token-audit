@@ -504,7 +504,8 @@ calls' turns.
   pr merge 12`, a `check-runs` curl loop next to a `curl -X PUT …/merge`) keeps the read
   occurrence's shape and drops only the write one; a flag in one occurrence (e.g. an
   unrelated `grep -x post f`) never taints another occurrence in the same call. Each
-  occurrence is split into shell words (quotes removed, one linear pass) and its options are
+  occurrence is split into shell words (quotes removed, `\"` inside `"…"` escaped as in bash, one
+  linear pass; `curl`/`gh` recognized by basename too — `/usr/bin/curl`, `curl.exe`, `gh.exe`) and its options are
   read the way the command itself parses them: a combined short-flag cluster splits at its
   first value-taking letter (curl `-sXPOST` = `-s -X POST`, `-sd q` = `-s -d q`, `-sSfG` =
   `-s -S -f -G`), and an option's value is never read as a flag (`-H 'X-Debug: -d'` is a
@@ -517,11 +518,13 @@ calls' turns.
     on such an explicit write method (`-Method` included).
   - **curl, no method**: a `-d`/`--data`/`--data-raw`/`--data-binary`/`--data-ascii`/
     `--data-urlencode`/`--json`/`-F`/`--form`/`--form-string` body with no `-G`/`--get`
-    turning it into a query string. curl options are case-sensitive: `-g` is `--globoff`,
+    turning it into a query string, or a `-T`/`--upload-file` upload (implicit PUT, `-G`
+    or not). curl options are case-sensitive: `-g` is `--globoff`,
     `-D` `--dump-header`, `-x` `--proxy` — none of them is `-G`/`-d`/`-X`.
   - **`gh api`, no method**: `--input FILE` or `-f`/`-F`/`--field`/`--raw-field` (implicit
     POST) — **except** `gh api graphql`, itself a query endpoint: a write only when an inline
-    `query=` field value contains the word `mutation` anywhere (leading spaces or newlines
+    `query=` field value contains the word `mutation` — lowercase, the GraphQL keyword, so
+    `__type(name: "Mutation")` reads — anywhere (leading spaces or newlines
     included); a `query=@file.graphql` or `query="$(cat file)"` value's text is not visible
     in the command, so it reads (even when the filename says "mutation"), as does `--input`.
     The field name must be exactly `query` (`searchquery=…` is not it).

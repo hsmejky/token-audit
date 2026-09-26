@@ -385,3 +385,55 @@ test('isGhWrite/githubReadShapes: linear on 200k-char inputs — many/unclosed q
     assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 250, `slow on ${s.slice(0, 20)}…`);
   }
 });
+
+// Inside "…" a backslash escapes `"` (bash), so `\"` never closes the quote; inside '…' it is
+// literal. An escaped quote must not shift the rest of the argv (the method after it).
+test('isGhWrite: \\" inside double quotes stays in the word; the flags after it still parse', () => {
+  assert.equal(isGhWrite(`curl -H "X: \\"a\\"" -X PATCH ${PULLS}/1`), true);
+  assert.equal(isGhWrite('gh api -H "X: \\"a\\"" repos/o/r/pulls/1 -X POST'), true);
+  assert.deepEqual(githubShapes('gh api -H "X: \\"a\\"" repos/o/r/pulls/1 -X POST'), ['pulls/*']);
+  assert.equal(isGhWrite('gh api repos/o/r/pulls/1 -f body="a \\"b\\" c" -X GET'), false);
+  assert.equal(isGhWrite(`curl -H 'X: \' -X PATCH ${PULLS}/1`), true); // '…' ends at the next '
+  const t = process.hrtime.bigint();
+  isGhWrite(`curl -H "${'\\"'.repeat(100000)}" -X GET ${PULLS}`);
+  githubReadShapes(`gh api -f body="${'\\"'.repeat(100000)}" repos/o/r/pulls`);
+  assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 250, 'slow on many \\"');
+});
+
+test('isGhWrite: curl/gh named by a path or with .exe is still curl/gh', () => {
+  assert.equal(isGhWrite(`/usr/bin/curl -d x ${PULLS}`), true);
+  assert.equal(isGhWrite(`C:\\tools\\curl.exe -d x ${PULLS}`), true);
+  assert.equal(isGhWrite(`"C:\\Program Files\\curl\\curl.exe" -sd x ${PULLS}`), true);
+  assert.equal(isGhWrite(`curl.exe -d x ${PULLS}`), true);
+  assert.equal(isGhWrite(`/usr/bin/curl -G -d x ${PULLS}`), false);
+  assert.equal(isGhWrite('gh.exe pr merge 1'), true);
+  assert.equal(isGhWrite('C:\\bin\\gh.exe api -f a=b repos/o/r/issues'), true);
+  assert.deepEqual(githubShapes('/usr/local/bin/gh pr checks 1'), ['gh pr checks']);
+  assert.deepEqual(githubShapes('git clone https://github.com/cli/gh'), []);
+});
+
+test('isGhWrite: gh api -X=POST (pflag shorthand `=`) is the method POST', () => {
+  assert.equal(isGhWrite('gh api -X=POST repos/o/r/issues'), true);
+  assert.equal(isGhWrite('gh api -X=GET repos/o/r/issues -f a=b'), false);
+  assert.equal(isGhWrite("gh api graphql -f=query='mutation { x }'"), true);
+});
+
+test('isGhWrite: curl -T/--upload-file is an implicit PUT; an explicit method still wins', () => {
+  assert.equal(isGhWrite(`curl -T f.txt ${PULLS}`), true);
+  assert.equal(isGhWrite(`curl -sT f.txt ${PULLS}`), true);
+  assert.equal(isGhWrite(`curl --upload-file f.txt ${PULLS}`), true);
+  assert.equal(isGhWrite(`curl -X GET -T f.txt ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl -G -T f.txt ${PULLS}`), true);
+});
+
+test('isGhWrite: graphql `mutation` is case-sensitive — `__type(name: "Mutation")` reads', () => {
+  assert.equal(isGhWrite(`gh api graphql -f query='{ __type(name: "Mutation") { name } }'`), false);
+  assert.equal(isGhWrite("gh api graphql -f query='MUTATION { x }'"), false);
+  assert.equal(isGhWrite("gh api graphql -f query='mutation { x }'"), true);
+});
+
+test('isGhWrite: a curl long option value starting with `-` is never read as a flag', () => {
+  assert.equal(isGhWrite(`curl --proxy-header -d ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl --user-agent -X POST ${PULLS}`), false);
+  assert.equal(isGhWrite(`curl --aws-sigv4 -d ${PULLS}`), false);
+});
