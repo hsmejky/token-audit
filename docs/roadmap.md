@@ -24,16 +24,16 @@ behind the design are in [decisions.md](decisions.md), the code map in
 
 ### Repo hygiene
 
-- [ ] `.claude/CLAUDE.md` documents project conventions for contributors working with Claude
+- [x] `.claude/CLAUDE.md` documents project conventions for contributors working with Claude
       Code: structure (by reference, not duplicated), zero-dependency/Node-version constraints,
       test commands, privacy rules for this public repo, commit conventions, and when to hand a
       codebase lookup to a search agent instead of reading inline.
-- [ ] A GitHub Actions workflow runs the test suite on push and pull request, across a matrix of
+- [x] A GitHub Actions workflow runs the test suite on push and pull request, across a matrix of
       supported Node versions and both a Linux and a Windows runner, with no dependency install
       step.
-- [ ] Every performance test's time limit goes through one shared helper, multiplied under CI
+- [x] Every performance test's time limit goes through one shared helper, multiplied under CI
       instead of hard-coded per test; none of them are skipped.
-- [ ] `docs/testing.md` explains how to run the suite, the test/fixture layout, the privacy
+- [x] `docs/testing.md` explains how to run the suite, the test/fixture layout, the privacy
       guard, and how performance tests behave under CI — linked from the README and from
       `.claude/CLAUDE.md`.
 
