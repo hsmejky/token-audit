@@ -7,7 +7,7 @@ description: >
   installed plugins for config drift, flags transcript-retention risk
   separately as a confidentiality issue (not cost), and returns a ranked
   list of concrete habit fixes.
-argument-hint: "[--days N] [--project <path>] [--all] [--no-detail] [--top N] [--claude-dir <path>]"
+argument-hint: "[--days N] [--project <path>] [--all] [--no-detail] [--claude-dir <path>]"
 disable-model-invocation: true
 ---
 
@@ -37,12 +37,19 @@ per project — don't mix them by default).
 ```
 
 1. Run the script. `$ARGUMENTS` is whatever the user typed after `/token-audit`, and it lands
-   in a shell command — never forward it verbatim. Pass through only the flags the script
-   accepts (`--days N`, `--project <path>`, `--all`, `--no-detail`, `--top N`,
-   `--claude-dir <path>`); drop anything else in `$ARGUMENTS`, recognized or not. Refuse
-   `--json`: it doesn't fit the summary's line budget here — tell the user to run the script
-   directly instead (see the README's "Machine-readable export"). With no recognized flags in
-   `$ARGUMENTS`, fall back to the default window, full text output.
+   in a shell command — never forward it verbatim. Only the flags below pass through, and only
+   with a valid value; drop everything else in `$ARGUMENTS` — a flag not on this list, or a
+   listed flag with an invalid value — silently for junk, with a one-line note to the user for a
+   listed flag that got dropped:
+   - `--days N` — N must match `^\d+$`, else drop the flag.
+   - `--project <path>` / `--claude-dir <path>` — always wrap the value in single quotes in the
+     command; if it contains a `'` or a newline, drop the flag instead of wrapping it.
+   - `--all`, `--no-detail` — no value, pass through as-is.
+   `--top N` is not on this list: it only reshapes `--json`'s session list, and this skill never
+   emits `--json`, so it has nothing to affect here. Refuse `--json` itself: it doesn't fit the
+   summary's line budget here — tell the user to run the script directly instead (see the
+   README's "Machine-readable export"). With no recognized flags in `$ARGUMENTS`, fall back to
+   the default window, full text output.
 2. Each FLAGS id → playbook entry in [REFERENCE.md](REFERENCE.md). The summary shows as many as
    fit (ranked by extra cost, then fixed priority; typically 4-5, see REFERENCE.md "Summary cap
    and ranking"); the `… +N more: IDs` line names the rest, printed in full under
